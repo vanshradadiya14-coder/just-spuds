@@ -1,0 +1,328 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+* { -webkit-tap-highlight-color: transparent; }
+html {
+  scroll-behavior: auto;
+  overflow-x: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+body {
+  background-color: #F6F7FA;
+  color: #111317;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+:focus-visible {
+  outline: 2px solid #111317;
+  outline-offset: 3px;
+}
+.on-dark :focus-visible { outline-color: #F1F3F5; }
+
+/* Warm Artisan Porcelain Studio Background with delicate honey and sage undertones */
+.bg-stock {
+  background-color: #F6F7FA;
+  background-image:
+    radial-gradient(ellipse at 20% 10%, rgba(254, 243, 199, 0.45), transparent 60%),
+    radial-gradient(ellipse at 85% 85%, rgba(245, 158, 11, 0.08), transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(237, 242, 247, 0.6), transparent 70%);
+}
+
+/* Luxury Velvet Obsidian & Deep Truffle Background with radiant amber hearth warmth */
+.bg-ink-stock {
+  background-color: #0E1015;
+  background-image:
+    radial-gradient(ellipse 70% 50% at 50% 0%, rgba(245, 158, 11, 0.14), transparent 70%),
+    radial-gradient(ellipse 60% 60% at 85% 90%, rgba(217, 119, 6, 0.12), transparent 60%),
+    radial-gradient(ellipse 50% 50% at 15% 75%, rgba(59, 130, 246, 0.05), transparent 55%),
+    radial-gradient(ellipse 80% 80% at 50% 50%, rgba(26, 28, 35, 0.4), transparent 80%);
+}
+
+/* .mesh / .mesh-dark / .mesh-light and .spotlight / .spotlight-dark / .spotlight-light
+   are defined once, further down under "backgrounds". They used to be declared here too,
+   and the later block silently won every shared property — editing the colours here had
+   no visible effect. Kept in one place so that trap is gone. */
+
+/* Subtle architectural measure grid */
+.measure-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.04;
+  background-size: 60px 60px;
+  background-image:
+    linear-gradient(to right, currentColor 1px, transparent 1px),
+    linear-gradient(to bottom, currentColor 1px, transparent 1px);
+  mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+}
+
+/* Glassmorphism cards with luminous amber border highlights - 120 FPS Optimized */
+.glass-card {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  transform: translateZ(0);
+  box-shadow: 0 10px 30px -10px rgba(180, 83, 9, 0.08);
+}
+
+.glass-card-dark {
+  background: rgba(20, 22, 28, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  transform: translateZ(0);
+  box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.35);
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.1);
+}
+
+.glass-modal {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.2);
+}
+
+.badge-glow {
+  box-shadow: 0 0 24px -2px rgba(245, 158, 11, 0.45);
+}
+
+/* Dot leader between a menu item and its price. */
+.leader { flex: 1; border-bottom: 1px dotted currentColor; opacity: .28; margin: 0 .75rem .32rem; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Photography rendering */
+.grade { transform: translateZ(0); }
+
+/* ---------------------------------------------------------------- type -- */
+.display {
+  font-family: 'Fraunces', Georgia, serif;
+  font-variation-settings: 'opsz' 120, 'SOFT' 20, 'WONK' 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 0.94;
+}
+.display-tight { line-height: 0.88; letter-spacing: -0.028em; }
+
+.label {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+}
+
+/* --------------------------------------------------------------- grain -- */
+/* Ultra-subtle texture plate over the page without harsh pixel artifacts */
+.grain::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.15) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+@media (prefers-reduced-motion: reduce) { .grain::after { opacity: 0.02; } }
+
+/* ------------------------------------------------------------- reveals -- */
+.rule-in { transform-origin: left; }
+
+/* Underline that draws in from the left on hover. */
+.ul-draw { position: relative; }
+.ul-draw::after {
+  content: '';
+  position: absolute;
+  left: 0; bottom: -3px;
+  height: 1px; width: 100%;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform .5s cubic-bezier(.16,1,.3,1);
+}
+.ul-draw:hover::after, .ul-draw:focus-visible::after {
+  transform: scaleX(1);
+  transform-origin: left;
+}
+
+/* ------------------------------------------------------- backgrounds -- */
+/* Fast hardware-accelerated mesh gradients without expensive CPU blur filters */
+.mesh {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+  transform: translateZ(0);
+}
+
+.mesh-dark {
+  background-image:
+    radial-gradient(ellipse 65% 55% at 25% 20%, rgba(245, 158, 11, 0.14), transparent 70%),
+    radial-gradient(ellipse 55% 65% at 80% 60%, rgba(251, 191, 36, 0.10), transparent 70%),
+    radial-gradient(ellipse 45% 45% at 50% 90%, rgba(217, 119, 6, 0.08), transparent 70%);
+}
+
+.mesh-light {
+  background-image:
+    radial-gradient(ellipse 65% 55% at 20% 20%, rgba(254, 243, 199, 0.55), transparent 70%),
+    radial-gradient(ellipse 55% 65% at 80% 60%, rgba(245, 158, 11, 0.08), transparent 70%),
+    radial-gradient(ellipse 45% 45% at 50% 90%, rgba(226, 232, 240, 0.55), transparent 70%);
+}
+
+@media (prefers-reduced-motion: reduce) { .mesh span { animation: none; } }
+
+/* Cursor spotlight. Position comes from --mx/--my, written by a rAF loop. */
+.spotlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --mx: 50%;
+  --my: 50%;
+  transition: opacity .6s ease;
+}
+.spotlight-dark {
+  background: radial-gradient(
+    420px circle at var(--mx) var(--my),
+    rgba(255,255,255,.10),
+    rgba(255,255,255,.035) 42%,
+    transparent 68%
+  );
+}
+.spotlight-light {
+  background: radial-gradient(
+    460px circle at var(--mx) var(--my),
+    rgba(10,10,11,.05),
+    rgba(10,10,11,.02) 45%,
+    transparent 70%
+  );
+}
+
+/* Enormous ghosted word sitting behind content. */
+.ghost-type {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  font-family: 'Fraunces', Georgia, serif;
+  font-variation-settings: 'opsz' 144, 'SOFT' 30, 'WONK' 1;
+  font-weight: 700;
+  line-height: .78;
+  letter-spacing: -.04em;
+  white-space: nowrap;
+}
+
+/* Hairline grid, barely there, to give flat panels a sense of measure. */
+.measure-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, currentColor 1px, transparent 1px);
+  background-size: 12.5% 100%;
+  opacity: .05;
+}
+
+/* Reading-progress hairline under the header. */
+.progress-rail {
+  position: fixed;
+  left: 0; right: 0;
+  z-index: 49;
+  height: 1px;
+  background: transparent;
+}
+.progress-rail > i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  transform-origin: left;
+}
+
+/* ------------------------------------------------------------ name band -- */
+/* Rows drift on their own; --nudge adds a clamped kick from scroll velocity,
+   written by a rAF loop on the section. */
+.marquee-row {
+  transform: translate3d(var(--nudge, 0px), 0, 0);
+  will-change: transform;
+}
+
+/* Outlined by default, filled on hover. Guarded, because without text-stroke
+   support `color: transparent` would render the names invisible. */
+.band-name {
+  color: rgba(255, 255, 255, .5);
+  transition: color .45s cubic-bezier(.16, 1, .3, 1),
+              -webkit-text-stroke-color .45s cubic-bezier(.16, 1, .3, 1);
+}
+.band-name:hover, .band-name:focus-visible { color: #fff; }
+
+@supports (-webkit-text-stroke: 1px currentColor) {
+  .band-name {
+    color: transparent;
+    -webkit-text-stroke: 1px rgba(255, 255, 255, .45);
+  }
+  .band-name:hover, .band-name:focus-visible {
+    color: #fff;
+    -webkit-text-stroke-color: #fff;
+  }
+}
+
+/* --------------------------------------------------------- hero object -- */
+/* Idle float on an inner element, so it composes with the scroll/pointer
+   transform the rAF loop writes to its parent instead of overwriting it. */
+@keyframes idle-float {
+  0%, 100% { transform: translate3d(0, -1.1%, 0); }
+  50%      { transform: translate3d(0, 1.6%, 0); }
+}
+.float-idle { animation: idle-float 9s ease-in-out infinite; will-change: transform; }
+@media (prefers-reduced-motion: reduce) { .float-idle { animation: none; } }
+
+/* --------------------------------------------------- thermal pos receipt print -- */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .thermal-receipt, .thermal-receipt * {
+    visibility: visible;
+  }
+  .thermal-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 2mm !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: black !important;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+}

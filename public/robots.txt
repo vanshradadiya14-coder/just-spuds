@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /staff
+Disallow: /driver
+Disallow: /track/
+Disallow: /login
+
+Sitemap: https://justspuds.uk/sitemap.xml
