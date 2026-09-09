@@ -118,15 +118,27 @@
   </head>
   <body>
     <div id="root">
-      <!-- Semantic Pre-rendered Crawler Fallback for Googlebot & Search Engines before JS Hydration -->
-      <main style="max-width: 900px; margin: 0 auto; padding: 2rem; font-family: system-ui, sans-serif;">
+      <div style="min-height: 100vh; background-color: #0A0A0B; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+        <style>
+          @keyframes spudPulse { 0%, 100% { opacity: 0.85; transform: scale(0.97); } 50% { opacity: 1; transform: scale(1.02); } }
+          @keyframes spudSpin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        </style>
+        <div style="position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
+          <div style="position: absolute; inset: -4px; border-radius: 9999px; border: 2px solid transparent; border-top-color: #f59e0b; animation: spudSpin 0.9s linear infinite;"></div>
+          <img src="/assets/brand/logo.png" alt="Just Spuds" style="width: 58px; height: 58px; border-radius: 9999px; object-fit: cover; animation: spudPulse 1.6s ease-in-out infinite;" />
+        </div>
+      </div>
+    </div>
+    <noscript>
+      <!-- Semantic Pre-rendered Crawler Fallback for Googlebot & Search Engines when JavaScript is disabled -->
+      <main style="max-width: 900px; margin: 0 auto; padding: 2rem; font-family: system-ui, sans-serif; color: #fff; background: #0A0A0B;">
         <h1>Just Spuds (JustSpuds) — Fresh Baked British Jacket Potatoes in Aylesbury</h1>
         <p><strong>Fresh Baked, Topped Your Way</strong> — British King Edward &amp; Maris Piper jacket potatoes, toasted paninis, crusty baguettes, wraps, salad boxes, and barista drinks.</p>
         <p>📍 Address: Shop B, Brook House, Market Square, Aylesbury, Buckinghamshire, HP20 1SN, United Kingdom.</p>
         <p>⏰ Open Everyday: 11:00 AM – 10:00 PM</p>
-        <p>📞 Phone: 01296 423456 &bull; Website: <a href="https://justspuds.uk">justspuds.uk</a></p>
+        <p>📞 Phone: 01296 423456 &bull; Website: <a href="https://www.justspuds.uk" style="color: #f59e0b;">justspuds.uk</a></p>
         <nav>
-          <p>Quick Links: <a href="/menu">Menu</a> | <a href="/build">Build a Spud</a> | <a href="/story">Our Story</a> | <a href="/find-us">Find Store</a></p>
+          <p>Quick Links: <a href="/menu" style="color: #f59e0b;">Menu</a> | <a href="/build" style="color: #f59e0b;">Build a Spud</a> | <a href="/story" style="color: #f59e0b;">Our Story</a> | <a href="/find-us" style="color: #f59e0b;">Find Store</a></p>
         </nav>
         <section>
           <h2>Popular Hot Spuds &amp; Lunch Specials</h2>
@@ -139,7 +151,7 @@
           </ul>
         </section>
       </main>
-    </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
