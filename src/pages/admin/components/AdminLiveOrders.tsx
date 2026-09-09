@@ -12,6 +12,8 @@ interface AdminLiveOrdersProps {
   handleAdvanceStatus: (id: string) => void;
   setPrintingOrder: (o: Order) => void;
   handleRefundCancel: (id: string) => void;
+  setFixingOrder?: (o: Order) => void;
+  setIsCreateManualOrderOpen?: (open: boolean) => void;
 }
 
 export default function AdminLiveOrders({
@@ -24,6 +26,8 @@ export default function AdminLiveOrders({
   handleAdvanceStatus,
   setPrintingOrder,
   handleRefundCancel,
+  setFixingOrder,
+  setIsCreateManualOrderOpen,
 }: AdminLiveOrdersProps) {
   return (
     <div className="space-y-6">
@@ -61,8 +65,17 @@ export default function AdminLiveOrders({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search orders, phone, customer..."
-            className="rounded-2xl border border-white/20 bg-white/10 px-4 py-2 font-body text-xs text-white placeholder:text-white/40 focus:border-amber-400 focus:outline-none w-full sm:w-72"
+            className="rounded-2xl border border-white/20 bg-white/10 px-4 py-2 font-body text-xs text-white placeholder:text-white/40 focus:border-amber-400 focus:outline-none w-full sm:w-64"
           />
+          {setIsCreateManualOrderOpen && (
+            <button
+              type="button"
+              onClick={() => setIsCreateManualOrderOpen(true)}
+              className="rounded-xl bg-amber-400 px-3.5 py-2 font-body text-xs font-black text-ink hover:bg-amber-300 shadow transition whitespace-nowrap active:scale-95"
+            >
+              📝 + Phone / Till Order
+            </button>
+          )}
           <button
             type="button"
             onClick={() => exportOrdersCSV(filteredOrders)}
@@ -187,29 +200,40 @@ export default function AdminLiveOrders({
                   </td>
 
                   <td className="p-4 text-right space-x-2 whitespace-nowrap">
+                    {setFixingOrder && (
+                      <button
+                        type="button"
+                        onClick={() => setFixingOrder(ord)}
+                        className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300 hover:bg-amber-400/25 transition"
+                        title="Manual Problem Fixer & Operational Override"
+                      >
+                        🛠️ Manual Fix
+                      </button>
+                    )}
+
                     {!['delivered', 'collected', 'cancelled'].includes(ord.status) && (
                       <button
                         type="button"
                         onClick={() => handleAdvanceStatus(ord.id)}
                         className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-slate-950 hover:bg-emerald-400 transition shadow active:scale-95"
                       >
-                        ▶ Next Stage
+                        ▶ Next
                       </button>
                     )}
 
                     <button
                       type="button"
                       onClick={() => setPrintingOrder(ord)}
-                      className="rounded-lg border border-white/20 px-2.5 py-1 text-[11px] font-bold text-amber-300 hover:bg-white/10"
+                      className="rounded-lg border border-white/20 px-2 py-1 text-[11px] font-bold text-amber-300 hover:bg-white/10"
                     >
-                      🖨️ Ticket
+                      🖨️
                     </button>
 
                     {ord.status !== 'cancelled' && (
                       <button
                         type="button"
                         onClick={() => handleRefundCancel(ord.id)}
-                        className="rounded-lg border border-red-500/30 bg-red-950/20 px-2.5 py-1 text-[11px] font-bold text-red-400 hover:bg-red-900/40"
+                        className="rounded-lg border border-red-500/30 bg-red-950/20 px-2 py-1 text-[11px] font-bold text-red-400 hover:bg-red-900/40"
                       >
                         Refund
                       </button>
@@ -217,7 +241,7 @@ export default function AdminLiveOrders({
 
                     <Link
                       to={`/track/${ord.id}`}
-                      className="rounded-lg bg-white/10 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-white/20"
+                      className="rounded-lg bg-white/10 px-2 py-1 text-[11px] font-bold text-white hover:bg-white/20"
                     >
                       Track →
                     </Link>

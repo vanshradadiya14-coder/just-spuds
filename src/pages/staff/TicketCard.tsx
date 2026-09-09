@@ -7,12 +7,14 @@ export default function TicketCard({
   handleOpenRejectModal,
   setPrintingOrder,
   sendOrderToDrivers,
+  setFixingOrder,
 }: {
   ord: Order
   handleStatusChange: any
   handleOpenRejectModal: any
   setPrintingOrder: any
   sendOrderToDrivers: any
+  setFixingOrder?: (o: Order) => void
 }) {
   const isDelivery = ord.fulfilment === 'delivery'
   const isCancelled = ord.status === 'cancelled'
@@ -149,15 +151,28 @@ export default function TicketCard({
 
       {/* Footer: Action Controls & 1-Click Thermal Print */}
       <div className="p-5 border-t border-white/10 bg-black/20 space-y-3">
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setPrintingOrder(ord)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-white/15"
-          >
-            <span>🖨️</span>
-            <span>Print Kitchen Ticket</span>
-          </button>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPrintingOrder(ord)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-white/15"
+            >
+              <span>🖨️</span>
+              <span>Ticket</span>
+            </button>
+            {setFixingOrder && (
+              <button
+                type="button"
+                onClick={() => setFixingOrder(ord)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400/20"
+                title="Manual Problem Fixer & Operational Override"
+              >
+                <span>🛠️</span>
+                <span>Manual Fix</span>
+              </button>
+            )}
+          </div>
 
           <span className="font-body text-[10px] uppercase font-bold">
             {ord.payment.status === 'paid' ? (

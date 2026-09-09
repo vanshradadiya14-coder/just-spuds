@@ -12,6 +12,7 @@ import {
   fetchSupabaseOrders,
   initSupabaseOrderSubscription,
 } from './supabaseOrderSync'
+import { logAuditEvent } from './auditStore'
 
 export type OrderStatus =
   | 'placed'                  // Customer placed order, waiting for kitchen acceptance
@@ -29,7 +30,7 @@ export type OrderStatus =
   | 'failed_delivery'         // Delivery attempt failed (customer unreachable, etc.)
   | 'cancelled'               // Cancelled with refund
 
-export type PaymentMethod = 'in_store' | 'driver_device' | 'cash' | 'card' | 'apple_pay' | 'google_pay'
+export type PaymentMethod = 'in_store' | 'driver_device' | 'cash' | 'card' | 'apple_pay' | 'google_pay' | 'complimentary'
 
 export interface DriverInfo {
   id: string
@@ -82,6 +83,15 @@ export interface OrderPayment {
   tip: number
   discount: number
   total: number
+  paidAt?: string
+  paidNote?: string
+  manualAdjustment?: {
+    originalTotal: number
+    adjustedTotal: number
+    reason: string
+    adjustedBy: string
+    adjustedAt: string
+  }
 }
 
 export interface OrderCancellation {
@@ -96,6 +106,22 @@ export interface OrderReview {
   tags: string[]
   comment: string
   createdAt: string
+}
+
+export interface OrderManualOverride {
+  id: string
+  overriddenAt: string
+  overriddenBy: string
+  reason: string
+  changesSummary: string
+  previousStatus?: OrderStatus
+}
+
+export interface OrderAdminNote {
+  id: string
+  timestamp: string
+  author: string
+  note: string
 }
 
 export interface Order {
@@ -118,6 +144,8 @@ export interface Order {
   deliveryDetails?: DeliveryDetails
   cancellation?: OrderCancellation
   review?: OrderReview
+  manualOverrides?: OrderManualOverride[]
+  adminNotes?: OrderAdminNote[]
   timeline: {
     status: OrderStatus
     timestamp: string
@@ -1892,4 +1920,367 @@ export function failDriverDelivery(
   playKitchenChime(true)
   return { ok: true, order: updated, message: 'Failed delivery reported to staff & admin.' }
 }
+
+export interface ManualOrderUpdates {
+  status?: OrderStatus
+  paymentStatus?: OrderPayment['status']
+  paymentMethod?: PaymentMethod
+  adjustedTotal?: number
+  deliveryPin?: string
+  unassignDriver?: boolean
+  adminNote?: string
+}
+
+/**
+ * Super Admin & Store Manager manual order problem resolution.
+ * Allows fixing ANY status, payment, driver deadlock, or price error.
+ */
+export function manualOverrideOrder(
+  orderId: string,
+  updates: ManualOrderUpdates,
+  reason: string,
+  actor: string
+): Order | undefined {
+  const orders = getStoredOrders()
+  const idx = orders.findIndex((o) => o.id === orderId || o.shortId === orderId)
+  if (idx === -1) return undefined
+
+  const order = orders[idx]
+  const now = new Date()
+  const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const previousStatus = order.status
+
+  const changesList: string[] = []
+
+  let nextStatus = order.status
+  if (updates.status && updates.status !== order.status) {
+    nextStatus = updates.status
+    changesList.push(`Status: ${previousStatus} ➔ ${nextStatus}`)
+  }
+
+  const nextPayment = { ...order.payment }
+  if (updates.paymentStatus && updates.paymentStatus !== order.payment.status) {
+    nextPayment.status = updates.paymentStatus
+    if (updates.paymentStatus === 'paid') {
+      nextPayment.paidAt = now.toISOString()
+    }
+    changesList.push(`Payment Status: ${order.payment.status} ➔ ${updates.paymentStatus}`)
+  }
+
+  if (updates.paymentMethod && updates.paymentMethod !== order.payment.method) {
+    nextPayment.method = updates.paymentMethod
+    changesList.push(`Payment Method: ${order.payment.method} ➔ ${updates.paymentMethod}`)
+  }
+
+  if (typeof updates.adjustedTotal === 'number' && updates.adjustedTotal !== order.payment.total) {
+    const originalTotal = order.payment.total
+    nextPayment.total = updates.adjustedTotal
+    nextPayment.manualAdjustment = {
+      originalTotal,
+      adjustedTotal: updates.adjustedTotal,
+      reason: reason || 'Manual price adjustment',
+      adjustedBy: actor,
+      adjustedAt: now.toISOString(),
+    }
+    changesList.push(`Total: £${(originalTotal / 100).toFixed(2)} ➔ £${(updates.adjustedTotal / 100).toFixed(2)}`)
+  }
+
+  const nextDeliveryDetails = { ...order.deliveryDetails }
+  let nextDriver = order.driver
+
+  if (updates.deliveryPin && updates.deliveryPin !== order.deliveryDetails?.deliveryPin) {
+    nextDeliveryDetails.deliveryPin = updates.deliveryPin
+    changesList.push(`PIN updated to ${updates.deliveryPin}`)
+  }
+
+  if (updates.unassignDriver) {
+    nextDeliveryDetails.assignedDriverId = undefined
+    nextDeliveryDetails.assignedDriverName = undefined
+    nextDeliveryDetails.assignedDriverPhone = undefined
+    nextDeliveryDetails.assignedDriverVehicle = undefined
+    nextDeliveryDetails.assignedDriverReg = undefined
+    nextDeliveryDetails.assignedDriverAvatar = undefined
+    nextDriver = undefined
+    if (nextStatus === 'driver_assigned' || nextStatus === 'driver_arrived_at_store' || nextStatus === 'out_for_delivery') {
+      nextStatus = 'ready_for_delivery'
+    }
+    changesList.push('Driver unassigned & return to dispatch queue')
+  }
+
+  // Update timeline if status changed
+  let nextTimeline = [...order.timeline]
+  if (nextStatus !== previousStatus) {
+    nextTimeline = [
+      ...order.timeline.filter((t) => t.status !== nextStatus),
+      {
+        status: nextStatus,
+        timestamp: nowStr,
+        title: `Manual Status Override (${nextStatus.replace(/_/g, ' ')})`,
+        description: `Overridden by ${actor}. Reason: ${reason || 'Operational adjustment'}`,
+      },
+    ]
+  }
+
+  const overrideEntry: OrderManualOverride = {
+    id: `ovr-${Date.now()}`,
+    overriddenAt: now.toISOString(),
+    overriddenBy: actor,
+    reason: reason.trim() || 'Manual problem resolution',
+    changesSummary: changesList.join('; ') || 'Administrative review',
+    previousStatus,
+  }
+
+  const nextAdminNotes = [...(order.adminNotes || [])]
+  if (updates.adminNote?.trim()) {
+    nextAdminNotes.push({
+      id: `note-${Date.now()}`,
+      timestamp: now.toISOString(),
+      author: actor,
+      note: updates.adminNote.trim(),
+    })
+  }
+
+  const updated: Order = {
+    ...order,
+    status: nextStatus,
+    payment: nextPayment,
+    deliveryDetails: nextDeliveryDetails,
+    driver: nextDriver,
+    timeline: nextTimeline,
+    manualOverrides: [overrideEntry, ...(order.manualOverrides || [])],
+    adminNotes: nextAdminNotes,
+  }
+
+  orders[idx] = updated
+  saveOrders(orders)
+  playKitchenChime()
+
+  logAuditEvent(
+    actor,
+    'order.manual_override',
+    `#${order.shortId}`,
+    `${changesList.join('; ')} | Reason: ${reason}`
+  )
+
+  return updated
+}
+
+/**
+ * Emergency Doorstep PIN Bypass.
+ * Allows completing delivery if customer lost their phone or cannot find PIN.
+ */
+export function bypassDeliveryPin(
+  orderId: string,
+  reason: string,
+  actor: string
+): { ok: boolean; order?: Order; message: string } {
+  const orders = getStoredOrders()
+  const idx = orders.findIndex((o) => o.id === orderId || o.shortId === orderId)
+  if (idx === -1) return { ok: false, message: 'Order not found.' }
+
+  const order = orders[idx]
+  const now = new Date()
+  const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+  const updated: Order = {
+    ...order,
+    status: 'delivered',
+    etaMinutes: 0,
+    payment: {
+      ...order.payment,
+      status: 'paid',
+      paidAt: now.toISOString(),
+      paidNote: `PIN Bypassed by ${actor}: ${reason || 'Customer verified in person'}`,
+    },
+    deliveryDetails: {
+      ...order.deliveryDetails,
+      deliveredAt: now.toISOString(),
+    },
+    timeline: [
+      ...order.timeline,
+      {
+        status: 'delivered',
+        timestamp: nowStr,
+        title: 'Delivered (Manual PIN Bypass) 🎉',
+        description: `Authorized by ${actor}. Reason: ${reason || 'Verified in person without PIN code.'}`,
+      },
+    ],
+    manualOverrides: [
+      {
+        id: `ovr-pin-${Date.now()}`,
+        overriddenAt: now.toISOString(),
+        overriddenBy: actor,
+        reason: reason || 'PIN lost / bypassed on doorstep',
+        changesSummary: 'Marked delivered with PIN bypass',
+        previousStatus: order.status,
+      },
+      ...(order.manualOverrides || []),
+    ],
+  }
+
+  orders[idx] = updated
+  saveOrders(orders)
+  playKitchenChime()
+
+  if (order.deliveryDetails?.assignedDriverId) {
+    recordDriverDeliveryCompletion(order.deliveryDetails.assignedDriverId, order.payment.deliveryFee || 400)
+  }
+
+  logAuditEvent(actor, 'order.pin_bypass', `#${order.shortId}`, reason || 'Verified delivery without PIN')
+
+  return { ok: true, order: updated, message: `Order #${order.shortId} marked Delivered with PIN Bypass.` }
+}
+
+/**
+ * Unassigns a courier if vehicle breaks down or driver goes offline,
+ * instantly returning the hot food to the open courier dispatch pool.
+ */
+export function unassignDriverFromOrder(
+  orderId: string,
+  reason: string,
+  actor: string
+): { ok: boolean; order?: Order; message: string } {
+  const orders = getStoredOrders()
+  const idx = orders.findIndex((o) => o.id === orderId || o.shortId === orderId)
+  if (idx === -1) return { ok: false, message: 'Order not found.' }
+
+  const order = orders[idx]
+  const prevDriver = order.deliveryDetails?.assignedDriverName || order.driver?.name || 'Driver'
+
+  const updated: Order = {
+    ...order,
+    status: 'ready_for_delivery',
+    driver: undefined,
+    deliveryDetails: {
+      ...order.deliveryDetails,
+      assignedDriverId: undefined,
+      assignedDriverName: undefined,
+      assignedDriverPhone: undefined,
+      assignedDriverVehicle: undefined,
+      assignedDriverReg: undefined,
+      assignedDriverAvatar: undefined,
+    },
+    timeline: [
+      ...order.timeline,
+      {
+        status: 'ready_for_delivery',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        title: 'Returned to Dispatch Queue 🛵',
+        description: `${prevDriver} unassigned by ${actor}. Re-queued for available couriers. Reason: ${reason || 'Operational re-assignment'}`,
+      },
+    ],
+  }
+
+  orders[idx] = updated
+  saveOrders(orders)
+  playKitchenChime()
+
+  logAuditEvent(actor, 'order.driver_unassigned', `#${order.shortId}`, `Unassigned ${prevDriver}. Reason: ${reason}`)
+
+  return { ok: true, order: updated, message: `Driver removed from #${order.shortId}. Returned to available queue.` }
+}
+
+export interface ManualCounterOrderParams {
+  customerName: string
+  customerPhone: string
+  customerEmail?: string
+  fulfilment: 'delivery' | 'pickup'
+  streetAddress?: string
+  postcode?: string
+  lines: CartLine[]
+  paymentMethod: PaymentMethod
+  paymentStatus: 'paid' | 'pending_store' | 'pending_delivery'
+  notes?: string
+}
+
+/**
+ * Creates a phone-in or counter walk-in order directly inside Admin / KDS.
+ */
+export function createManualCounterOrder(
+  params: ManualCounterOrderParams,
+  actor: string
+): Order {
+  const shortNum = Math.floor(10000 + Math.random() * 90000)
+  const shortId = `JS-${shortNum}`
+  const id = `ord-${Date.now()}-${shortNum}`
+  const now = new Date()
+  const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+  const subtotal = params.lines.reduce((acc, l) => acc + (l.base + (l.meal ? 250 : 0)) * l.qty, 0)
+  const deliveryFee = params.fulfilment === 'delivery' ? 399 : 0
+  const serviceFee = 99
+  const total = subtotal + deliveryFee + serviceFee
+
+  const deliveryPin = params.fulfilment === 'delivery' ? `${Math.floor(1000 + Math.random() * 9000)}` : undefined
+
+  const newOrder: Order = {
+    id,
+    shortId,
+    createdAt: now.toISOString(),
+    status: 'accepted',
+    fulfilment: params.fulfilment,
+    customer: {
+      name: params.customerName || 'Counter Customer',
+      phone: params.customerPhone || '01296 423456',
+      email: params.customerEmail || 'counter@justspuds.uk',
+      streetAddress: params.streetAddress,
+      postcode: params.postcode,
+      instructions: params.notes,
+    },
+    lines: params.lines,
+    payment: {
+      method: params.paymentMethod,
+      status: params.paymentStatus,
+      subtotal,
+      deliveryFee,
+      serviceFee,
+      tip: 0,
+      discount: 0,
+      total,
+      paidAt: params.paymentStatus === 'paid' ? now.toISOString() : undefined,
+      paidNote: `Entered manually by ${actor}`,
+    },
+    estimatedDeliveryTime: params.fulfilment === 'delivery' ? '~25-35 mins' : '~10-15 mins',
+    etaMinutes: params.fulfilment === 'delivery' ? 25 : 12,
+    kitchenNotes: params.notes ? `[MANUAL PHONE/COUNTER] ${params.notes}` : '[MANUAL PHONE/COUNTER ORDER]',
+    deliveryDetails: deliveryPin ? { deliveryPin } : undefined,
+    timeline: [
+      {
+        status: 'placed',
+        timestamp: nowStr,
+        title: 'Manual Order Created 📝',
+        description: `Directly entered by ${actor} (Phone / Counter Walk-in).`,
+      },
+      {
+        status: 'accepted',
+        timestamp: nowStr,
+        title: 'Accepted & Sent to Kitchen 👨‍🍳',
+        description: 'Ticket printed and queued in KDS.',
+      },
+    ],
+    adminNotes: [
+      {
+        id: `note-${Date.now()}`,
+        timestamp: now.toISOString(),
+        author: actor,
+        note: `Created via Manual Order Entry at counter/phone.`,
+      },
+    ],
+  }
+
+  const current = getStoredOrders()
+  const updated = [newOrder, ...current]
+  saveOrders(updated)
+  playKitchenChime()
+
+  logAuditEvent(
+    actor,
+    'order.manual_created',
+    `#${shortId}`,
+    `${params.fulfilment.toUpperCase()} | £${(total / 100).toFixed(2)} | Items: ${params.lines.length}`
+  )
+
+  return newOrder
+}
+
 

@@ -29,6 +29,8 @@ import { getProducts, subscribeMenu } from '../services/menuStore'
 import { type Product } from '../data/menu'
 import TicketCard from './staff/TicketCard'
 import ThermalReceipt from '../components/ThermalReceipt'
+import ManualOrderFixModal from '../components/ManualOrderFixModal'
+import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import { cx, gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 type StaffTab = 'active' | 'new' | 'baking' | 'dispatched' | 'completed' | 'stock'
@@ -56,6 +58,10 @@ export default function StaffKDSPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
+
+  // Manual resolution and creation modals
+  const [fixingOrder, setFixingOrder] = useState<Order | null>(null)
+  const [isCreateManualOrderOpen, setIsCreateManualOrderOpen] = useState(false)
 
   // Pause Modal State
   const [isPauseModalOpen, setIsPauseModalOpen] = useState(false)
@@ -351,6 +357,17 @@ export default function StaffKDSPage() {
               🕒 {currentTime.toLocaleTimeString()}
             </div>
 
+            {/* New Manual Phone / Counter Order Button */}
+            <button
+              type="button"
+              onClick={() => setIsCreateManualOrderOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-amber-400 px-3.5 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-amber-300 transition active:scale-95 whitespace-nowrap"
+              title="Directly enter a phone-in or walk-in till order into KDS"
+            >
+              <span>📝</span>
+              <span>+ Phone / Till Order</span>
+            </button>
+
             {/* Kitchen Stream Pause/Resume Toggle */}
             {kitchenPause.isPaused ? (
               <button
@@ -562,6 +579,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
+                        setFixingOrder={setFixingOrder}
                       />
                     ))}
                     {newOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No new tickets</div>}
@@ -587,6 +605,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
+                        setFixingOrder={setFixingOrder}
                       />
                     ))}
                     {bakingOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">Oven is empty</div>}
@@ -612,6 +631,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
+                        setFixingOrder={setFixingOrder}
                       />
                     ))}
                     {dispatchedOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No waiting dispatches</div>}
@@ -637,6 +657,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
+                        setFixingOrder={setFixingOrder}
                       />
                     ))}
                     {completedOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No recent completions</div>}
@@ -879,6 +900,29 @@ export default function StaffKDSPage() {
           </div>
         </div>
       )}
+
+      {/* MANUAL ORDER PROBLEM FIXER MODAL */}
+      {fixingOrder && (
+        <ManualOrderFixModal
+          order={fixingOrder}
+          isOpen={true}
+          onClose={() => setFixingOrder(null)}
+          currentActorName={user?.name || 'Kitchen Staff'}
+          onOrderUpdated={(updated) => {
+            setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
+          }}
+        />
+      )}
+
+      {/* CREATE MANUAL PHONE / COUNTER ORDER MODAL */}
+      <CreateManualOrderModal
+        isOpen={isCreateManualOrderOpen}
+        onClose={() => setIsCreateManualOrderOpen(false)}
+        currentActorName={user?.name || 'Kitchen Staff'}
+        onOrderCreated={(newOrder) => {
+          setOrders((prev) => [newOrder, ...prev])
+        }}
+      />
     </div>
     </div>
   )

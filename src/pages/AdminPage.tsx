@@ -68,18 +68,22 @@ import { type Product, type Option } from '../data/menu'
 import ThermalReceipt from '../components/ThermalReceipt'
 import AdminZReportModal from '../components/AdminZReportModal'
 import AdminProductModal from '../components/AdminProductModal'
+import ManualOrderFixModal from '../components/ManualOrderFixModal'
+import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import { gbp, cx } from '../utils/format'
 import SmartImage from '../components/SmartImage'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
-type AdminTab = 'overview' | 'orders' | 'products' | 'toppings' | 'promos' | 'crm' | 'delivery' | 'drivers' | 'staff' | 'audit'
+import { getAuditLogs, subscribeAuditLogs, type AuditLogItem } from '../services/auditStore'
+import {
+  getBlacklistEntries,
+  subscribeBlacklist,
+  blacklistPhone,
+  unblacklistPhone,
+  type BlacklistEntry,
+} from '../services/blacklistStore'
 
-const AUDIT_LOGS = [
-  { id: 'aud-1', time: '10 mins ago', actor: 'Vansh (Super Admin)', action: 'menu.stock_update', target: 'The Great British Classic', ip: '192.168.1.45' },
-  { id: 'aud-2', time: '25 mins ago', actor: 'Elena (Manager)', action: 'order.refund', target: 'Order #JS-71934 (£9.44)', ip: '192.168.1.12' },
-  { id: 'aud-3', time: '1 hour ago', actor: 'Jack Davies (Staff)', action: 'kds.pin_login', target: 'Staff Station 1', ip: '192.168.1.20' },
-  { id: 'aud-4', time: '2 hours ago', actor: 'System Auto-Engine', action: 'session.rotate', target: 'AuthToken Rotation', ip: '127.0.0.1' },
-]
+type AdminTab = 'overview' | 'orders' | 'products' | 'toppings' | 'promos' | 'crm' | 'delivery' | 'drivers' | 'staff' | 'audit'
 
 export default function AdminPage() {
   const [user, setUser] = useState<AuthUser | null>(() => getCurrentUser())
@@ -95,6 +99,14 @@ export default function AdminPage() {
   const [promos, setPromos] = useState<PromoCode[]>(() => getPromoCodes())
   const [storeSettings, setStoreSettingsState] = useState<StoreSettings>(() => getStoreSettings())
   const [drivers, setDrivers] = useState<DriverProfile[]>(() => getDrivers())
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>(() => getAuditLogs())
+  const [blacklistEntries, setBlacklistEntries] = useState<BlacklistEntry[]>(() => getBlacklistEntries())
+
+  // Manual resolution & creation modals
+  const [fixingOrder, setFixingOrder] = useState<Order | null>(null)
+  const [isCreateManualOrderOpen, setIsCreateManualOrderOpen] = useState(false)
+  const [newBlacklistPhoneInput, setNewBlacklistPhoneInput] = useState('')
+  const [newBlacklistReasonInput, setNewBlacklistReasonInput] = useState('')
 
   const [activeTab, setActiveTab] = useState<AdminTab>('overview')
   const [timeframe, setTimeframe] = useState<TimeRange>('today')
@@ -153,6 +165,8 @@ export default function AdminPage() {
     const unsubDrivers = subscribeDrivers((all) => setDrivers(all))
     const unsubPause = subscribeKitchenPause((kp) => setKitchenPauseState(kp))
     const unsubDeliverySettings = subscribeDeliverySettings((ds) => setDeliverySettingsState(ds))
+    const unsubAudit = subscribeAuditLogs((logs) => setAuditLogs(logs))
+    const unsubBlacklist = subscribeBlacklist((list) => setBlacklistEntries(list))
     const unsubMenu = subscribeMenu(() => {
       setProducts(getProducts())
       setExtras(getExtras())
@@ -169,6 +183,8 @@ export default function AdminPage() {
       unsubDrivers()
       unsubPause()
       unsubDeliverySettings()
+      unsubAudit()
+      unsubBlacklist()
       unsubMenu()
       clearInterval(timer)
     }
@@ -1059,6 +1075,8 @@ export default function AdminPage() {
             handleAdvanceStatus={handleAdvanceStatus}
             setPrintingOrder={setPrintingOrder}
             handleRefundCancel={handleRefundCancel}
+            setFixingOrder={setFixingOrder}
+            setIsCreateManualOrderOpen={setIsCreateManualOrderOpen}
           />
         )}
 
@@ -1594,6 +1612,100 @@ export default function AdminPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* FRAUD & ABUSE PREVENTION: BLACKLIST ROSTER */}
+            <div className="rounded-3xl border border-red-500/30 bg-red-950/10 p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-red-500/20 pb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🚨</span>
+                    <h3 className="display text-lg text-white font-bold">
+                      Fraud Prevention: Flagged &amp; Blacklisted Phone Numbers
+                    </h3>
+                  </div>
+                  <p className="font-body text-xs text-white/60">
+                    Blocks abusive customers or prank callers from ordering with pay-on-arrival / counter payment.
+                  </p>
+                </div>
+                <span className="rounded-full bg-red-500/20 border border-red-500/40 px-3 py-1 text-xs font-bold text-red-300">
+                  {blacklistEntries.length} Blocked
+                </span>
+              </div>
+
+              {/* Add Blacklist Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (!newBlacklistPhoneInput.trim()) return
+                  blacklistPhone(
+                    newBlacklistPhoneInput,
+                    newBlacklistReasonInput.trim() || 'Manual block by admin',
+                    user?.name || 'Store Manager'
+                  )
+                  setNewBlacklistPhoneInput('')
+                  setNewBlacklistReasonInput('')
+                }}
+                className="flex flex-col sm:flex-row gap-2"
+              >
+                <input
+                  type="tel"
+                  required
+                  placeholder="Telephone number to block (e.g. 07700 900123)"
+                  value={newBlacklistPhoneInput}
+                  onChange={(e) => setNewBlacklistPhoneInput(e.target.value)}
+                  className="rounded-xl border border-white/20 bg-slate-800 px-3.5 py-2 text-xs text-white placeholder:text-white/40 focus:border-red-400 focus:outline-none flex-1"
+                />
+                <input
+                  type="text"
+                  placeholder="Reason for block (e.g. Fake address / refused delivery)"
+                  value={newBlacklistReasonInput}
+                  onChange={(e) => setNewBlacklistReasonInput(e.target.value)}
+                  className="rounded-xl border border-white/20 bg-slate-800 px-3.5 py-2 text-xs text-white placeholder:text-white/40 focus:border-red-400 focus:outline-none flex-1"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-red-500 px-4 py-2 font-bold text-xs uppercase text-white hover:bg-red-400 transition whitespace-nowrap shadow"
+                >
+                  🚫 Block Number
+                </button>
+              </form>
+
+              {/* Blacklist Table */}
+              {blacklistEntries.length === 0 ? (
+                <p className="text-xs text-white/50 italic py-2">
+                  No telephone numbers are currently blacklisted. You can flag malicious numbers directly from any live order.
+                </p>
+              ) : (
+                <div className="divide-y divide-white/10 rounded-xl border border-white/10 bg-black/20 overflow-hidden">
+                  {blacklistEntries.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-red-300">{entry.phone}</span>
+                          {entry.customerName && (
+                            <span className="text-white font-bold">({entry.customerName})</span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-white/60 mt-0.5">
+                          Reason: <span className="text-white/80">{entry.reason}</span> • Blocked by {entry.blockedBy} on {new Date(entry.blockedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => unblacklistPhone(entry.phone)}
+                        className="rounded-lg border border-emerald-500/40 bg-emerald-500/20 px-3 py-1 font-bold text-emerald-300 hover:bg-emerald-500/30 transition text-xs whitespace-nowrap self-start sm:self-auto"
+                      >
+                        🟢 Unblock Number
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -2124,17 +2236,36 @@ export default function AdminPage() {
         {/* ============================================================== */}
         {activeTab === 'audit' && (
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
-            <h2 className="display text-xl text-white font-bold">Append-Only System Audit Log</h2>
-            <div className="space-y-2 font-mono text-xs">
-              {AUDIT_LOGS.map((log) => (
-                <div key={log.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <span className="text-amber-400">[{log.time}]</span>
-                    <strong className="text-white">{log.actor}</strong>
-                    <span className="text-emerald-400">➔ {log.action}</span>
-                    <span className="text-white/60">({log.target})</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="display text-xl text-white font-bold">Real-Time Operational Audit Trail</h2>
+                <p className="font-body text-xs text-white/60">
+                  Every manual status override, payment adjustment, PIN bypass, driver reassignment, and blacklist event is permanently recorded.
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-3 py-1 text-xs font-bold text-emerald-300 whitespace-nowrap self-start sm:self-auto">
+                ● Live Events ({auditLogs.length})
+              </span>
+            </div>
+
+            <div className="space-y-2 font-mono text-xs max-h-[600px] overflow-y-auto pr-1">
+              {auditLogs.map((log) => (
+                <div
+                  key={log.id}
+                  className="rounded-xl border border-white/10 bg-white/[0.02] p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-amber-400 font-bold">
+                      [{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
+                    </span>
+                    <strong className="text-white bg-white/10 px-2 py-0.5 rounded text-[11px]">{log.actor}</strong>
+                    <span className="text-emerald-400 font-bold">➔ {log.action}</span>
+                    <span className="text-amber-300 font-bold font-mono">({log.target})</span>
+                    {log.details && (
+                      <span className="text-white/60 text-[11px] truncate max-w-md">— {log.details}</span>
+                    )}
                   </div>
-                  <span className="text-[10px] text-white/40">{log.ip}</span>
+                  <span className="text-[10px] text-white/40 font-mono">{log.ip}</span>
                 </div>
               ))}
             </div>
@@ -2280,6 +2411,29 @@ export default function AdminPage() {
       {printingOrder && (
         <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} />
       )}
+
+      {/* MANUAL ORDER PROBLEM FIXER MODAL */}
+      {fixingOrder && (
+        <ManualOrderFixModal
+          order={fixingOrder}
+          isOpen={true}
+          onClose={() => setFixingOrder(null)}
+          currentActorName={user?.name || 'Super Admin'}
+          onOrderUpdated={(updated) => {
+            setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
+          }}
+        />
+      )}
+
+      {/* CREATE MANUAL PHONE / COUNTER ORDER MODAL */}
+      <CreateManualOrderModal
+        isOpen={isCreateManualOrderOpen}
+        onClose={() => setIsCreateManualOrderOpen(false)}
+        currentActorName={user?.name || 'Super Admin'}
+        onOrderCreated={(newOrder) => {
+          setOrders((prev) => [newOrder, ...prev])
+        }}
+      />
     </div>
   )
 }

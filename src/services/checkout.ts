@@ -12,6 +12,7 @@ import {
   type PaymentMethod,
   type CustomerInfo,
 } from './orderStore'
+import { isPhoneBlacklisted } from './blacklistStore'
 
 export type Fulfilment = 'collection' | 'delivery'
 
@@ -44,6 +45,15 @@ export interface CheckoutResult {
 }
 
 export async function processCheckout(payload: CheckoutPayload): Promise<CheckoutResult> {
+  // Fraud & abuse prevention check
+  const blk = isPhoneBlacklisted(payload.customer.phone)
+  if (blk.blacklisted) {
+    return {
+      ok: false,
+      reason: blk.reason || 'This phone number requires in-person ordering at our Market Square counter. Please call 01296 423456.',
+    }
+  }
+
   const pauseCheck = isOrderAllowedDuringPause({
     isScheduled: payload.isScheduled,
     scheduleDate: payload.scheduleDate,
