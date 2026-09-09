@@ -1,8 +1,10 @@
 {
+  "cleanUrls": false,
   "rewrites": [
     { "source": "/robots.txt", "destination": "/robots.txt" },
     { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/google326c2854574075d2.html", "destination": "/google326c2854574075d2.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
+    { "source": "/((?!.*\\..*).*)", "destination": "/index.html" }
   ]
 }

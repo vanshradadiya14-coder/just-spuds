@@ -54,8 +54,13 @@ export default function Navbar() {
         <StoreStatusBanner />
         <nav className={cx('mx-auto flex max-w-[1400px] items-center justify-between px-4 transition-all duration-300 sm:px-8', solid ? 'h-[56px]' : 'h-[64px]')} aria-label="Primary">
           <div className="flex items-center gap-6">
-            <Link to="/" className="display text-white group flex items-center gap-2" aria-label="Just Spuds Aylesbury, home">
-              <span className={cx('transition-all duration-300 font-bold', solid ? 'text-[20px] sm:text-[22px]' : 'text-[22px] sm:text-[25px]')}>
+            <Link to="/" className="display text-white group flex items-center gap-2.5" aria-label="Just Spuds Aylesbury, home">
+              <img
+                src="/assets/brand/logo.png"
+                alt="Just Spuds Logo"
+                className={cx('rounded-full object-cover transition-all duration-300 ring-1 ring-amber-400/40 group-hover:scale-105 shadow-md shadow-amber-950/30', solid ? 'h-9 w-9' : 'h-10 w-10')}
+              />
+              <span className={cx('transition-all duration-300 font-bold tracking-tight', solid ? 'text-[20px] sm:text-[22px]' : 'text-[22px] sm:text-[25px]')}>
                 Just <span className="italic text-amber-400 group-hover:text-amber-300 transition-colors">Spuds</span>
               </span>
             </Link>
