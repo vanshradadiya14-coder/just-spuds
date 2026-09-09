@@ -6,4 +6,4 @@ Disallow: /driver
 Disallow: /track/
 Disallow: /login
 
-Sitemap: https://justspuds.uk/sitemap.xml
+Sitemap: https://www.justspuds.uk/sitemap.xml
