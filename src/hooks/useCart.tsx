@@ -11,6 +11,14 @@ import { validateDeliveryPostcode, type PostcodeValidationResult } from '../data
 import { getKitchenPauseState, subscribeKitchenPause, type KitchenPauseState } from '../services/orderStore'
 import { getDeliverySettings, subscribeDeliverySettings, type StoreDeliverySettings } from '../services/deliverySettingsStore'
 
+export type ModifierType = 'regular' | 'extra' | 'no' | 'lite' | 'side'
+
+export interface CartLineModifier {
+  name: string
+  type: ModifierType
+  pricePence?: number
+}
+
 export interface CartLine {
   lineId: string
   productId: string
@@ -30,6 +38,9 @@ export interface CartLine {
   image: string
   category: Product['category']
   qty: number
+  conversationalModifiers?: CartLineModifier[]
+  station?: 'spuds' | 'grill' | 'drinks' | 'pass'
+  isRush?: boolean
 }
 
 export interface ToastMessage {
@@ -39,10 +50,13 @@ export interface ToastMessage {
   image?: string
 }
 
-export const lineUnitPrice = (l: CartLine): number =>
-  l.base +
-  l.extras.reduce((n, id) => n + optionPrice(id, l.category), 0) +
-  (l.meal ? MEAL_DEAL.price : 0)
+export const lineUnitPrice = (l: CartLine): number => {
+  const extrasCost = l.extras.reduce((n, id) => n + optionPrice(id, l.category), 0)
+  const modifierCost = (l.conversationalModifiers || []).reduce((acc, m) => {
+    return acc + (m.pricePence || (m.type === 'extra' ? 100 : 0))
+  }, 0)
+  return l.base + extrasCost + modifierCost + (l.meal ? MEAL_DEAL.price : 0)
+}
 
 type Action =
   | { type: 'add'; line: Omit<CartLine, 'lineId'> }

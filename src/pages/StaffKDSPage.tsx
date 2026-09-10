@@ -357,6 +357,16 @@ export default function StaffKDSPage() {
               🕒 {currentTime.toLocaleTimeString()}
             </div>
 
+            {/* Counter Till POS Terminal Link */}
+            <Link
+              to="/pos"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-1.5 font-body text-xs font-black text-ink shadow-glow hover:bg-emerald-400 transition active:scale-95 whitespace-nowrap"
+              title="Open Counter Till / POS Terminal with cash drawer"
+            >
+              <span>🥔</span>
+              <span>Open Counter Till</span>
+            </Link>
+
             {/* New Manual Phone / Counter Order Button */}
             <button
               type="button"

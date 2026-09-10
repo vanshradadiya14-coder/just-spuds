@@ -44,6 +44,16 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
         <div className="inline-block mt-1 px-3 py-0.5 bg-black text-white font-black text-xs uppercase tracking-wider rounded-xs">
           {isDelivery ? '🛵 HOME DELIVERY' : '🛍️ STORE PICK UP'}
         </div>
+        {order.customer?.buzzerNumber && (
+          <div className="mt-2 p-1.5 bg-black text-white font-black text-sm uppercase tracking-widest border-2 border-black">
+            *** 🔔 BUZZER #{order.customer.buzzerNumber} ***
+          </div>
+        )}
+        {order.customer?.tableNumber && (
+          <div className="mt-1 p-1 bg-black text-white font-black text-xs uppercase tracking-wider border border-black">
+            *** 🪑 TABLE #{order.customer.tableNumber} ***
+          </div>
+        )}
         {order.isScheduled && (
           <div className="mt-2 p-1.5 bg-black text-white font-black text-xs uppercase tracking-wider border border-black">
             *** SCHEDULED PRE-ORDER: {order.scheduledFor || order.estimatedDeliveryTime} ***
@@ -61,6 +71,8 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
       <div className="py-2.5 border-b border-dashed border-black text-xs space-y-1">
         <p><strong>CUSTOMER:</strong> {order.customer.name}</p>
         <p><strong>PHONE:</strong> {order.customer.phone}</p>
+        {order.customer.buzzerNumber && <p><strong>BUZZER PAGER:</strong> #{order.customer.buzzerNumber}</p>}
+        {order.customer.tableNumber && <p><strong>DINE IN TABLE:</strong> #{order.customer.tableNumber}</p>}
         {isDelivery && (
           <>
             <p><strong>ADDRESS:</strong> {order.customer.streetAddress || 'Aylesbury'}</p>
@@ -96,6 +108,21 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
                 <span>{line.qty}x {line.name}</span>
                 <span>{gbp(lineUnitPrice(line) * line.qty)}</span>
               </div>
+
+              {/* Toast-Style Conversational Modifiers */}
+              {line.conversationalModifiers && line.conversationalModifiers.length > 0 && (
+                <div className="pl-4 text-[11px] font-bold text-gray-900">
+                  {line.conversationalModifiers.map((mod, i) => (
+                    <p key={i} className={mod.type === 'no' ? 'line-through text-gray-600' : ''}>
+                      {mod.type === 'extra' ? `+ EXTRA ${mod.name} (+£1.00)` :
+                       mod.type === 'no' ? `- NO ${mod.name}` :
+                       mod.type === 'lite' ? `~ LITE ${mod.name}` :
+                       mod.type === 'side' ? `⚗️ ${mod.name} ON SIDE` :
+                       `• ${mod.name}`}
+                    </p>
+                  ))}
+                </div>
+              )}
 
               {/* Extras */}
               {line.extras && line.extras.length > 0 && (
@@ -171,13 +198,25 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
           <span>{gbp(order.payment.total)}</span>
         </div>
 
-        <div className="pt-2 text-center text-[11px] font-bold">
+        <div className="pt-2 text-[11px] font-bold">
           {isPaid ? (
-            <p className="p-1 bg-gray-100 border border-black">
-              ✓ PAID ({gbp(order.payment.total)}) &bull; {order.payment.method === 'cash' ? 'CASH' : 'CARD DEVICE / TILL'}
-            </p>
+            order.payment.splitDetails && order.payment.splitDetails.length > 0 ? (
+              <div className="p-1.5 bg-gray-100 border border-black text-left space-y-0.5">
+                <p className="font-black text-center border-b border-gray-400 pb-0.5">✓ PAID &bull; SPLIT TENDER</p>
+                {order.payment.splitDetails.map((pt, i) => (
+                  <div key={i} className="flex justify-between">
+                    <span className="uppercase">{pt.method === 'cash' ? '💵 CASH' : pt.method === 'card' ? '💳 CARD / PDQ' : '🌐 ONLINE / LINK'}:</span>
+                    <span className="font-bold">{gbp(pt.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="p-1 bg-gray-100 border border-black text-center">
+                ✓ PAID ({gbp(order.payment.total)}) &bull; {order.payment.method === 'cash' ? 'CASH' : order.payment.method === 'card' ? 'CARD / TILL' : 'ONLINE / PAID'}
+              </p>
+            )
           ) : (
-            <p className="p-1 bg-black text-white font-black">
+            <p className="p-1 bg-black text-white font-black text-center">
               ⚠️ PAYMENT DUE UPON {isDelivery ? 'DELIVERY (DRIVER CARD DEVICE / CASH)' : 'COLLECTION AT COUNTER'} ({gbp(order.payment.total)})
             </p>
           )}

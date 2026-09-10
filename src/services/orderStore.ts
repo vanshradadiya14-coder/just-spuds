@@ -4,7 +4,7 @@
  * Handles persistent orders, real-time cross-tab synchronization via BroadcastChannel,
  * live status state transitions, cancellation with refund logic, and admin sound alerts.
  */
-import type { CartLine } from '../hooks/useCart'
+import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { SITE } from '../data/site'
 import { recordDriverDeliveryCompletion } from './driverStore'
 import {
@@ -30,7 +30,7 @@ export type OrderStatus =
   | 'failed_delivery'         // Delivery attempt failed (customer unreachable, etc.)
   | 'cancelled'               // Cancelled with refund
 
-export type PaymentMethod = 'in_store' | 'driver_device' | 'cash' | 'card' | 'apple_pay' | 'google_pay' | 'complimentary'
+export type PaymentMethod = 'in_store' | 'driver_device' | 'cash' | 'card' | 'apple_pay' | 'google_pay' | 'complimentary' | 'split'
 
 export interface DriverInfo {
   id: string
@@ -70,6 +70,15 @@ export interface CustomerInfo {
   streetAddress?: string
   postcode?: string
   instructions?: string
+  buzzerNumber?: string
+  tableNumber?: string
+}
+
+export interface SplitTenderPortion {
+  method: 'cash' | 'card' | 'online'
+  amount: number // in pence
+  note?: string
+  paidAt?: string
 }
 
 export interface OrderPayment {
@@ -85,6 +94,7 @@ export interface OrderPayment {
   total: number
   paidAt?: string
   paidNote?: string
+  splitDetails?: SplitTenderPortion[]
   manualAdjustment?: {
     originalTotal: number
     adjustedTotal: number
@@ -2191,10 +2201,14 @@ export interface ManualCounterOrderParams {
   paymentMethod: PaymentMethod
   paymentStatus: 'paid' | 'pending_store' | 'pending_delivery'
   notes?: string
+  discount?: number
+  splitDetails?: SplitTenderPortion[]
+  buzzerNumber?: string
+  tableNumber?: string
 }
 
 /**
- * Creates a phone-in or counter walk-in order directly inside Admin / KDS.
+ * Creates a phone-in or counter walk-in order directly inside Admin / KDS / POS Till.
  */
 export function createManualCounterOrder(
   params: ManualCounterOrderParams,
@@ -2206,12 +2220,19 @@ export function createManualCounterOrder(
   const now = new Date()
   const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-  const subtotal = params.lines.reduce((acc, l) => acc + (l.base + (l.meal ? 250 : 0)) * l.qty, 0)
+  const subtotal = params.lines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0)
   const deliveryFee = params.fulfilment === 'delivery' ? 399 : 0
-  const serviceFee = 99
-  const total = subtotal + deliveryFee + serviceFee
+  const serviceFee = params.fulfilment === 'delivery' ? 99 : 0
+  const discount = params.discount || 0
+  const total = Math.max(0, subtotal + deliveryFee + serviceFee - discount)
 
   const deliveryPin = params.fulfilment === 'delivery' ? `${Math.floor(1000 + Math.random() * 9000)}` : undefined
+
+  const specialTags = [
+    params.buzzerNumber ? `[🔔 BUZZER #${params.buzzerNumber}]` : null,
+    params.tableNumber ? `[🪑 TABLE #${params.tableNumber}]` : null,
+    params.notes ? params.notes : null,
+  ].filter(Boolean).join(' ')
 
   const newOrder: Order = {
     id,
@@ -2226,6 +2247,8 @@ export function createManualCounterOrder(
       streetAddress: params.streetAddress,
       postcode: params.postcode,
       instructions: params.notes,
+      buzzerNumber: params.buzzerNumber,
+      tableNumber: params.tableNumber,
     },
     lines: params.lines,
     payment: {
@@ -2235,14 +2258,15 @@ export function createManualCounterOrder(
       deliveryFee,
       serviceFee,
       tip: 0,
-      discount: 0,
+      discount,
       total,
       paidAt: params.paymentStatus === 'paid' ? now.toISOString() : undefined,
-      paidNote: `Entered manually by ${actor}`,
+      paidNote: `Entered via POS Till / Counter by ${actor}`,
+      splitDetails: params.splitDetails,
     },
     estimatedDeliveryTime: params.fulfilment === 'delivery' ? '~25-35 mins' : '~10-15 mins',
     etaMinutes: params.fulfilment === 'delivery' ? 25 : 12,
-    kitchenNotes: params.notes ? `[MANUAL PHONE/COUNTER] ${params.notes}` : '[MANUAL PHONE/COUNTER ORDER]',
+    kitchenNotes: specialTags ? `[MANUAL POS TILL] ${specialTags}` : '[MANUAL POS TILL ORDER]',
     deliveryDetails: deliveryPin ? { deliveryPin } : undefined,
     timeline: [
       {

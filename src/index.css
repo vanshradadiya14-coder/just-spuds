@@ -300,15 +300,17 @@ body {
 .float-idle { animation: idle-float 9s ease-in-out infinite; will-change: transform; }
 @media (prefers-reduced-motion: reduce) { .float-idle { animation: none; } }
 
-/* --------------------------------------------------- thermal pos receipt print -- */
+/* --------------------------------------------------- thermal pos receipt & z-report print -- */
 @media print {
   body * {
     visibility: hidden;
   }
-  .thermal-receipt, .thermal-receipt * {
+  .thermal-receipt, .thermal-receipt *,
+  .z-report, .z-report * {
     visibility: visible;
   }
-  .thermal-receipt {
+  .thermal-receipt,
+  .z-report {
     position: absolute;
     left: 0;
     top: 0;

@@ -305,6 +305,7 @@ export default function ManualOrderFixModal({
                 <option value="driver_device">Driver Mobile Card Terminal Device</option>
                 <option value="cash">Cash (Counter or Doorstep)</option>
                 <option value="card">Manual Card / Chip &amp; Pin</option>
+                <option value="split">Split Tender (Part Online/Card + Part Cash)</option>
                 <option value="complimentary">Complimentary / Store Courtesy (Comped)</option>
               </select>
             </div>

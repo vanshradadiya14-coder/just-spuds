@@ -12,9 +12,11 @@ const StoryPage = lazy(() => import('./pages/StoryPage'))
 const FindUsPage = lazy(() => import('./pages/FindUsPage'))
 const OrderTrackingPage = lazy(() => import('./pages/OrderTrackingPage'))
 const StaffKDSPage = lazy(() => import('./pages/StaffKDSPage'))
+const StaffPOSPage = lazy(() => import('./pages/StaffPOSPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const DriverDashboardPage = lazy(() => import('./pages/DriverDashboardPage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
+const CustomerFacingDisplayPage = lazy(() => import('./pages/CustomerFacingDisplayPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
 export default function App() {
@@ -43,8 +45,12 @@ export default function App() {
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
 
-              {/* DEDICATED FULLSCREEN STAFF KITCHEN, COURIER & ADMIN PORTALS (Zero Customer Navbar/Banners) */}
+              {/* DEDICATED FULLSCREEN STAFF KITCHEN, TILL POS, COURIER & ADMIN PORTALS (Zero Customer Navbar/Banners) */}
               <Route path="staff" element={<StaffKDSPage />} />
+              <Route path="pos" element={<StaffPOSPage />} />
+              <Route path="till" element={<StaffPOSPage />} />
+              <Route path="cfd" element={<CustomerFacingDisplayPage />} />
+              <Route path="customer-display" element={<CustomerFacingDisplayPage />} />
               <Route path="driver" element={<DriverDashboardPage />} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="login" element={<LoginPage />} />

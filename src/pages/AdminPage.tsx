@@ -701,6 +701,15 @@ export default function AdminPage() {
             </button>
 
             <Link
+              to="/pos"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-emerald-400 transition"
+              title="Open Counter Till with Cash Drawer"
+            >
+              <span>🥔</span>
+              <span>Counter Till POS</span>
+            </Link>
+
+            <Link
               to="/staff"
               className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
             >
