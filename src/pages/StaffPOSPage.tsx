@@ -141,8 +141,12 @@ export default function StaffPOSPage() {
   const [isRushTicket, setIsRushTicket] = useState(false)
   const [customItemNote] = useState('')
 
-  // Starting Float
-  const [startingFloatInput, setStartingFloatInput] = useState<number>(100)
+  // Starting Float - 100% Manual Touch & Keypad Entry
+  const [startingFloatString, setStartingFloatString] = useState<string>('100.00')
+  const [hasManuallyEditedFloat, setHasManuallyEditedFloat] = useState(false)
+
+  // Manual / Custom Amount Item Modal
+  const [isCustomItemModalOpen, setIsCustomItemModalOpen] = useState(false)
 
   // Closing Z-Report Denominations & Loss Prevention Blind Count
   const [closingDenoms, setClosingDenoms] = useState<CashDenominations>({ ...EMPTY_DENOMINATIONS })
@@ -768,10 +772,92 @@ export default function StaffPOSPage() {
     setFastSearchInput('')
   }
 
+  // Manual Float Handlers (Allows any amount, touch numpad, increments, direct typing)
+  const handleFloatNumpadPress = (val: string) => {
+    playPOSTouchTone('tap')
+    if (!hasManuallyEditedFloat) {
+      setHasManuallyEditedFloat(true)
+      if (val === '.') {
+        setStartingFloatString('0.')
+      } else {
+        setStartingFloatString(val)
+      }
+      return
+    }
+
+    if (val === '.') {
+      if (startingFloatString.includes('.')) return
+      setStartingFloatString((prev) => (prev ? `${prev}.` : '0.'))
+      return
+    }
+
+    if (startingFloatString.includes('.')) {
+      const parts = startingFloatString.split('.')
+      if (parts[1] && parts[1].length >= 2) return
+    }
+
+    if (startingFloatString.replace('.', '').length >= 6) return
+
+    setStartingFloatString((prev) => (prev === '0' ? val : `${prev}${val}`))
+  }
+
+  const handleFloatBackspace = () => {
+    playPOSTouchTone('tap')
+    setHasManuallyEditedFloat(true)
+    setStartingFloatString((prev) => {
+      if (prev.length <= 1) return '0'
+      return prev.slice(0, -1)
+    })
+  }
+
+  const handleFloatClear = () => {
+    playPOSTouchTone('tap')
+    setHasManuallyEditedFloat(true)
+    setStartingFloatString('0')
+  }
+
+  const handleFloatAddIncrement = (amount: number) => {
+    playPOSTouchTone('tap')
+    setHasManuallyEditedFloat(true)
+    const current = parseFloat(startingFloatString) || 0
+    const updated = Math.max(0, current + amount)
+    setStartingFloatString(updated.toFixed(2))
+  }
+
+  const handleFloatSetPreset = (amount: number) => {
+    playPOSTouchTone('tap')
+    setHasManuallyEditedFloat(true)
+    setStartingFloatString(amount.toFixed(2))
+  }
+
   const handleOpenShift = () => {
-    if (startingFloatInput < 0) return
-    const floatPence = Math.round(startingFloatInput * 100)
+    playPOSTouchTone('action')
+    const parsed = parseFloat(startingFloatString)
+    const floatVal = isNaN(parsed) || parsed < 0 ? 0 : parsed
+    const floatPence = Math.round(floatVal * 100)
     openTillShift(user?.name || 'Staff Cashier', floatPence)
+  }
+
+  const handleAddCustomLineItem = (name: string, pricePence: number, station: 'spuds' | 'grill' | 'drinks') => {
+    playPOSTouchTone('action')
+    const lineId = `custom-${Date.now()}`
+    const newLine: CartLine = {
+      lineId,
+      productId: `custom-${Date.now()}`,
+      name: name.trim() || 'Custom Food Item',
+      base: pricePence,
+      meal: false,
+      extras: [],
+      sauces: [],
+      image: '',
+      category: 'CUSTOM',
+      qty: 1,
+      station: station,
+      notes: 'Manual Custom Item',
+    }
+    setCartLines((prev) => [...prev, newLine])
+    setSelectedLineId(lineId)
+    setIsCustomItemModalOpen(false)
   }
 
   const filteredProducts = useMemo(() => {
@@ -947,62 +1033,157 @@ export default function StaffPOSPage() {
     )
   }
 
-  // Shift Closed Gate
+  // Shift Closed Gate - 100% Manual Float (Staff can enter ANY amount)
   if (!shift || shift.status === 'closed') {
+    const parsedFloat = parseFloat(startingFloatString)
+    const floatVal = isNaN(parsedFloat) || parsedFloat < 0 ? 0 : parsedFloat
+    const displayFloat = floatVal.toFixed(2)
+
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 select-none">
-        <div className="w-full max-w-md rounded-3xl border border-amber-400/40 bg-gradient-to-b from-slate-900 to-black p-8 shadow-2xl text-center space-y-6">
-          <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl bg-amber-400/20 border border-amber-400/40 text-4xl">
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-3 sm:p-4 select-none">
+        <div className="w-full max-w-md rounded-3xl border border-amber-400/40 bg-gradient-to-b from-slate-900 to-black p-5 sm:p-6 shadow-2xl text-center space-y-4">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-400/20 border border-amber-400/40 text-3xl">
             🔒
           </div>
           <div>
-            <h1 className="display text-2xl font-black text-white">Till Drawer is Locked</h1>
-            <p className="font-body text-xs text-white/60 mt-1">
-              Terminal: <strong>TILL 01</strong> &bull; Cashier: <strong>{user?.name}</strong>
+            <h1 className="display text-2xl font-black text-white tracking-wide">Till Drawer is Locked</h1>
+            <p className="font-body text-xs text-white/60 mt-0.5">
+              Terminal: <strong className="text-amber-400">TILL 01</strong> &bull; Cashier: <strong>{user?.name}</strong>
             </p>
           </div>
 
-          <div className="space-y-4 text-left">
-            <label className="block text-xs font-bold uppercase tracking-wider text-amber-300">
-              Opening Float Amount (£):
-            </label>
+          <div className="space-y-2.5 text-left bg-black/50 border border-white/10 rounded-2xl p-3.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-black uppercase tracking-wider text-amber-300">
+                Opening Cash Float (£):
+              </label>
+              <span className="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                Manual Any Amount
+              </span>
+            </div>
+
+            {/* Readout with manual keyboard typing support */}
             <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-amber-400">£</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-2xl font-black text-amber-400">£</span>
               <input
-                type="number"
-                min={0}
-                step={5}
-                value={startingFloatInput}
-                onChange={(e) => setStartingFloatInput(parseFloat(e.target.value) || 0)}
-                className="w-full rounded-2xl border border-white/20 bg-white/10 pl-10 pr-4 py-3.5 font-mono text-2xl font-bold text-white focus:border-amber-400 focus:outline-none"
+                type="text"
+                inputMode="decimal"
+                value={startingFloatString}
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val === '' || /^\d*\.?\d{0,2}$/.test(val)) {
+                    setStartingFloatString(val)
+                    setHasManuallyEditedFloat(true)
+                  }
+                }}
+                placeholder="0.00"
+                className="w-full rounded-xl border-2 border-amber-400/50 bg-white/10 pl-9 pr-3 py-2 font-mono text-2xl font-black text-white focus:border-amber-400 focus:outline-none text-right"
               />
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
+            {/* Quick Adjust Helpers */}
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <span className="text-[10px] font-bold uppercase text-white/40">Quick Adjust:</span>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  onClick={handleFloatClear}
+                  className="rounded-lg bg-red-950/40 border border-red-500/30 px-2 py-0.5 font-mono text-[10px] font-bold text-red-300 hover:bg-red-900/50 transition"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFloatSetPreset(0)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-white/80 hover:bg-white/15 transition"
+                >
+                  £0 (No Float)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFloatAddIncrement(5)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+                >
+                  +£5
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFloatAddIncrement(10)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+                >
+                  +£10
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFloatAddIncrement(20)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+                >
+                  +£20
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFloatAddIncrement(50)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+                >
+                  +£50
+                </button>
+              </div>
+            </div>
+
+            {/* Standard Bank Bag Presets */}
+            <div className="grid grid-cols-4 gap-1.5 pt-1 border-t border-white/5">
               {[50, 100, 150, 200].map((preset) => (
                 <button
                   key={preset}
                   type="button"
-                  onClick={() => setStartingFloatInput(preset)}
-                  className={`rounded-xl py-2 font-mono text-xs font-bold border transition ${
-                    startingFloatInput === preset
-                      ? 'bg-amber-400 text-ink border-amber-400 shadow-glow'
-                      : 'bg-white/5 text-white border-white/10 hover:bg-white/15'
+                  onClick={() => handleFloatSetPreset(preset)}
+                  className={`rounded-xl py-1 font-mono text-xs font-bold border transition ${
+                    floatVal === preset
+                      ? 'bg-amber-400 text-ink border-amber-400 shadow-glow font-black'
+                      : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/15'
                   }`}
                 >
                   £{preset}
                 </button>
               ))}
             </div>
+
+            {/* Touch Numpad (1-9, ., 0, ⌫) for Touchscreen Cashiers */}
+            <div className="pt-1.5 border-t border-white/10">
+              <div className="grid grid-cols-3 gap-1.5">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((digit) => (
+                  <button
+                    key={digit}
+                    type="button"
+                    onClick={() => handleFloatNumpadPress(digit)}
+                    className="h-10 rounded-xl bg-white/10 border border-white/15 font-mono text-lg font-black text-white hover:bg-white/20 active:scale-95 transition flex items-center justify-center shadow"
+                  >
+                    {digit}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handleFloatBackspace}
+                  className="h-10 rounded-xl bg-red-950/40 border border-red-500/30 font-mono text-base font-black text-red-300 hover:bg-red-900/50 active:scale-95 transition flex items-center justify-center shadow"
+                  title="Backspace"
+                >
+                  ⌫
+                </button>
+              </div>
+            </div>
           </div>
 
           <button
             type="button"
             onClick={handleOpenShift}
-            className="w-full rounded-full bg-amber-400 py-4 font-body text-sm font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition active:scale-95 flex items-center justify-center gap-2"
+            className="w-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 py-3.5 font-body text-sm font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95 flex items-center justify-center gap-2"
           >
             <span>🔓</span>
-            <span>Open Register &amp; Kick Cash Drawer</span>
+            <span>
+              {floatVal === 0
+                ? 'Open Register With £0.00 (No Float)'
+                : `Open Register With £${displayFloat} Float`}
+            </span>
           </button>
 
           <div className="flex justify-between items-center pt-2 border-t border-white/10 text-xs">
@@ -1175,6 +1356,23 @@ export default function StaffPOSPage() {
                 <span className="font-mono text-amber-300 font-bold shrink-0">{gbp(item.price)}</span>
               </button>
             ))}
+
+            {/* Manual Custom Amount Ring-Up */}
+            <button
+              type="button"
+              onClick={() => {
+                playPOSTouchTone('tap')
+                setIsCustomItemModalOpen(true)
+              }}
+              className="w-full mt-2 rounded-xl bg-purple-600/30 border border-purple-400/40 p-2 text-left hover:bg-purple-600 hover:text-white transition flex items-center justify-between text-xs group"
+              title="Add any custom item or amount"
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">➕</span>
+                <span className="text-purple-200 group-hover:text-white font-black uppercase text-[11px]">Manual Item</span>
+              </div>
+              <span className="font-mono text-amber-300 font-bold text-[10px]">Custom £</span>
+            </button>
           </div>
         </aside>
 
@@ -1191,6 +1389,20 @@ export default function StaffPOSPage() {
             >
               <span className="text-base">🥔</span>
               <span>+ Build Custom Jacket Potato (Wizard)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                playPOSTouchTone('tap')
+                setIsCustomItemModalOpen(true)
+              }}
+              className="rounded-xl bg-purple-600/30 border border-purple-400/50 py-2.5 px-3 font-body text-xs font-black uppercase tracking-wider text-purple-200 hover:bg-purple-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1.5 shrink-0 shadow"
+              title="Add any custom item and price directly to this order"
+            >
+              <span className="text-sm">➕</span>
+              <span className="hidden sm:inline">Manual Item /</span>
+              <span>Custom £</span>
             </button>
 
             <div className="w-48 sm:w-60">
@@ -3024,6 +3236,239 @@ export default function StaffPOSPage() {
           </div>
         </div>
       )}
+
+      {/* MANUAL / CUSTOM AMOUNT ITEM MODAL */}
+      <CustomItemModal
+        isOpen={isCustomItemModalOpen}
+        onClose={() => setIsCustomItemModalOpen(false)}
+        onAddCustomItem={handleAddCustomLineItem}
+      />
+    </div>
+  )
+}
+
+function CustomItemModal({
+  isOpen,
+  onClose,
+  onAddCustomItem,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  onAddCustomItem: (name: string, pricePence: number, station: 'spuds' | 'grill' | 'drinks') => void
+}) {
+  const [name, setName] = useState('Custom Food Item')
+  const [priceString, setPriceString] = useState('')
+  const [station, setStation] = useState<'spuds' | 'grill' | 'drinks'>('spuds')
+
+  if (!isOpen) return null
+
+  const handleNumpad = (val: string) => {
+    playPOSTouchTone('tap')
+    if (val === '.') {
+      if (priceString.includes('.')) return
+      setPriceString((prev) => (prev ? `${prev}.` : '0.'))
+      return
+    }
+    if (priceString.includes('.')) {
+      const parts = priceString.split('.')
+      if (parts[1] && parts[1].length >= 2) return
+    }
+    if (priceString.replace('.', '').length >= 5) return
+    setPriceString((prev) => (prev === '0' ? val : `${prev}${val}`))
+  }
+
+  const handleBackspace = () => {
+    playPOSTouchTone('tap')
+    setPriceString((prev) => {
+      if (prev.length <= 1) return ''
+      return prev.slice(0, -1)
+    })
+  }
+
+  const handleAddInc = (inc: number) => {
+    playPOSTouchTone('tap')
+    const curr = parseFloat(priceString) || 0
+    setPriceString((curr + inc).toFixed(2))
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const val = parseFloat(priceString)
+    if (isNaN(val) || val <= 0) {
+      alert('Please enter a valid price amount greater than £0.00')
+      return
+    }
+    const pence = Math.round(val * 100)
+    onAddCustomItem(name, pence, station)
+  }
+
+  const parsed = parseFloat(priceString) || 0
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-md">
+      <div className="w-full max-w-md rounded-3xl border border-purple-500/40 bg-slate-900 p-5 sm:p-6 shadow-2xl space-y-4 text-white font-body my-auto">
+        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">➕</span>
+            <div>
+              <h3 className="display text-lg font-black text-white">Manual Item / Custom £</h3>
+              <p className="text-xs text-white/60">Staff can enter any custom food item &amp; amount</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="text-white/60 hover:text-white">✕</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="text-[10px] font-black uppercase text-purple-300">Item Description / Name:</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Special Deal, Extra Filling, Side Dish..."
+              className="w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-sm text-white font-bold focus:border-purple-400 focus:outline-none mt-1"
+              required
+            />
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {['Custom Food Item', 'Extra Spud Filling', 'Special Combo', 'Side Dish', 'Price Adjustment'].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => { playPOSTouchTone('tap'); setName(preset) }}
+                  className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] text-white/80 hover:bg-purple-600 hover:text-white transition"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase text-amber-300">Custom Price (£):</label>
+              <span className="text-[10px] text-white/40">Staff Can Enter Any Amount</span>
+            </div>
+            <div className="relative mt-1">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-2xl font-black text-amber-400">£</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={priceString}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setPriceString(v)
+                }}
+                placeholder="0.00"
+                className="w-full rounded-xl border-2 border-amber-400/50 bg-black/50 pl-9 pr-3 py-2 font-mono text-2xl font-black text-white focus:border-amber-400 focus:outline-none text-right"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-1 mt-1.5">
+              <span className="text-[10px] font-bold text-white/40 uppercase">Quick Add:</span>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  onClick={() => { playPOSTouchTone('tap'); setPriceString('') }}
+                  className="rounded-lg bg-red-950/40 border border-red-500/30 px-2 py-0.5 font-mono text-[10px] font-bold text-red-300 hover:bg-red-900/50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddInc(0.5)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
+                >
+                  +£0.50
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddInc(1.0)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
+                >
+                  +£1.00
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddInc(2.0)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
+                >
+                  +£2.00
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddInc(5.0)}
+                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
+                >
+                  +£5.00
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 mt-2">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => handleNumpad(d)}
+                  className="h-9 rounded-xl bg-white/10 border border-white/10 font-mono text-base font-bold text-white hover:bg-white/20 active:scale-95 transition flex items-center justify-center"
+                >
+                  {d}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={handleBackspace}
+                className="h-9 rounded-xl bg-red-950/40 border border-red-500/30 font-mono text-sm font-bold text-red-300 hover:bg-red-900/50 active:scale-95 transition flex items-center justify-center"
+              >
+                ⌫
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black uppercase text-white/60">Send Ticket To Station:</label>
+            <div className="grid grid-cols-3 gap-1.5 mt-1">
+              <button
+                type="button"
+                onClick={() => { playPOSTouchTone('tap'); setStation('spuds') }}
+                className={`py-1.5 rounded-xl text-[11px] font-bold border transition ${
+                  station === 'spuds' ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'
+                }`}
+              >
+                🥔 Spuds (Oven)
+              </button>
+              <button
+                type="button"
+                onClick={() => { playPOSTouchTone('tap'); setStation('grill') }}
+                className={`py-1.5 rounded-xl text-[11px] font-bold border transition ${
+                  station === 'grill' ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'
+                }`}
+              >
+                🔥 Grill / Panini
+              </button>
+              <button
+                type="button"
+                onClick={() => { playPOSTouchTone('tap'); setStation('drinks') }}
+                className={`py-1.5 rounded-xl text-[11px] font-bold border transition ${
+                  station === 'drinks' ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'
+                }`}
+              >
+                🥤 Drinks / Front
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={parsed <= 0}
+            className="w-full rounded-full bg-gradient-to-r from-purple-500 to-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:opacity-95 transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+          >
+            <span>➕</span>
+            <span>Add {parsed > 0 ? `£${parsed.toFixed(2)}` : ''} Custom Item To Bill</span>
+          </button>
+        </form>
+      </div>
     </div>
   )
 }

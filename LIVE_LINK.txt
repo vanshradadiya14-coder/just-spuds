@@ -1,0 +1,24 @@
+=====================================================
+JUST SPUDS AYLESBURY - ACTIVE LIVE PREVIEW & TILL LINK
+=====================================================
+
+1. Live Public Tunnel Link (Accessible worldwide):
+   Main Storefront:
+   https://vertical-org-choir-screens.trycloudflare.com
+
+   Staff POS & EPOS Till Terminal (PIN: 2468):
+   https://vertical-org-choir-screens.trycloudflare.com/pos
+
+   Customer-Facing Display (CFD Second Screen):
+   https://vertical-org-choir-screens.trycloudflare.com/cfd
+
+   Kitchen Display System (KDS):
+   https://vertical-org-choir-screens.trycloudflare.com/kds
+
+2. Permanent Production Domain (Vercel Global CDN):
+   https://www.justspuds.uk
+   https://just-spuds.vercel.app
+
+Status: ONLINE & ACTIVE
+Tunnel Type: Cloudflare Secure Quick Tunnel (SSL / HTTPS)
+=====================================================
