@@ -62,6 +62,13 @@ export interface Product {
   allergens?: string[]
   popular?: boolean
   pairedWith?: string[]
+  // Retail EPOS & Inventory Fields
+  barcode?: string
+  costPrice?: number // Cost price in pence for profit margin calculations
+  vatRate?: number // 20 for standard VAT rate (hot food/catering), 0 for zero-rated
+  stockQuantity?: number // Current stock quantity count
+  lowStockThreshold?: number // Low-stock threshold warning (default: 5)
+  channelVisibility?: 'all' | 'in_store_only' | 'online_only' // Multi-channel availability
 }
 
 export interface ChefPreset {
@@ -540,7 +547,6 @@ export const RICE_BOXES = PRODUCTS.filter((p) => p.category === 'RICE_BOXES')
 export const BAGUETTES = PRODUCTS.filter((p) => p.category === 'BAGUETTES')
 export const PANINIS = PRODUCTS.filter((p) => p.category === 'PANINIS')
 export const SALADS = PRODUCTS.filter((p) => p.category === 'SALADS')
-export const DRINKS = PRODUCTS.filter((p) => p.category === 'COLD_DRINKS' || p.category === 'HOT_DRINKS')
 export const SNACKS = PRODUCTS.filter((p) => p.category === 'SNACKS')
 
 const DYNAMIC_PRODUCTS_KEY = 'just_spuds_dynamic_products_v1'
@@ -611,10 +617,6 @@ export const optionPrice = (id: string, category: CategoryId): number => {
   if (category === 'PANINIS') return PANINI_EXTRAS.find((o) => o.id === id)?.price ?? 0
   if (category === 'SALADS') return SALAD_EXTRAS.find((o) => o.id === id)?.price ?? 0
   return 0
-}
-
-export const productsByCategory = (id: CategoryId): Product[] => {
-  return getAllProducts().filter((p) => p.category === id)
 }
 
 export const getProduct = (id: string): Product | undefined => {

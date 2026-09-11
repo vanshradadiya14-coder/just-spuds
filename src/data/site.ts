@@ -318,13 +318,3 @@ export function getStoreStatus(
     closingTime: closeLabel,
   }
 }
-
-export function isStoreOpen(
-  now: Date = new Date(),
-  pauseInfo?: KitchenPauseInfo | null,
-  hours?: StoreHoursConfig,
-): boolean {
-  return getStoreStatus(now, pauseInfo, hours).isOpen
-}
-
-

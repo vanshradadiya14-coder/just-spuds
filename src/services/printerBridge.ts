@@ -61,17 +61,40 @@ function notifyStatus() {
 }
 
 /**
+ * One AudioContext for every till sound. Creating a new context per tap (as
+ * this used to) leaks them and browsers cap how many can exist at once, so
+ * after a few dozen taps the sounds silently stopped.
+ */
+let sharedAudioContext: AudioContext | null = null
+function getSharedAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  if (!sharedAudioContext) {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtx) return null
+    sharedAudioContext = new AudioCtx()
+  }
+  if (sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume().catch(() => {})
+  }
+  return sharedAudioContext
+}
+
+/** Mirrors TillSettings.touchSounds; tillStore keeps it in sync. */
+let touchSoundsEnabled = true
+export function setTouchSoundsEnabled(enabled: boolean) {
+  touchSoundsEnabled = enabled
+}
+
+/**
  * Web Audio Synthesizer: Authentic Cash Register Till Ding / "Cha-Ching"
  * Provides instant audio feedback when cash drawer opens or money is tendered
  */
 export function playCashRegisterChime() {
-  if (typeof window === 'undefined') return
+  const ctx = getSharedAudioContext()
+  if (!ctx) return
   try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    if (!AudioCtx) return
-    const ctx = new AudioCtx()
     const now = ctx.currentTime
 
     // 1. Crisp bell ding (Metallic high overtone)
@@ -119,13 +142,10 @@ export function playCashRegisterChime() {
  * Delivers satisfying micro-audio response on screen button taps
  */
 export function playPOSTouchTone(type: 'tap' | 'numpad' | 'comp' | 'action' = 'tap') {
-  if (typeof window === 'undefined') return
+  if (!touchSoundsEnabled) return
+  const ctx = getSharedAudioContext()
+  if (!ctx) return
   try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    if (!AudioCtx) return
-    const ctx = new AudioCtx()
     const now = ctx.currentTime
 
     if (type === 'tap') {

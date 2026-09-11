@@ -4,9 +4,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
-  onAuthStateChanged,
   type Auth,
-  type User as FirebaseUser,
 } from 'firebase/auth'
 import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics'
 
@@ -123,9 +121,4 @@ export async function signOutFromFirebase(): Promise<void> {
       // Ignore
     }
   }
-}
-
-export function subscribeFirebaseAuthState(callback: (user: FirebaseUser | null) => void): () => void {
-  if (!auth) return () => {}
-  return onAuthStateChanged(auth, callback)
 }

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-epos.mjs",
     "assets": "node scripts/fetch-assets.mjs",
     "share": "lt --port 5173",
     "tunnel": "untun tunnel --port 5173"

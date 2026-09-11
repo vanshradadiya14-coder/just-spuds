@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   getCurrentShift,
@@ -21,6 +21,8 @@ import {
   subscribeOrders,
   updateOrderStatus,
   createManualCounterOrder,
+  refundOrder,
+  getOrderById,
   type Order,
 } from '../services/orderStore'
 import {
@@ -29,20 +31,19 @@ import {
   loginWithPin,
   logout,
   hasRole,
+  verifyManagerPin,
+  isManagerOrAdmin,
+  SHOP_FLOOR_ROLES,
   type AuthUser,
 } from '../services/authStore'
-import { getProducts, subscribeMenu } from '../services/menuStore'
+import { getProducts, subscribeMenu, getProductByBarcode, isListedInStore, isOutOfStock } from '../services/menuStore'
+import { logAuditEvent } from '../services/auditStore'
 import { CATEGORIES, type Product } from '../data/menu'
 import { lineUnitPrice, type CartLine, type CartLineModifier, type ModifierType } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
-import {
-  triggerBrowserPrint,
-  getPrinterStatus,
-  subscribePrinterStatus,
-  playPOSTouchTone,
-  type PrinterDeviceStatus,
-} from '../services/printerBridge'
+import { triggerBrowserPrint, playPOSTouchTone } from '../services/printerBridge'
+import TillSettingsModal from '../components/TillSettingsModal'
 import {
   notifyNewOnlineOrder,
   dismissOrderAlert,
@@ -65,6 +66,9 @@ const FAST_BAR_ITEMS = [
   { id: 'snack-cheese-onion', name: 'Walkers Cheese & Onion', price: 100, icon: '🧀', cat: 'SNACKS' },
 ]
 
+type ButterChoice = 'salted' | 'garlic' | 'vegan' | 'none'
+type KitchenStation = 'spuds' | 'grill' | 'drinks'
+
 export default function StaffPOSPage() {
   useDocumentMeta({
     title: 'Food Store Till & POS Terminal',
@@ -79,7 +83,6 @@ export default function StaffPOSPage() {
   // Shift & Till State
   const [shift, setShift] = useState<TillShift | null>(() => getCurrentShift())
   const [tillSettings, setSettings] = useState(() => getTillSettings())
-  const [, setPrinterStatus] = useState<PrinterDeviceStatus>(() => getPrinterStatus())
 
   // Menu & Products
   const [products, setProducts] = useState<Product[]>(() => getProducts())
@@ -130,19 +133,19 @@ export default function StaffPOSPage() {
   const [splitCustomerCashGiven, setSplitCustomerCashGiven] = useState<string>('')
 
   // Toast-Style Conversational Modifiers State
-  const [selectedButter, setSelectedButter] = useState<'salted' | 'garlic' | 'vegan' | 'none'>('salted')
+  const [selectedButter, setSelectedButter] = useState<ButterChoice>('salted')
   const [conversationalMods, setConversationalMods] = useState<Record<string, ModifierType>>({})
   const [selectedSauces, setSelectedSauces] = useState<string[]>([])
   const [isMealDealCombo, setIsMealDealCombo] = useState(false)
   const [selectedMealDrink] = useState('cold-coke')
   const [selectedMealSnack] = useState('snack-ready-salted')
   const [speedTags, setSpeedTags] = useState<string[]>([])
-  const [selectedStation, setSelectedStation] = useState<'spuds' | 'grill' | 'drinks'>('spuds')
+  const [selectedStation, setSelectedStation] = useState<KitchenStation>('spuds')
   const [isRushTicket, setIsRushTicket] = useState(false)
   const [customItemNote] = useState('')
 
   // Starting Float - 100% Manual Touch & Keypad Entry
-  const [startingFloatString, setStartingFloatString] = useState<string>('100.00')
+  const [startingFloatString, setStartingFloatString] = useState<string>(() => (getTillSettings().defaultFloatPence / 100).toFixed(2))
   const [hasManuallyEditedFloat, setHasManuallyEditedFloat] = useState(false)
 
   // Manual / Custom Amount Item Modal
@@ -160,18 +163,51 @@ export default function StaffPOSPage() {
 
   // Online Order Siren Alerts
   const [activeAlerts, setActiveAlerts] = useState<OnlineOrderAlert[]>([])
+  const seenAlertIds = useRef<Set<string>>(new Set())
   const [currentTime, setCurrentTime] = useState(new Date())
+
+  // Safe Tender & Payment Terminal Simulation Modals
+  const [isCashConfirmModalOpen, setIsCashConfirmModalOpen] = useState(false)
+  const [isCardTerminalModalOpen, setIsCardTerminalModalOpen] = useState(false)
+  const [cardTerminalStep, setCardTerminalStep] = useState<'waiting' | 'processing' | 'approved'>('waiting')
+
+  // Manager PIN Authorization Gate
+  const [isManagerAuthModalOpen, setIsManagerAuthModalOpen] = useState(false)
+  const [managerActionTitle, setManagerActionTitle] = useState('')
+  const [managerActionDescription, setManagerActionDescription] = useState('')
+  const [onManagerApproved, setOnManagerApproved] = useState<((mgrName: string) => void) | null>(null)
+  const [managerPinInput, setManagerPinInput] = useState('')
+  const [managerPinError, setManagerPinError] = useState<string | null>(null)
+
+  // Recent Completed Orders, Receipts & Refunds
+  const [isRecentSalesModalOpen, setIsRecentSalesModalOpen] = useState(false)
+  const [allOrdersList, setAllOrdersList] = useState<Order[]>([])
+
+  // Barcode / SKU Hardware & Manual Entry
+  const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [barcodeInput, setBarcodeInput] = useState('')
 
   // Subscriptions
   useEffect(() => {
     const unsubAuth = subscribeAuth((u) => setUser(u))
     const unsubShift = subscribeShift((s) => setShift(s))
     const unsubSettings = subscribeTillSettings((st) => setSettings(st))
-    const unsubPrinter = subscribePrinterStatus((p) => setPrinterStatus(p))
-    const unsubAlerts = subscribeOrderAlerts((a) => setActiveAlerts(a))
+    const unsubAlerts = subscribeOrderAlerts((a) => {
+      // "Receipt when an online order arrives": pop the ticket for anything
+      // that wasn't already in the queue, without accepting it.
+      const fresh = a.find((alert) => !seenAlertIds.current.has(alert.orderId))
+      a.forEach((alert) => seenAlertIds.current.add(alert.orderId))
+      if (fresh && getTillSettings().autoPrintOnline) {
+        const order = getOrderById(fresh.orderId)
+        if (order) setReceiptOrder(order)
+      }
+      setActiveAlerts(a)
+    })
     const unsubMenu = subscribeMenu(() => setProducts(getProducts()))
 
     const unsubOrders = subscribeOrders((allOrders) => {
+      setAllOrdersList(allOrders)
       const placedOnline = allOrders.filter(
         (o) =>
           o.status === 'placed' &&
@@ -193,19 +229,50 @@ export default function StaffPOSPage() {
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
 
+    // Hardware USB/Bluetooth Barcode Scanner Listener (fast keystrokes ending in Enter)
+    let buffer = ''
+    let lastKeyTime = 0
+
+    const handleBarcodeKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
+
+      const now = Date.now()
+      if (now - lastKeyTime > 150) {
+        buffer = ''
+      }
+      lastKeyTime = now
+
+      if (e.key === 'Enter') {
+        if (buffer.length >= 3) {
+          e.preventDefault()
+          const prod = getProductByBarcode(buffer)
+          if (prod) {
+            handleItemClick(prod)
+            playPOSTouchTone('action')
+          }
+        }
+        buffer = ''
+      } else if (e.key.length === 1) {
+        buffer += e.key
+      }
+    }
+
+    window.addEventListener('keydown', handleBarcodeKey)
+
     return () => {
       unsubAuth()
       unsubShift()
       unsubSettings()
-      unsubPrinter()
       unsubAlerts()
       unsubOrders()
       unsubMenu()
       clearInterval(timer)
+      window.removeEventListener('keydown', handleBarcodeKey)
     }
   }, [])
 
-  const isAuthorized = hasRole(user, ['STAFF', 'STORE_MANAGER', 'ADMIN'])
+  const isAuthorized = hasRole(user, SHOP_FLOOR_ROLES)
 
   const handlePinSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -423,16 +490,42 @@ export default function StaffPOSPage() {
     )
   }
 
+  // Manager Authorization Helper
+  const requireManagerAuth = (title: string, desc: string, onSuccess: (mgrName: string) => void) => {
+    if (isManagerOrAdmin(user?.role)) {
+      onSuccess(user?.name || 'Authorized Manager')
+      logAuditEvent(user?.name || 'Manager', 'manager.override', title, desc)
+      return
+    }
+
+    setManagerActionTitle(title)
+    setManagerActionDescription(desc)
+    setManagerPinInput('')
+    setManagerPinError(null)
+    setOnManagerApproved(() => (mgrName: string) => {
+      onSuccess(mgrName)
+      logAuditEvent(mgrName, 'manager.override', title, `${desc} (Approved for cashier ${user?.name || 'Staff'})`)
+      setIsManagerAuthModalOpen(false)
+    })
+    setIsManagerAuthModalOpen(true)
+  }
+
   const handleVoidSelectedLine = () => {
     if (!selectedLineId) return
-    playPOSTouchTone('action')
-    setCartLines((prev) => prev.filter((l) => l.lineId !== selectedLineId))
-    setSelectedLineId(null)
+    const lineToVoid = cartLines.find((l) => l.lineId === selectedLineId)
+    const lineDesc = lineToVoid ? `${lineToVoid.qty}x ${lineToVoid.name}` : 'Line Item'
+
+    requireManagerAuth('Void Line Item', `Authorize voiding of item: ${lineDesc}`, (mgrName) => {
+      playPOSTouchTone('action')
+      setCartLines((prev) => prev.filter((l) => l.lineId !== selectedLineId))
+      setSelectedLineId(null)
+      logAuditEvent(mgrName, 'pos.void_line', lineDesc, `Line voided by ${mgrName}`)
+    })
   }
 
   const handleClearAllTicket = () => {
     if (cartLines.length === 0) return
-    if (confirm('VOID entire active ticket?')) {
+    requireManagerAuth('Void Entire Ticket', `Authorize full void of active ticket (${cartLines.length} items, ${gbp(subtotalPence)})`, (mgrName) => {
       playPOSTouchTone('action')
       setCartLines([])
       setDiscountPercent(0)
@@ -443,7 +536,8 @@ export default function StaffPOSPage() {
       setTenderNumpadValue('')
       setSelectedLineId(null)
       resetCFDState()
-    }
+      logAuditEvent(mgrName, 'pos.void_ticket', 'Entire Ticket Voided', `Ticket cleared with ${cartLines.length} items totaling ${gbp(subtotalPence)}`)
+    })
   }
 
   const handleParkTicket = () => {
@@ -501,8 +595,24 @@ export default function StaffPOSPage() {
     setTenderNumpadValue(amountPounds.toFixed(2))
   }
 
-  // Single Tender Finalization (CASH or CARD)
+  // Safe Payment Initiation (Routes to confirmation modal)
   const handleCompletePayment = (method: 'cash' | 'card') => {
+    if (cartLines.length === 0) return
+    playPOSTouchTone('tap')
+
+    if (method === 'cash') {
+      if (!tenderNumpadValue || parseFloat(tenderNumpadValue) <= 0) {
+        setTenderNumpadValue((totalDuePence / 100).toFixed(2))
+      }
+      setIsCashConfirmModalOpen(true)
+    } else if (method === 'card') {
+      setCardTerminalStep('waiting')
+      setIsCardTerminalModalOpen(true)
+    }
+  }
+
+  // Safe Single Tender Finalization (Executed after confirmation)
+  const executeFinalizePayment = (method: 'cash' | 'card') => {
     if (cartLines.length === 0) return
     playPOSTouchTone('action')
 
@@ -556,6 +666,8 @@ export default function StaffPOSPage() {
     setDiscountFixedPence(0)
     setTenderNumpadValue('')
     setSelectedLineId(null)
+    setIsCashConfirmModalOpen(false)
+    setIsCardTerminalModalOpen(false)
   }
 
   // Split Payment Handlers (e.g. Some online/card and rest cash)
@@ -655,19 +767,30 @@ export default function StaffPOSPage() {
     setIsSplitModalOpen(false)
   }
 
-  // Toast-Style Comps & Manager Discounts
+  // Toast-Style Comps & Manager Discounts (Manager PIN required for > 20%)
   const handleApplyComp = (percent: number, customReason?: string) => {
-    playPOSTouchTone('comp')
-    if (percent === 100) {
-      setDiscountPercent(0)
-      setDiscountFixedPence(subtotalPence)
-      const reasonUsed = customReason || compReason || '100% Manager Courtesy'
-      setCustomerName((prev) => prev ? `${prev} (COMP: ${reasonUsed})` : `COMP: ${reasonUsed}`)
-    } else {
-      setDiscountFixedPence(0)
-      setDiscountPercent(percent)
+    const applyLogic = (mgrName: string) => {
+      playPOSTouchTone('comp')
+      if (percent === 100) {
+        setDiscountPercent(0)
+        setDiscountFixedPence(subtotalPence)
+        const reasonUsed = customReason || compReason || '100% Manager Courtesy'
+        setCustomerName((prev) => (prev ? `${prev} (COMP: ${reasonUsed})` : `COMP: ${reasonUsed}`))
+      } else {
+        setDiscountFixedPence(0)
+        setDiscountPercent(percent)
+      }
+      setIsCompsModalOpen(false)
+      logAuditEvent(mgrName, 'pos.discount', `${percent}% Discount Applied`, `Reason: ${customReason || compReason || 'Courtesy'}`)
     }
-    setIsCompsModalOpen(false)
+
+    if (percent > 20) {
+      requireManagerAuth('Manual Discount Override', `Authorize ${percent}% discount on order totaling ${gbp(subtotalPence)}`, (mgrName) => {
+        applyLogic(mgrName)
+      })
+    } else {
+      applyLogic(user?.name || 'Staff Cashier')
+    }
   }
 
   const handleClearDiscounts = () => {
@@ -862,6 +985,7 @@ export default function StaffPOSPage() {
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
+      if (!isListedInStore(p)) return false
       const matchCat = selectedCategory === 'ALL' || p.category === selectedCategory
       const matchSearch =
         !searchQuery.trim() ||
@@ -1248,9 +1372,37 @@ export default function StaffPOSPage() {
 
           <button
             type="button"
-            onClick={() => setIsNoSaleModalOpen(true)}
+            onClick={() => setIsRecentSalesModalOpen(true)}
+            className="rounded-xl border border-sky-400/40 bg-sky-500/10 px-2.5 py-1 text-xs font-bold text-sky-300 hover:bg-sky-400 hover:text-ink transition flex items-center gap-1"
+            title="Search orders, reprint receipts, or process refunds"
+          >
+            <span>🧾</span>
+            <span className="hidden sm:inline">Orders &amp; Refunds</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              requireManagerAuth('Till Settings', 'Printer, drawer, sounds and float defaults', () => {
+                setIsSettingsModalOpen(true)
+              })
+            }}
             className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-bold text-white hover:bg-white/20 transition active:scale-95 flex items-center gap-1"
-            title="Open Cash Drawer without a sale"
+            title="Till settings (Manager PIN required)"
+            aria-label="Till settings"
+          >
+            <span>⚙️</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              requireManagerAuth('No Sale Drawer Kick', 'Authorize manual cash drawer opening without a sale', () => {
+                setIsNoSaleModalOpen(true)
+              })
+            }}
+            className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-bold text-white hover:bg-white/20 transition active:scale-95 flex items-center gap-1"
+            title="Open Cash Drawer without a sale (Manager PIN required)"
           >
             <span>🔓</span>
             <span className="hidden sm:inline">No Sale</span>
@@ -1405,49 +1557,101 @@ export default function StaffPOSPage() {
               <span>Custom £</span>
             </button>
 
-            <div className="w-48 sm:w-60">
+            <button
+              type="button"
+              onClick={() => {
+                playPOSTouchTone('tap')
+                setIsBarcodeModalOpen(true)
+              }}
+              className="rounded-xl bg-sky-600/20 border border-sky-400/40 py-2.5 px-3 font-body text-xs font-bold text-sky-300 hover:bg-sky-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1 shrink-0"
+              title="Quick Barcode or SKU Scanner"
+            >
+              <span>📟</span>
+              <span className="hidden sm:inline">Barcode / SKU</span>
+            </button>
+
+            <div className="w-44 sm:w-56">
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="🔍 Search menu..."
+                placeholder="🔍 Search menu or SKU..."
                 className="w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-white placeholder-white/40 focus:border-amber-400 focus:outline-none"
               />
             </div>
           </div>
 
           <div className="flex-1 p-3 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 auto-rows-max">
-            {filteredProducts.map((prod) => (
-              <button
-                key={prod.id}
-                type="button"
-                onClick={() => handleItemClick(prod)}
-                className="rounded-2xl border border-white/15 bg-slate-900 p-3 text-left transition hover:border-amber-400 hover:bg-slate-800 active:scale-95 shadow-md flex flex-col justify-between min-h-[110px] group"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-1">
-                    <h3 className="font-body text-xs font-black text-white line-clamp-2 group-hover:text-amber-300">
-                      {prod.name}
-                    </h3>
-                    {prod.vegetarian && (
-                      <span className="text-[10px] shrink-0" title="Vegetarian">🌿</span>
-                    )}
-                  </div>
-                  <p className="font-body text-[10px] text-white/50 line-clamp-1 mt-1">
-                    {prod.description}
-                  </p>
-                </div>
+            {filteredProducts.map((prod) => {
+              const soldOut = isOutOfStock(prod) || prod.available === false
+              const isLowStock = !soldOut && typeof prod.stockQuantity === 'number' && prod.stockQuantity <= (prod.lowStockThreshold || 5)
 
-                <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between">
-                  <span className="font-mono text-sm font-black text-amber-300">
-                    {gbp(prod.price)}
-                  </span>
-                  <span className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white group-hover:bg-amber-400 group-hover:text-ink transition">
-                    + Add
-                  </span>
-                </div>
-              </button>
-            ))}
+              return (
+                <button
+                  key={prod.id}
+                  type="button"
+                  disabled={soldOut}
+                  onClick={() => handleItemClick(prod)}
+                  className={`rounded-2xl border p-3 text-left transition flex flex-col justify-between min-h-[115px] group shadow-md ${
+                    soldOut
+                      ? 'border-red-500/20 bg-slate-900/40 opacity-60 cursor-not-allowed'
+                      : 'border-white/15 bg-slate-900 hover:border-amber-400 hover:bg-slate-800 active:scale-95'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-1">
+                      <h3 className={`font-body text-xs font-black line-clamp-2 ${soldOut ? 'text-white/50' : 'text-white group-hover:text-amber-300'}`}>
+                        {prod.name}
+                      </h3>
+                      {prod.vegetarian && (
+                        <span className="text-[10px] shrink-0" title="Vegetarian">🌿</span>
+                      )}
+                    </div>
+                    <p className="font-body text-[10px] text-white/50 line-clamp-1 mt-0.5">
+                      {prod.description}
+                    </p>
+
+                    {/* Stock & Channel Tags */}
+                    <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+                      {soldOut ? (
+                        <span className="rounded bg-red-950/90 border border-red-500/60 px-1.5 py-0.2 text-[9px] font-black text-red-300 tracking-wider">
+                          SOLD OUT
+                        </span>
+                      ) : isLowStock ? (
+                        <span className="rounded bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.2 text-[9px] font-bold text-amber-300">
+                          ⚠️ Low: {prod.stockQuantity}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-white/40 font-mono">
+                          Stock: {prod.stockQuantity ?? 45}
+                        </span>
+                      )}
+
+                      {prod.channelVisibility === 'in_store_only' && (
+                        <span className="rounded bg-purple-950/60 border border-purple-500/30 px-1 py-0.2 text-[8px] font-bold text-purple-300">
+                          Store Only
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between">
+                    <span className="font-mono text-sm font-black text-amber-300">
+                      {gbp(prod.price)}
+                    </span>
+                    <span
+                      className={`rounded-lg px-2 py-0.5 text-[10px] font-bold transition ${
+                        soldOut
+                          ? 'bg-red-950/40 text-red-400'
+                          : 'bg-white/10 text-white group-hover:bg-amber-400 group-hover:text-ink'
+                      }`}
+                    >
+                      {soldOut ? 'Out' : '+ Add'}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
           </div>
         </section>
 
@@ -2250,16 +2454,16 @@ export default function StaffPOSPage() {
                   1. Butter Choice:
                 </label>
                 <div className="grid grid-cols-4 gap-2">
-                  {[
+                  {([
                     { id: 'salted', label: '🧈 Real Butter' },
                     { id: 'garlic', label: '🧄 Garlic Butter' },
                     { id: 'vegan', label: '🌱 Flora Vegan' },
                     { id: 'none', label: '🚫 No Butter' },
-                  ].map((b) => (
+                  ] as { id: ButterChoice; label: string }[]).map((b) => (
                     <button
                       key={b.id}
                       type="button"
-                      onClick={() => setSelectedButter(b.id as any)}
+                      onClick={() => setSelectedButter(b.id)}
                       className={`rounded-xl py-2.5 px-2 text-xs font-bold border text-center transition ${
                         selectedButter === b.id
                           ? 'bg-amber-400 text-ink border-amber-400 shadow-glow font-black'
@@ -2505,17 +2709,17 @@ export default function StaffPOSPage() {
                   Kitchen Station Routing:
                 </label>
                 <div className="grid grid-cols-3 gap-1">
-                  {[
+                  {([
                     { id: 'spuds', label: '🥔 Oven' },
                     { id: 'grill', label: '🔥 Grill' },
                     { id: 'drinks', label: '🥤 Bar' },
-                  ].map((st) => (
+                  ] as { id: KitchenStation; label: string }[]).map((st) => (
                     <button
                       key={st.id}
                       type="button"
                       onClick={() => {
                         playPOSTouchTone('tap')
-                        setSelectedStation(st.id as any)
+                        setSelectedStation(st.id)
                       }}
                       className={`rounded-lg py-1.5 text-[11px] font-bold border text-center transition ${
                         selectedStation === st.id
@@ -2707,7 +2911,7 @@ export default function StaffPOSPage() {
                 Physical Cash Drawer Count:
               </p>
               <div className="grid grid-cols-3 gap-2 text-xs">
-                {[
+                {([
                   { key: 'note50', label: '£50 Notes' },
                   { key: 'note20', label: '£20 Notes' },
                   { key: 'note10', label: '£10 Notes' },
@@ -2717,13 +2921,13 @@ export default function StaffPOSPage() {
                   { key: 'coin50p', label: '50p Coins' },
                   { key: 'coin20p', label: '20p Coins' },
                   { key: 'coin10p', label: '10p Coins' },
-                ].map(({ key, label }) => (
+                ] as { key: keyof CashDenominations; label: string }[]).map(({ key, label }) => (
                   <div key={key} className="rounded-xl border border-white/10 bg-white/5 p-2">
                     <span className="text-[10px] text-white/60 font-bold block">{label}</span>
                     <input
                       type="number"
                       min={0}
-                      value={(closingDenoms as any)[key] || ''}
+                      value={closingDenoms[key] || ''}
                       onChange={(e) => {
                         const val = parseInt(e.target.value) || 0
                         setClosingDenoms((prev) => ({ ...prev, [key]: val }))
@@ -2831,6 +3035,10 @@ export default function StaffPOSPage() {
         </div>
       )}
 
+      {isSettingsModalOpen && (
+        <TillSettingsModal onClose={() => setIsSettingsModalOpen(false)} actor={user?.name || 'Manager'} />
+      )}
+
       {/* MODAL: PAY IN / PAY OUT (PETTY CASH) */}
       {isPayInOutModalOpen && (
         <PayInOutModal
@@ -2895,9 +3103,11 @@ export default function StaffPOSPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        updateOrderStatus(alert.orderId, 'accepted')
+                        // Open the ticket in the receipt modal rather than calling
+                        // window.print() directly — that printed the till screen.
+                        const accepted = updateOrderStatus(alert.orderId, 'accepted')
                         dismissOrderAlert(alert.orderId)
-                        triggerBrowserPrint()
+                        if (accepted) setReceiptOrder(accepted)
                       }}
                       className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-ink hover:bg-emerald-400 shadow"
                     >
@@ -3232,6 +3442,459 @@ export default function StaffPOSPage() {
                     <span className="font-mono text-xs font-black">{gbp(product.price)}</span>
                   </button>
                 ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAFE TENDER: CASH CONFIRMATION MODAL */}
+      {isCashConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="w-full max-w-md rounded-3xl border border-emerald-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">💵</span>
+                <div>
+                  <h3 className="font-black text-base text-white">Confirm Cash Tender</h3>
+                  <p className="text-xs text-white/60">Ensure change is counted accurately before completing</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCashConfirmModalOpen(false)}
+                className="text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-black/50 border border-white/10 p-3 text-center">
+                <span className="text-[10px] font-bold uppercase text-white/50 block">Total Due</span>
+                <span className="font-mono text-2xl font-black text-amber-400">{gbp(totalDuePence)}</span>
+              </div>
+              <div className="rounded-2xl bg-black/50 border border-white/10 p-3 text-center">
+                <span className="text-[10px] font-bold uppercase text-white/50 block">Cash Tendered</span>
+                <span className="font-mono text-2xl font-black text-white">{gbp(tenderedCashPence)}</span>
+              </div>
+            </div>
+
+            {/* Change Due Display */}
+            <div
+              className={`rounded-2xl p-4 text-center border font-black ${
+                tenderedCashPence >= totalDuePence
+                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                  : 'bg-rose-950/70 border-rose-500/50 text-rose-300'
+              }`}
+            >
+              <span className="text-xs uppercase tracking-wider block">
+                {tenderedCashPence >= totalDuePence ? 'Change to Give Customer:' : 'Underpaid by:'}
+              </span>
+              <span className="font-mono text-3xl font-black block mt-1">
+                {tenderedCashPence >= totalDuePence ? gbp(changeDuePence) : gbp(totalDuePence - tenderedCashPence)}
+              </span>
+            </div>
+
+            {/* Quick Cash Presets */}
+            <div className="grid grid-cols-4 gap-1.5 pt-1">
+              {[
+                { label: 'Exact', val: (totalDuePence / 100).toFixed(2) },
+                { label: '£10', val: '10.00' },
+                { label: '£20', val: '20.00' },
+                { label: '£50', val: '50.00' },
+              ].map((b) => (
+                <button
+                  key={b.label}
+                  type="button"
+                  onClick={() => setTenderNumpadValue(b.val)}
+                  className="rounded-xl border border-white/10 bg-white/5 py-2 font-mono text-xs font-bold text-white hover:bg-white/15"
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsCashConfirmModalOpen(false)}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/70 hover:bg-white/15"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={tenderedCashPence < totalDuePence}
+                onClick={() => executeFinalizePayment('cash')}
+                className="flex-[2] rounded-xl bg-emerald-500 py-3.5 text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-emerald-400 disabled:opacity-40 transition active:scale-95"
+              >
+                ✓ Complete Cash Tender &amp; Open Drawer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAFE TENDER: SECURE CARD TERMINAL SIMULATION (SumUp / Stripe) */}
+      {isCardTerminalModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="w-full max-w-sm rounded-3xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2 text-left">
+                <span className="text-xl">💳</span>
+                <div>
+                  <h3 className="font-bold text-sm text-white">Card Reader #01</h3>
+                  <p className="text-[10px] text-emerald-400 font-mono">● Online (SumUp / Stripe EMV)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCardTerminalModalOpen(false)}
+                className="text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl bg-black/60 border border-white/10 p-5 space-y-2">
+              <span className="text-[10px] font-bold uppercase text-white/50 block">Amount Due to Charge</span>
+              <span className="font-mono text-3xl font-black text-amber-400 block">{gbp(totalDuePence)}</span>
+              <span className="text-[10px] text-white/40 block">Zero raw card data stored • Encrypted EMV</span>
+            </div>
+
+            {/* Simulated Reader Interaction */}
+            <div className="py-3">
+              {cardTerminalStep === 'waiting' && (
+                <div className="space-y-3 animate-pulse">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-blue-500/20 border border-blue-400/40 text-3xl">
+                    📶
+                  </div>
+                  <p className="font-bold text-sm text-white">Please Tap, Insert or Swipe Card</p>
+                  <p className="text-xs text-white/60">Supports Contactless, Apple Pay, Google Pay &amp; Chip</p>
+                </div>
+              )}
+
+              {cardTerminalStep === 'processing' && (
+                <div className="space-y-3">
+                  <div className="mx-auto h-12 w-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+                  <p className="font-bold text-sm text-blue-300">Authorising Transaction with Bank...</p>
+                  <p className="text-[10px] text-white/50">Simulating external payment gateway</p>
+                </div>
+              )}
+
+              {cardTerminalStep === 'approved' && (
+                <div className="space-y-2">
+                  <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500/20 border border-emerald-400 text-3xl text-emerald-400">
+                    ✓
+                  </div>
+                  <p className="font-black text-base text-emerald-300">Transaction Approved!</p>
+                  <p className="font-mono text-[10px] text-white/50">Auth Code: AUTH-{Date.now().toString().slice(-6)}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {cardTerminalStep === 'waiting' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('action')
+                    setCardTerminalStep('processing')
+                    setTimeout(() => {
+                      setCardTerminalStep('approved')
+                      playPOSTouchTone('action')
+                      setTimeout(() => {
+                        executeFinalizePayment('card')
+                      }, 700)
+                    }, 1200)
+                  }}
+                  className="w-full rounded-xl bg-blue-500 py-3.5 font-body text-xs font-black uppercase tracking-wider text-white shadow-glow hover:bg-blue-400 transition active:scale-95"
+                >
+                  ⚡ Simulate Customer Card Tap / Insert
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsCardTerminalModalOpen(false)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/60 hover:bg-white/15"
+              >
+                Cancel Card Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MANAGER PIN AUTHORIZATION GATE */}
+      {isManagerAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="w-full max-w-sm rounded-3xl border border-amber-400/50 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2 text-left">
+                <span className="text-xl">🛡️</span>
+                <div>
+                  <h3 className="font-black text-sm text-white">{managerActionTitle || 'Manager Approval Required'}</h3>
+                  <p className="text-[10px] text-white/60">{managerActionDescription}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsManagerAuthModalOpen(false)}
+                className="text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs text-amber-300 font-bold">Enter Supervisor or Manager PIN:</p>
+              <input
+                type="password"
+                maxLength={4}
+                value={managerPinInput}
+                onChange={(e) => setManagerPinInput(e.target.value)}
+                placeholder="••••"
+                autoFocus
+                className="w-full rounded-2xl border border-white/20 bg-black/60 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
+              />
+            </div>
+
+            {managerPinError && (
+              <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2 text-xs text-red-300">
+                {managerPinError}
+              </p>
+            )}
+
+            {/* 1-9 Numpad */}
+            <div className="grid grid-cols-3 gap-1.5 pt-1">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                <button
+                  key={num}
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('numpad')
+                    setManagerPinInput((prev) => (prev.length < 4 ? prev + num : prev))
+                  }}
+                  className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
+                >
+                  {num}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  playPOSTouchTone('tap')
+                  setManagerPinInput('')
+                  setManagerPinError(null)
+                }}
+                className="rounded-xl border border-red-500/30 bg-red-950/20 py-2.5 text-xs font-bold text-red-400 hover:bg-red-900/40"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  playPOSTouchTone('numpad')
+                  setManagerPinInput((prev) => (prev.length < 4 ? prev + '0' : prev))
+                }}
+                className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
+              >
+                0
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  playPOSTouchTone('tap')
+                  setManagerPinInput((prev) => prev.slice(0, -1))
+                }}
+                className="rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/70 hover:bg-white/15"
+              >
+                ⌫
+              </button>
+            </div>
+
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsManagerAuthModalOpen(false)}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/60 hover:bg-white/15"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const check = verifyManagerPin(managerPinInput)
+                  if (check.ok) {
+                    playPOSTouchTone('action')
+                    if (onManagerApproved) {
+                      onManagerApproved(check.managerName || 'Manager')
+                    }
+                    setIsManagerAuthModalOpen(false)
+                  } else {
+                    setManagerPinError('Invalid Manager PIN. (Authorized: 2468, 5555, 3333, 8888)')
+                  }
+                }}
+                className="flex-[2] rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink hover:bg-amber-300 shadow-glow"
+              >
+                Authorize Action →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BARCODE / SKU QUICK SCANNER MODAL */}
+      {isBarcodeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="w-full max-w-sm rounded-3xl border border-sky-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📟</span>
+                <div>
+                  <h3 className="font-bold text-sm text-white">Barcode / SKU Scanner</h3>
+                  <p className="text-[10px] text-white/50">Scan with USB reader or enter barcode</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBarcodeModalOpen(false)}
+                className="text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!barcodeInput.trim()) return
+                const found = getProductByBarcode(barcodeInput)
+                if (found) {
+                  handleItemClick(found)
+                  setIsBarcodeModalOpen(false)
+                  setBarcodeInput('')
+                } else {
+                  alert(`No product matched barcode/SKU: ${barcodeInput}`)
+                }
+              }}
+              className="space-y-3"
+            >
+              <input
+                type="text"
+                autoFocus
+                value={barcodeInput}
+                onChange={(e) => setBarcodeInput(e.target.value)}
+                placeholder="Scan barcode or type SKU..."
+                className="w-full rounded-xl border border-sky-400/40 bg-black/60 px-4 py-3 font-mono text-base font-bold text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              />
+
+              <button
+                type="submit"
+                className="w-full rounded-xl bg-sky-500 py-3 text-xs font-black uppercase text-ink hover:bg-sky-400 shadow transition"
+              >
+                Lookup &amp; Add Item →
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* RECENT SALES, RECEIPTS & REFUNDS MODAL */}
+      {isRecentSalesModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md overflow-y-auto">
+          <div className="w-full max-w-2xl rounded-3xl border border-sky-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🧾</span>
+                <div>
+                  <h3 className="font-black text-base text-white">Completed Orders, Receipts &amp; Refunds</h3>
+                  <p className="text-xs text-white/60">Reprint thermal receipts or process manager-authorized refunds</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRecentSalesModalOpen(false)}
+                className="text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              {allOrdersList.slice(0, 30).map((ord) => {
+                const isRefunded = ord.payment?.status === 'refunded' || ord.status === 'cancelled'
+                const ordSource = ord.source
+
+                return (
+                  <div
+                    key={ord.id}
+                    className="rounded-2xl border border-white/10 bg-white/5 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-amber-300">#{ord.shortId}</span>
+                        <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-black uppercase text-white/70">
+                          {ordSource}
+                        </span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-black uppercase ${
+                            isRefunded
+                              ? 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
+                              : 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                          }`}
+                        >
+                          {isRefunded ? 'REFUNDED' : 'PAID'}
+                        </span>
+                      </div>
+                      <p className="font-bold text-xs text-white mt-1">
+                        {ord.customer.name} &bull; {gbp(ord.payment.total)}
+                      </p>
+                      <p className="text-[11px] text-white/50">
+                        {ord.lines.map((l) => `${l.qty}x ${l.name}`).join(', ')}
+                      </p>
+                      <span className="text-[10px] text-white/40">
+                        {new Date(ord.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiptOrder(ord)
+                        }}
+                        className="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/20"
+                      >
+                        🖨️ Receipt
+                      </button>
+
+                      {!isRefunded && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            requireManagerAuth(
+                              'Refund Order',
+                              `Authorize refund of £${(ord.payment.total / 100).toFixed(2)} for Order #${ord.shortId}`,
+                              (mgrName) => {
+                                const reason = prompt('Enter reason for refund (e.g. Customer return, Spillage, Incorrect item):', 'Customer return')
+                                if (reason) {
+                                  refundOrder(ord.id, ord.payment.total, reason, mgrName)
+                                  alert(`Order #${ord.shortId} refunded by ${mgrName}. Stock restored to central inventory.`)
+                                }
+                              }
+                            )
+                          }}
+                          className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-3 py-1.5 text-xs font-bold text-rose-300 hover:bg-rose-900/50"
+                        >
+                          ↩️ Refund
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>

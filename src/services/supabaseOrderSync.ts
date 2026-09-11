@@ -5,7 +5,7 @@
  * Supports multi-store tenancy via VITE_STORE_ID (defaults to 'just_spuds').
  */
 import { supabase, isSupabaseConfigured } from './supabase'
-import type { Order } from './orderStore'
+import type { Order, OrderSource } from './orderStore'
 
 const STORE_ID = import.meta.env.VITE_STORE_ID || 'just_spuds'
 
@@ -30,6 +30,17 @@ export interface SupabaseOrderRow {
   timeline: any
   created_at: string
   updated_at: string
+}
+
+/**
+ * The orders table has no `source` column; the channel is encoded in the
+ * short id prefix instead (JS-T- till, JS-P- phone, JS-S- staff, JS-W- web).
+ */
+export function sourceFromShortId(shortId: string): OrderSource {
+  if (shortId.startsWith('JS-T-')) return 'TILL'
+  if (shortId.startsWith('JS-P-')) return 'PHONE'
+  if (shortId.startsWith('JS-S-')) return 'STAFF'
+  return 'WEBSITE'
 }
 
 export function orderToRow(order: Order): SupabaseOrderRow {
@@ -61,6 +72,7 @@ export function rowToOrder(row: SupabaseOrderRow): Order {
   return {
     id: row.id,
     shortId: row.short_id,
+    source: sourceFromShortId(row.short_id),
     createdAt: row.created_at,
     status: row.status as Order['status'],
     fulfilment: row.fulfilment as Order['fulfilment'],

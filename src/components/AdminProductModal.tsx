@@ -57,6 +57,12 @@ export default function AdminProductModal({
   const [carbs, setCarbs] = useState('60g')
   const [fat, setFat] = useState('14g')
   const [allergens, setAllergens] = useState<string[]>([])
+  const [barcode, setBarcode] = useState('')
+  const [costPriceGbp, setCostPriceGbp] = useState('2.00')
+  const [vatRate, setVatRate] = useState<number>(20)
+  const [stockQuantity, setStockQuantity] = useState<number>(45)
+  const [lowStockThreshold, setLowStockThreshold] = useState<number>(5)
+  const [channelVisibility, setChannelVisibility] = useState<'all' | 'in_store_only' | 'online_only'>('all')
 
   useEffect(() => {
     if (initialProduct) {
@@ -78,6 +84,12 @@ export default function AdminProductModal({
       setCarbs(initialProduct.carbs ?? '60g')
       setFat(initialProduct.fat ?? '14g')
       setAllergens(initialProduct.allergens ?? [])
+      setBarcode(initialProduct.barcode || '')
+      setCostPriceGbp(initialProduct.costPrice ? (initialProduct.costPrice / 100).toFixed(2) : ((initialProduct.price * 0.32) / 100).toFixed(2))
+      setVatRate(initialProduct.vatRate ?? 20)
+      setStockQuantity(initialProduct.stockQuantity ?? 45)
+      setLowStockThreshold(initialProduct.lowStockThreshold ?? 5)
+      setChannelVisibility(initialProduct.channelVisibility || 'all')
     } else {
       // New item defaults
       setName('')
@@ -98,6 +110,12 @@ export default function AdminProductModal({
       setCarbs('60g')
       setFat('14g')
       setAllergens(['Milk'])
+      setBarcode('')
+      setCostPriceGbp('2.00')
+      setVatRate(20)
+      setStockQuantity(45)
+      setLowStockThreshold(5)
+      setChannelVisibility('all')
     }
   }, [initialProduct, isOpen])
 
@@ -170,6 +188,8 @@ export default function AdminProductModal({
       .map((s) => s.trim())
       .filter(Boolean)
 
+    const costPricePence = Math.round(parseFloat(costPriceGbp || '0') * 100)
+
     const productToSave: Product = {
       id: generatedId,
       name: name.trim(),
@@ -193,6 +213,12 @@ export default function AdminProductModal({
       carbs,
       fat,
       allergens,
+      barcode: barcode.trim() || undefined,
+      costPrice: costPricePence,
+      vatRate,
+      stockQuantity: Number(stockQuantity) || 0,
+      lowStockThreshold: Number(lowStockThreshold) || 5,
+      channelVisibility,
     }
 
     onSave(productToSave)
@@ -358,6 +384,105 @@ export default function AdminProductModal({
                       placeholder="Crispy King Edward skin, steaming fluffy..."
                       className="w-full rounded-xl border border-white/20 bg-white/10 px-3.5 py-2 font-body text-xs text-white placeholder:text-white/40 focus:border-amber-400 focus:outline-none"
                     />
+                  </div>
+                </div>
+
+                {/* 2b. Central EPOS & Stock Control */}
+                <div className="rounded-2xl bg-sky-500/10 border border-sky-500/30 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-sky-300">
+                      📦 Central EPOS &amp; Inventory Parameters
+                    </label>
+                    <span className="text-[10px] text-sky-400 font-mono">Syncs Till &amp; Web</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-white/70 mb-1">
+                        Barcode / SKU
+                      </label>
+                      <input
+                        type="text"
+                        value={barcode}
+                        onChange={(e) => setBarcode(e.target.value)}
+                        placeholder="e.g. 50601234001"
+                        className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 font-mono text-xs text-white focus:border-sky-400 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-white/70 mb-1">
+                        Cost Price (£)
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1.5 font-bold text-amber-400 text-xs">£</span>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0"
+                          value={costPriceGbp}
+                          onChange={(e) => setCostPriceGbp(e.target.value)}
+                          className="w-full rounded-xl border border-white/20 bg-white/10 pl-6 pr-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-400 focus:outline-none font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-white/70 mb-1">
+                        VAT Rate (%)
+                      </label>
+                      <select
+                        value={vatRate}
+                        onChange={(e) => setVatRate(Number(e.target.value))}
+                        className="w-full rounded-xl border border-white/20 bg-slate-800 px-3 py-1.5 font-mono text-xs text-white focus:border-sky-400 focus:outline-none"
+                      >
+                        <option value={20}>20% (Standard Hot Food)</option>
+                        <option value={0}>0% (Zero-Rated / Cold Groceries)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-white/70 mb-1">
+                        Stock Quantity (Units)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={stockQuantity}
+                        onChange={(e) => setStockQuantity(parseInt(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 font-mono text-xs text-white focus:border-sky-400 focus:outline-none font-bold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-white/70 mb-1">
+                        Low-Stock Alert Level
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={lowStockThreshold}
+                        onChange={(e) => setLowStockThreshold(parseInt(e.target.value) || 5)}
+                        className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 font-mono text-xs text-white focus:border-sky-400 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-white/70 mb-1">
+                        Channel Visibility
+                      </label>
+                      <select
+                        value={channelVisibility}
+                        onChange={(e) => setChannelVisibility(e.target.value as Product['channelVisibility'] & string)}
+                        className="w-full rounded-xl border border-white/20 bg-slate-800 px-2.5 py-1.5 text-xs text-white focus:border-sky-400 focus:outline-none font-medium"
+                      >
+                        <option value="all">🌐 Online &amp; In-Store Till</option>
+                        <option value="in_store_only">🖥️ In-Store Till Only (Counter Exclusive)</option>
+                        <option value="online_only">🌐 Website Delivery Only</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 

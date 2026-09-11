@@ -14,5 +14,4 @@ export function useMediaQuery(query: string): boolean {
   return matches
 }
 
-export const useIsMobile = () => useMediaQuery('(max-width: 767px)')
 export const useIsCoarse = () => useMediaQuery('(pointer: coarse)')

@@ -3,7 +3,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
 import { useIsScrolled } from '../hooks/useScrollProgress'
 import { cx, gbp } from '../utils/format'
-import { getCurrentUser, subscribeAuth, type AuthUser } from '../services/authStore'
+import { getCurrentUser, subscribeAuth, hasRole, homePortalForRole, INTERNAL_ROLES, type AuthUser } from '../services/authStore'
 import CustomerAuthModal from './CustomerAuthModal'
 import ActiveOrderBanner from './ActiveOrderBanner'
 import PromoBar from './PromoBar'
@@ -17,6 +17,18 @@ const LINKS = [
   { to: '/find-us', label: 'Find Us' },
 ]
 
+const PORTAL_LINKS: Record<string, { icon: string; label: string }> = {
+  '/admin': { icon: '📊', label: 'Admin' },
+  '/staff': { icon: '👨‍🍳', label: 'Kitchen' },
+  '/pos': { icon: '🧾', label: 'Till' },
+  '/driver': { icon: '🛵', label: 'Driver' },
+}
+
+function portalLinkFor(role?: AuthUser['role']) {
+  const path = homePortalForRole(role)
+  return path && PORTAL_LINKS[path] ? { path, ...PORTAL_LINKS[path] } : null
+}
+
 export default function Navbar() {
   const isScrolled = useIsScrolled(40)
   const { pathname } = useLocation()
@@ -27,6 +39,7 @@ export default function Navbar() {
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(getCurrentUser())
+  const portal = portalLinkFor(currentUser?.role)
 
   useEffect(() => { setMenuOpen(false) }, [pathname])
   useEffect(() => {
@@ -158,13 +171,14 @@ export default function Navbar() {
             </button>
 
             {/* Staff / Admin Fast Switch Button */}
-            {currentUser && ['STAFF', 'STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN', 'DRIVER'].includes(currentUser.role) && (
+            {hasRole(currentUser, INTERNAL_ROLES) && portal && (
               <Link
-                to={['ADMIN', 'SUPER_ADMIN'].includes(currentUser.role) ? '/admin' : currentUser.role === 'DRIVER' ? '/driver' : '/staff'}
+                to={portal.path}
                 className="hidden md:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-[11px] font-bold text-amber-400 bg-amber-400/10 hover:bg-amber-400/20 transition"
                 title="Return to Internal Portal"
               >
-                <span>{['ADMIN', 'SUPER_ADMIN'].includes(currentUser.role) ? 'Admin' : currentUser.role === 'DRIVER' ? 'Driver' : 'Kitchen'}</span>
+                <span>{portal.icon}</span>
+                <span>{portal.label}</span>
               </Link>
             )}
 

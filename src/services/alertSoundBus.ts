@@ -90,8 +90,16 @@ export function playUrgentOrderSirenSound() {
   }
 }
 
+/** Mirrors TillSettings.soundAlerts; tillStore keeps it in sync. */
+let alertSoundsEnabled = true
+export function setAlertSoundsEnabled(enabled: boolean) {
+  alertSoundsEnabled = enabled
+  if (!enabled) stopSirenLoop()
+  else if (activeAlerts.length > 0) startSirenLoop()
+}
+
 function startSirenLoop() {
-  if (sirenIntervalId) return
+  if (sirenIntervalId || !alertSoundsEnabled) return
   playUrgentOrderSirenSound()
   sirenIntervalId = setInterval(() => {
     if (activeAlerts.length > 0) {
@@ -124,16 +132,6 @@ export function dismissOrderAlert(orderId: string) {
     stopSirenLoop()
   }
   alertListeners.forEach((l) => l([...activeAlerts]))
-}
-
-export function dismissAllOrderAlerts() {
-  activeAlerts = []
-  stopSirenLoop()
-  alertListeners.forEach((l) => l([]))
-}
-
-export function getActiveOrderAlerts(): OnlineOrderAlert[] {
-  return [...activeAlerts]
 }
 
 export function subscribeOrderAlerts(listener: (alerts: OnlineOrderAlert[]) => void): () => void {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Reveal from './Reveal'
-import { getProducts, getExtras, getSauces, subscribeMenu } from '../services/menuStore'
+import { getOnlineProducts, getExtras, getSauces, subscribeMenu } from '../services/menuStore'
 import { gbp } from '../utils/format'
 
 /**
@@ -11,13 +11,13 @@ import { gbp } from '../utils/format'
  * band cannot drift out of step with the board in the shop.
  */
 export default function FactsBand() {
-  const [products, setProducts] = useState(() => getProducts())
+  const [products, setProducts] = useState(() => getOnlineProducts())
   const [extras, setExtras] = useState(() => getExtras())
   const [sauces, setSauces] = useState(() => getSauces())
 
   useEffect(() => {
     return subscribeMenu(() => {
-      setProducts(getProducts())
+      setProducts(getOnlineProducts())
       setExtras(getExtras())
       setSauces(getSauces())
     })

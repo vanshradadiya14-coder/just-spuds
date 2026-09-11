@@ -30,6 +30,8 @@ import {
   getProducts,
   saveProduct,
   deleteProduct,
+  adjustProductStock,
+  getLowStockProducts,
   getExtras,
   saveExtra,
   deleteExtra,
@@ -55,6 +57,7 @@ import {
   logout,
   hasRole,
   DEMO_USERS,
+  MANAGEMENT_ROLES,
   type AuthUser,
 } from '../services/authStore'
 import {
@@ -74,6 +77,7 @@ import { gbp, cx } from '../utils/format'
 import SmartImage from '../components/SmartImage'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
+import TillShiftHistory from './admin/components/TillShiftHistory'
 import { getAuditLogs, subscribeAuditLogs, type AuditLogItem } from '../services/auditStore'
 import {
   getBlacklistEntries,
@@ -83,7 +87,7 @@ import {
   type BlacklistEntry,
 } from '../services/blacklistStore'
 
-type AdminTab = 'overview' | 'orders' | 'products' | 'toppings' | 'promos' | 'crm' | 'delivery' | 'drivers' | 'staff' | 'audit'
+type AdminTab = 'overview' | 'reports' | 'inventory' | 'orders' | 'products' | 'toppings' | 'promos' | 'crm' | 'delivery' | 'drivers' | 'staff' | 'audit'
 
 export default function AdminPage() {
   const [user, setUser] = useState<AuthUser | null>(() => getCurrentUser())
@@ -120,6 +124,8 @@ export default function AdminPage() {
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
   const [driverSearchQuery, setDriverSearchQuery] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'active' | 'delivery' | 'pickup' | 'completed' | 'cancelled'>('all')
+  const [inventorySearch, setInventorySearch] = useState('')
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState<string>('ALL')
 
   // Modals state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
@@ -203,7 +209,7 @@ export default function AdminPage() {
   const handleAdminPinSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const res = loginWithPin(adminPin)
-    if (res.ok && hasRole(res.user ?? null, ['ADMIN', 'STORE_MANAGER'])) {
+    if (res.ok && hasRole(res.user ?? null, MANAGEMENT_ROLES)) {
       setAdminPin('')
       setAdminPinError(null)
     } else {
@@ -212,12 +218,229 @@ export default function AdminPage() {
     }
   }
 
-  const isAuthorized = hasRole(user, ['ADMIN', 'STORE_MANAGER'])
+  const isAuthorized = hasRole(user, MANAGEMENT_ROLES)
 
   // Detailed business analytics for overview tab
   const analytics = useMemo(() => {
     return getDetailedBusinessAnalytics(orders, timeframe)
   }, [orders, timeframe])
+
+  // Filter orders by timeframe for the Reports tab
+  const timeframeOrders = useMemo(() => {
+    const now = Date.now()
+    return orders.filter((o) => {
+      const t = new Date(o.createdAt).getTime()
+      if (timeframe === 'today') {
+        const startOfDay = new Date()
+        startOfDay.setHours(0, 0, 0, 0)
+        return t >= startOfDay.getTime()
+      }
+      if (timeframe === 'yesterday') {
+        const start = new Date()
+        start.setDate(start.getDate() - 1)
+        start.setHours(0, 0, 0, 0)
+        const end = new Date()
+        end.setHours(0, 0, 0, 0)
+        return t >= start.getTime() && t < end.getTime()
+      }
+      if (timeframe === '7days') {
+        return now - t <= 7 * 24 * 60 * 60 * 1000
+      }
+      if (timeframe === '30days') {
+        return now - t <= 30 * 24 * 60 * 60 * 1000
+      }
+      return true
+    })
+  }, [orders, timeframe])
+
+  // Comprehensive multi-dimensional report metrics
+  const reportMetrics = useMemo(() => {
+    const validOrders = timeframeOrders.filter((o) => o.status !== 'cancelled')
+    const cancelledOrders = timeframeOrders.filter((o) => o.status === 'cancelled')
+
+    const grossRevenuePence = validOrders.reduce((acc, o) => acc + (o.payment?.total || 0), 0)
+    const vatPence = Math.round((grossRevenuePence / 1.2) * 0.2)
+    const netRevenuePence = grossRevenuePence - vatPence
+    const totalDiscountsPence = validOrders.reduce((acc, o) => acc + (o.payment?.discount || 0), 0)
+    const totalRefundsPence = cancelledOrders.reduce(
+      (acc, o) => acc + (o.cancellation?.refundAmount || o.payment?.total || 0),
+      0
+    )
+
+    // Sales by Source Channel
+    const sourceStats = {
+      WEBSITE: { label: '🌐 Website Online Orders', count: 0, revenue: 0 },
+      TILL: { label: '🖥️ Till Counter Sales', count: 0, revenue: 0 },
+      PHONE: { label: '📞 Phone Orders', count: 0, revenue: 0 },
+      STAFF: { label: '👤 Staff Counter Direct', count: 0, revenue: 0 },
+    }
+    validOrders.forEach((o) => {
+      const src = o.source
+      if (sourceStats[src]) {
+        sourceStats[src].count++
+        sourceStats[src].revenue += o.payment?.total || 0
+      } else {
+        sourceStats.WEBSITE.count++
+        sourceStats.WEBSITE.revenue += o.payment?.total || 0
+      }
+    })
+
+    // Sales by Payment Tender
+    const tenderStats = {
+      card: { label: '💳 Card & Digital Wallets', count: 0, revenue: 0 },
+      cash: { label: '💵 Cash In Hand', count: 0, revenue: 0 },
+      split: { label: '🔀 Split Tender', count: 0, revenue: 0 },
+    }
+    validOrders.forEach((o) => {
+      const meth = o.payment?.method
+      if (meth === 'cash' || meth === 'driver_device') {
+        tenderStats.cash.count++
+        tenderStats.cash.revenue += o.payment?.total || 0
+      } else if (meth === 'split') {
+        tenderStats.split.count++
+        tenderStats.split.revenue += o.payment?.total || 0
+      } else {
+        tenderStats.card.count++
+        tenderStats.card.revenue += o.payment?.total || 0
+      }
+    })
+
+    // Product Sales Breakdown & Margins
+    const productSalesMap: Record<string, { name: string; qty: number; revenue: number; cost: number }> = {}
+    validOrders.forEach((o) => {
+      o.lines.forEach((l) => {
+        const prod = products.find((p) => p.id === l.productId || p.name === l.name)
+        const unitCost = prod?.costPrice ?? Math.round(l.base * 0.32)
+        const unitPrice = l.base
+        const key = l.productId || l.name
+        if (!productSalesMap[key]) {
+          productSalesMap[key] = {
+            name: l.name,
+            qty: 0,
+            revenue: 0,
+            cost: 0,
+          }
+        }
+        productSalesMap[key].qty += l.qty || 1
+        productSalesMap[key].revenue += unitPrice * (l.qty || 1)
+        productSalesMap[key].cost += unitCost * (l.qty || 1)
+      })
+    })
+    const productProfitabilityList = Object.values(productSalesMap)
+      .map((p) => {
+        const profit = p.revenue - p.cost
+        const marginPct = p.revenue > 0 ? Math.round((profit / p.revenue) * 100) : 0
+        return { ...p, profit, marginPct }
+      })
+      .sort((a, b) => b.revenue - a.revenue)
+
+    // Staff Performance
+    const staffSalesMap: Record<string, { count: number; total: number }> = {}
+    validOrders.forEach((o) => {
+      const cashier =
+        o.kitchenNotes?.match(/Cashier: ([^•\n]+)/)?.[1]?.trim() ||
+        (o.source === 'WEBSITE' ? 'Online Storefront' : 'Counter Cashier')
+      if (!staffSalesMap[cashier]) {
+        staffSalesMap[cashier] = { count: 0, total: 0 }
+      }
+      staffSalesMap[cashier].count++
+      staffSalesMap[cashier].total += o.payment?.total || 0
+    })
+    const staffPerformanceList = Object.entries(staffSalesMap)
+      .map(([name, data]) => ({
+        name,
+        ...data,
+      }))
+      .sort((a, b) => b.total - a.total)
+
+    return {
+      grossRevenuePence,
+      netRevenuePence,
+      vatPence,
+      totalDiscountsPence,
+      totalRefundsPence,
+      sourceStats,
+      tenderStats,
+      productProfitabilityList,
+      staffPerformanceList,
+      validOrdersCount: validOrders.length,
+      refundedOrders: cancelledOrders,
+    }
+  }, [timeframeOrders, products])
+
+  // 1-Click Comprehensive Financial & Channel CSV Exporter
+  const handleExportComprehensiveReportCSV = () => {
+    const headers = [
+      'Order ID',
+      'Source',
+      'Date Time',
+      'Customer',
+      'Fulfilment',
+      'Payment Tender',
+      'Gross Total (£)',
+      'VAT 20% (£)',
+      'Discount (£)',
+      'Status',
+      'Items',
+    ]
+
+    const rows = timeframeOrders.map((o) => {
+      const src = o.source
+      const totalGbp = ((o.payment?.total || 0) / 100).toFixed(2)
+      const vatGbp = (Math.round(((o.payment?.total || 0) / 1.2) * 0.2) / 100).toFixed(2)
+      const discGbp = ((o.payment?.discount || 0) / 100).toFixed(2)
+      const itemsSummary = o.lines.map((l) => `${l.qty}x ${l.name}`).join('; ')
+
+      return [
+        `"${o.shortId}"`,
+        `"${src}"`,
+        `"${new Date(o.createdAt).toLocaleString()}"`,
+        `"${o.customer.name.replace(/"/g, '""')}"`,
+        `"${o.fulfilment}"`,
+        `"${o.payment?.method || 'card'}"`,
+        totalGbp,
+        vatGbp,
+        discGbp,
+        `"${o.status}"`,
+        `"${itemsSummary.replace(/"/g, '""')}"`,
+      ].join(',')
+    })
+
+    const summarySection = [
+      `"JUST SPUDS - EXECUTIVE REPORT (${timeframe.toUpperCase()})"`,
+      `"Generated: ${new Date().toLocaleString()}"`,
+      `"Gross Sales: £${(reportMetrics.grossRevenuePence / 100).toFixed(2)}"`,
+      `"Net Sales (ex VAT): £${(reportMetrics.netRevenuePence / 100).toFixed(2)}"`,
+      `"VAT @ 20%: £${(reportMetrics.vatPence / 100).toFixed(2)}"`,
+      `"Total Discounts: £${(reportMetrics.totalDiscountsPence / 100).toFixed(2)}"`,
+      `"Total Refunds: £${(reportMetrics.totalRefundsPence / 100).toFixed(2)}"`,
+      '',
+    ].join('\n')
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(summarySection + headers.join(',') + '\n' + rows.join('\n'))
+    const link = document.createElement('a')
+    link.setAttribute('href', csvContent)
+    link.setAttribute('download', `just_spuds_report_${timeframe}_${new Date().toISOString().slice(0, 10)}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const handleQuickAdjustStock = (productId: string, delta: number) => {
+    const prod = products.find((p) => p.id === productId)
+    if (!prod) return
+    const current = typeof prod.stockQuantity === 'number' ? prod.stockQuantity : 45
+    const next = Math.max(0, current + delta)
+    adjustProductStock(
+      productId,
+      next,
+      user?.name || 'Store Manager',
+      `Manual quick adjust (${delta > 0 ? '+' : ''}${delta})`
+    )
+    setProducts(getProducts())
+  }
+
+  const lowStockProducts = useMemo(() => getLowStockProducts(), [products])
 
   // Filtered orders list
   const filteredOrders = useMemo(() => {
@@ -520,7 +743,7 @@ export default function AdminPage() {
           </div>
           <h1 className="display text-2xl text-white font-bold">Admin Management Gate</h1>
           
-          {user?.role === 'STAFF' ? (
+          {user && !hasRole(user, MANAGEMENT_ROLES) && user.role !== 'CUSTOMER' ? (
             <p className="rounded-xl border border-amber-400/40 bg-amber-950/40 p-2.5 font-body text-xs text-amber-300 mt-2 mb-4 text-left">
               ⚠️ <strong>Staff Account:</strong> Kitchen line cook accounts do not have permission to view revenue, audit logs, or edit menu pricing. Enter Manager or Admin PIN to elevate privileges.
             </p>
@@ -753,6 +976,35 @@ export default function AdminPage() {
 
             <button
               type="button"
+              onClick={() => setActiveTab('reports')}
+              className={cx(
+                'rounded-xl px-4 py-2 font-body text-xs font-bold transition flex items-center gap-1.5',
+                activeTab === 'reports' ? 'bg-amber-400 text-ink font-black shadow-glow' : 'text-white/70 hover:text-white bg-white/5'
+              )}
+            >
+              <span>📈</span>
+              <span>Reports &amp; Sales</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('inventory')}
+              className={cx(
+                'rounded-xl px-4 py-2 font-body text-xs font-bold transition flex items-center gap-1.5',
+                activeTab === 'inventory' ? 'bg-amber-400 text-ink font-black shadow-glow' : 'text-white/70 hover:text-white bg-white/5'
+              )}
+            >
+              <span>📦</span>
+              <span>Stock &amp; Inventory</span>
+              {lowStockProducts.length > 0 && (
+                <span className="rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-black text-white animate-pulse">
+                  {lowStockProducts.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('orders')}
               className={cx(
                 'rounded-xl px-4 py-2 font-body text-xs font-bold transition flex items-center gap-1.5',
@@ -873,7 +1125,7 @@ export default function AdminPage() {
             </button>
           </div>
 
-          {activeTab === 'overview' && (
+          {(activeTab === 'overview' || activeTab === 'reports') && (
             <div className="flex items-center gap-1.5 rounded-2xl bg-white/5 p-1 border border-white/10">
               {(
                 [
@@ -1065,6 +1317,536 @@ export default function AdminPage() {
                     )
                   })}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB: COMPREHENSIVE REPORTS & FINANCIAL AUDIT                  */}
+        {/* ============================================================== */}
+        {activeTab === 'reports' && (
+          <div className="space-y-6">
+            {/* Header & Export Bar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/60 p-5 rounded-3xl border border-white/10 shadow-xl backdrop-blur-md">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">📈</span>
+                  <h2 className="display text-xl text-white font-black tracking-wide">
+                    Executive Sales &amp; Commercial Financial Report
+                  </h2>
+                </div>
+                <p className="font-body text-xs text-white/60 mt-1">
+                  Reconciled revenue across Website, Physical Till, Phone, and Counter. VAT @ 20%, payment tenders, and product profitability.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleExportComprehensiveReportCSV}
+                  className="rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 py-3 font-body text-xs font-black text-slate-950 hover:brightness-110 shadow-lg shadow-emerald-500/20 transition flex items-center gap-2"
+                >
+                  <span>📥</span>
+                  <span>Export Financial Report (CSV)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Financial Overview KPI Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Gross Revenue</div>
+                <div className="font-mono text-2xl font-black text-white mt-1">{gbp(reportMetrics.grossRevenuePence)}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">{reportMetrics.validOrdersCount} Paid Orders</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Net Sales (Ex VAT)</div>
+                <div className="font-mono text-2xl font-black text-amber-400 mt-1">{gbp(reportMetrics.netRevenuePence)}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Excluding Tax</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">VAT @ 20% (HMRC)</div>
+                <div className="font-mono text-2xl font-black text-teal-400 mt-1">{gbp(reportMetrics.vatPence)}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Standard UK Rate</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Discounts &amp; Promos</div>
+                <div className="font-mono text-2xl font-black text-purple-400 mt-1">{gbp(reportMetrics.totalDiscountsPence)}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Vouchers &amp; Overrides</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Total Refunds</div>
+                <div className="font-mono text-2xl font-black text-rose-400 mt-1">{gbp(reportMetrics.totalRefundsPence)}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">{reportMetrics.refundedOrders.length} Voided / Returned</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Avg Order Value</div>
+                <div className="font-mono text-2xl font-black text-cyan-400 mt-1">
+                  {gbp(reportMetrics.validOrdersCount > 0 ? Math.round(reportMetrics.grossRevenuePence / reportMetrics.validOrdersCount) : 0)}
+                </div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Per Transaction</div>
+              </div>
+            </div>
+
+            {/* Middle Grid: Channel Performance & Tender Distribution */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Sales by Source Channel */}
+              <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-body text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span>📡</span> Sales by Channel / Source
+                  </h3>
+                  <span className="font-body text-xs text-white/50">One Central Core</span>
+                </div>
+
+                <div className="space-y-3">
+                  {Object.entries(reportMetrics.sourceStats).map(([srcKey, data]) => {
+                    const pct = reportMetrics.grossRevenuePence > 0 ? Math.round((data.revenue / reportMetrics.grossRevenuePence) * 100) : 0
+                    return (
+                      <div key={srcKey} className="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-body text-xs font-bold text-white">{data.label}</span>
+                          <div className="text-right">
+                            <span className="font-mono text-sm font-black text-amber-400">{gbp(data.revenue)}</span>
+                            <span className="font-body text-[11px] text-white/50 ml-2">({data.count} orders • {pct}%)</span>
+                          </div>
+                        </div>
+                        <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-500 to-amber-300 rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Payment Tender Distribution */}
+              <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-body text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span>💳</span> Payment Tender Reconciliation
+                  </h3>
+                  <span className="font-body text-xs text-white/50">Till &amp; Web Combined</span>
+                </div>
+
+                <div className="space-y-3">
+                  {Object.entries(reportMetrics.tenderStats).map(([tenderKey, data]) => {
+                    const pct = reportMetrics.grossRevenuePence > 0 ? Math.round((data.revenue / reportMetrics.grossRevenuePence) * 100) : 0
+                    return (
+                      <div key={tenderKey} className="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-body text-xs font-bold text-white">{data.label}</span>
+                          <div className="text-right">
+                            <span className="font-mono text-sm font-black text-emerald-400">{gbp(data.revenue)}</span>
+                            <span className="font-body text-[11px] text-white/50 ml-2">({data.count} txns • {pct}%)</span>
+                          </div>
+                        </div>
+                        <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Product Profitability & Performance Table */}
+            <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-body text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span>🥔</span> Product Margin &amp; Profitability Performance
+                  </h3>
+                  <p className="font-body text-xs text-white/50 mt-0.5">
+                    Breakdown of items sold, gross sales, estimated food costs, and gross operating profit.
+                  </p>
+                </div>
+                <span className="font-mono text-xs font-bold text-white/60 bg-white/5 px-3 py-1 rounded-xl border border-white/10">
+                  {reportMetrics.productProfitabilityList.length} unique products sold
+                </span>
+              </div>
+
+              {reportMetrics.productProfitabilityList.length === 0 ? (
+                <div className="text-center py-10 font-body text-sm text-white/50 bg-white/5 rounded-2xl border border-white/5">
+                  No product sales recorded for this timeframe.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-white/10">
+                  <table className="w-full text-left font-body text-xs">
+                    <thead className="bg-white/5 text-[11px] font-black uppercase tracking-wider text-white/60 border-b border-white/10">
+                      <tr>
+                        <th className="p-3">Product Name</th>
+                        <th className="p-3 text-center">Qty Sold</th>
+                        <th className="p-3 text-right">Revenue</th>
+                        <th className="p-3 text-right">Est. Food Cost</th>
+                        <th className="p-3 text-right">Gross Profit</th>
+                        <th className="p-3 text-right">Margin %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 text-white/90">
+                      {reportMetrics.productProfitabilityList.map((p, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition">
+                          <td className="p-3 font-bold text-white">{p.name}</td>
+                          <td className="p-3 text-center font-mono font-bold">{p.qty}</td>
+                          <td className="p-3 text-right font-mono font-bold text-amber-400">{gbp(p.revenue)}</td>
+                          <td className="p-3 text-right font-mono text-white/60">{gbp(p.cost)}</td>
+                          <td className="p-3 text-right font-mono font-black text-emerald-400">{gbp(p.profit)}</td>
+                          <td className="p-3 text-right font-mono">
+                            <span className={cx(
+                              'px-2 py-0.5 rounded-full text-[10px] font-black',
+                              p.marginPct >= 65 ? 'bg-emerald-500/20 text-emerald-300' :
+                              p.marginPct >= 50 ? 'bg-amber-500/20 text-amber-300' :
+                              'bg-rose-500/20 text-rose-300'
+                            )}>
+                              {p.marginPct}%
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Grid: Staff Performance & Refund Void Log */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Staff Cashier Performance */}
+              <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 space-y-4">
+                <h3 className="font-body text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <span>👨‍🍳</span> Cashier &amp; Staff Terminal Activity
+                </h3>
+                <div className="overflow-x-auto rounded-2xl border border-white/10">
+                  <table className="w-full text-left font-body text-xs">
+                    <thead className="bg-white/5 text-[11px] font-black uppercase tracking-wider text-white/60 border-b border-white/10">
+                      <tr>
+                        <th className="p-3">Staff Member / Terminal</th>
+                        <th className="p-3 text-center">Transactions</th>
+                        <th className="p-3 text-right">Total Rung Up</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 text-white/90">
+                      {reportMetrics.staffPerformanceList.map((s, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition">
+                          <td className="p-3 font-bold text-white">{s.name}</td>
+                          <td className="p-3 text-center font-mono font-bold">{s.count}</td>
+                          <td className="p-3 text-right font-mono font-black text-amber-400">{gbp(s.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Refund & Void Audit Trail */}
+              <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 space-y-4">
+                <h3 className="font-body text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <span>🛡️</span> Refund &amp; Void Exceptions Log
+                </h3>
+                {reportMetrics.refundedOrders.length === 0 ? (
+                  <div className="text-center py-8 font-body text-xs text-white/50 bg-white/5 rounded-2xl border border-white/5">
+                    Zero refunds or cancelled orders for this timeframe. Clean audit record!
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-white/10 max-h-60 overflow-y-auto">
+                    <table className="w-full text-left font-body text-xs">
+                      <thead className="bg-white/5 text-[11px] font-black uppercase tracking-wider text-white/60 border-b border-white/10 sticky top-0">
+                        <tr>
+                          <th className="p-2.5">Order ID</th>
+                          <th className="p-2.5">Customer</th>
+                          <th className="p-2.5">Refunded</th>
+                          <th className="p-2.5">Reason / Authorization</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 text-white/90">
+                        {reportMetrics.refundedOrders.map((o) => (
+                          <tr key={o.id} className="hover:bg-white/5 transition">
+                            <td className="p-2.5 font-mono font-bold text-rose-400">{o.shortId}</td>
+                            <td className="p-2.5 font-bold text-white">{o.customer.name}</td>
+                            <td className="p-2.5 font-mono font-black text-rose-400">{gbp(o.cancellation?.refundAmount || o.payment?.total || 0)}</td>
+                            <td className="p-2.5 text-[11px] text-white/60">{o.cancellation?.reason || 'Manager Override'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <TillShiftHistory />
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB: CENTRAL STOCK & UNIFIED INVENTORY                        */}
+        {/* ============================================================== */}
+        {activeTab === 'inventory' && (
+          <div className="space-y-6">
+            {/* Header with Search and Actions */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/60 p-5 rounded-3xl border border-white/10 shadow-xl backdrop-blur-md">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">📦</span>
+                  <h2 className="display text-xl text-white font-black tracking-wide">
+                    Central Stock &amp; Unified Inventory
+                  </h2>
+                </div>
+                <p className="font-body text-xs text-white/60 mt-1">
+                  Single source of truth for physical till &amp; website. Live stock deductions, barcode lookup, cost price, and channel visibility.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingProduct(null)
+                    setIsProductModalOpen(true)
+                  }}
+                  className="rounded-2xl bg-amber-400 px-4 py-2.5 font-body text-xs font-black text-slate-950 hover:bg-amber-300 shadow-lg shadow-amber-400/20 transition flex items-center gap-2"
+                >
+                  <span>➕</span>
+                  <span>Add New Product</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Inventory KPI Summary Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Total Catalog Items</div>
+                <div className="font-mono text-2xl font-black text-white mt-1">{products.length}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Dishes, Sides &amp; Drinks</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Total Stock On Hand</div>
+                <div className="font-mono text-2xl font-black text-teal-400 mt-1">
+                  {products.reduce((acc, p) => acc + (p.stockQuantity ?? 45), 0)} units
+                </div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Across All Categories</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Low-Stock Warnings</div>
+                <div className="font-mono text-2xl font-black text-amber-400 mt-1">{lowStockProducts.length}</div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Below Minimum Threshold</div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">Out of Stock (OOS)</div>
+                <div className="font-mono text-2xl font-black text-rose-400 mt-1">
+                  {products.filter((p) => (p.stockQuantity ?? 45) <= 0).length}
+                </div>
+                <div className="font-body text-[10px] text-white/40 mt-0.5">Blocked From Checkout</div>
+              </div>
+            </div>
+
+            {/* Filter bar */}
+            <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-white/5 p-4 rounded-2xl border border-white/10">
+              <div className="flex flex-1 w-full md:w-auto items-center gap-2">
+                <span className="text-white/40 text-sm">🔍</span>
+                <input
+                  type="text"
+                  placeholder="Search by product name, category, or barcode / SKU..."
+                  value={inventorySearch}
+                  onChange={(e) => setInventorySearch(e.target.value)}
+                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 font-body text-xs text-white placeholder-white/40 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
+                <button
+                  type="button"
+                  onClick={() => setInventoryCategoryFilter('ALL')}
+                  className={cx(
+                    'px-3 py-1.5 rounded-xl font-body text-xs font-bold transition shrink-0',
+                    inventoryCategoryFilter === 'ALL' ? 'bg-amber-400 text-slate-950 font-black' : 'bg-white/5 text-white/70 hover:text-white'
+                  )}
+                >
+                  All Categories
+                </button>
+                {activeCategories.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setInventoryCategoryFilter(c.id)}
+                    className={cx(
+                      'px-3 py-1.5 rounded-xl font-body text-xs font-bold transition shrink-0',
+                      inventoryCategoryFilter === c.id ? 'bg-amber-400 text-slate-950 font-black' : 'bg-white/5 text-white/70 hover:text-white'
+                    )}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Central Inventory Table */}
+            <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 space-y-4">
+              <div className="overflow-x-auto rounded-2xl border border-white/10">
+                <table className="w-full text-left font-body text-xs">
+                  <thead className="bg-white/5 text-[11px] font-black uppercase tracking-wider text-white/60 border-b border-white/10">
+                    <tr>
+                      <th className="p-3">Barcode / SKU</th>
+                      <th className="p-3">Product Name</th>
+                      <th className="p-3">Category</th>
+                      <th className="p-3 text-right">Retail Price</th>
+                      <th className="p-3 text-right">Cost Price</th>
+                      <th className="p-3 text-center">Channel Visibility</th>
+                      <th className="p-3 text-center">Live Stock Qty</th>
+                      <th className="p-3 text-center">Threshold</th>
+                      <th className="p-3 text-center">In-Store</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 text-white/90">
+                    {products
+                      .filter((p) => {
+                        if (inventoryCategoryFilter !== 'ALL' && p.category !== inventoryCategoryFilter) return false
+                        if (inventorySearch.trim()) {
+                          const q = inventorySearch.toLowerCase()
+                          const matchName = p.name.toLowerCase().includes(q)
+                          const matchCategory = p.category.toLowerCase().includes(q)
+                          const matchBarcode = p.barcode?.toLowerCase().includes(q)
+                          return matchName || matchCategory || matchBarcode
+                        }
+                        return true
+                      })
+                      .map((p) => {
+                        const stock = p.stockQuantity ?? 45
+                        const threshold = p.lowStockThreshold ?? 10
+                        const isLow = stock <= threshold && stock > 0
+                        const isOos = stock <= 0
+                        const channel = p.channelVisibility || 'all'
+
+                        return (
+                          <tr key={p.id} className="hover:bg-white/5 transition">
+                            <td className="p-3 font-mono font-bold text-white/60">
+                              {p.barcode ? (
+                                <span className="px-2 py-0.5 rounded bg-white/10 text-white font-mono text-[10px]">
+                                  {p.barcode}
+                                </span>
+                              ) : (
+                                <span className="text-white/30 text-[11px]">—</span>
+                              )}
+                            </td>
+                            <td className="p-3 font-bold text-white">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate max-w-[180px]">{p.name}</span>
+                                {isOos && (
+                                  <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-black text-[9px] border border-rose-500/30">
+                                    OOS
+                                  </span>
+                                )}
+                                {isLow && (
+                                  <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-black text-[9px] border border-amber-500/30">
+                                    LOW
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-3 text-white/60 capitalize">{p.category}</td>
+                            <td className="p-3 text-right font-mono font-bold text-amber-400">{gbp(p.price)}</td>
+                            <td className="p-3 text-right font-mono text-white/50">{gbp(p.costPrice ?? Math.round(p.price * 0.32))}</td>
+                            <td className="p-3 text-center">
+                              <span className={cx(
+                                'px-2 py-0.5 rounded-full text-[10px] font-black',
+                                channel === 'all' ? 'bg-emerald-500/20 text-emerald-300' :
+                                channel === 'in_store_only' ? 'bg-amber-500/20 text-amber-300' :
+                                'bg-cyan-500/20 text-cyan-300'
+                              )}>
+                                {channel === 'all' ? '🌐 Till & Web' : channel === 'in_store_only' ? '🏪 In-Store Only' : '💻 Online Only'}
+                              </span>
+                            </td>
+                            <td className="p-3 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickAdjustStock(p.id, -5)}
+                                  className="h-6 w-6 rounded bg-white/10 font-mono text-[10px] font-black text-white hover:bg-rose-500 hover:text-white transition"
+                                  title="Reduce stock by 5"
+                                >
+                                  -5
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickAdjustStock(p.id, -1)}
+                                  className="h-6 w-6 rounded bg-white/10 font-mono text-xs font-bold text-white hover:bg-rose-500 hover:text-white transition"
+                                  title="Reduce stock by 1"
+                                >
+                                  -1
+                                </button>
+                                <span className={cx(
+                                  'font-mono font-black text-sm px-2 min-w-[2.5rem] text-center',
+                                  isOos ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-emerald-400'
+                                )}>
+                                  {stock}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickAdjustStock(p.id, 1)}
+                                  className="h-6 w-6 rounded bg-white/10 font-mono text-xs font-bold text-white hover:bg-emerald-500 hover:text-white transition"
+                                  title="Increase stock by 1"
+                                >
+                                  +1
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickAdjustStock(p.id, 5)}
+                                  className="h-6 w-6 rounded bg-white/10 font-mono text-[10px] font-black text-white hover:bg-emerald-500 hover:text-white transition"
+                                  title="Increase stock by 5"
+                                >
+                                  +5
+                                </button>
+                              </div>
+                            </td>
+                            <td className="p-3 text-center font-mono text-white/50 text-[11px]">&le; {threshold}</td>
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleStockToggle(p.id, stockOverrides[p.id] ?? true)}
+                                className={cx(
+                                  'px-2 py-0.5 rounded-full text-[10px] font-black transition',
+                                  (stockOverrides[p.id] ?? true)
+                                    ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                                    : 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30'
+                                )}
+                              >
+                                {(stockOverrides[p.id] ?? true) ? 'Active' : '86ed'}
+                              </button>
+                            </td>
+                            <td className="p-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingProduct(p)
+                                  setIsProductModalOpen(true)
+                                }}
+                                className="px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition"
+                              >
+                                ✏️ Edit
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>

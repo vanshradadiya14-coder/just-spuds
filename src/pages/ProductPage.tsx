@@ -7,7 +7,7 @@ import FulfillmentSwitcher from '../components/FulfillmentSwitcher'
 import {
   MEAL_DEAL, extrasFor, optionPrice,
 } from '../data/menu'
-import { getProductById, getProducts, getSauces, isProductSoldOut, subscribeMenu } from '../services/menuStore'
+import { getOnlineProductById, getOnlineProducts, getSauces, isProductSoldOut, subscribeMenu } from '../services/menuStore'
 import { useCart } from '../hooks/useCart'
 import { cx, gbp } from '../utils/format'
 import { subscribeStock } from '../services/orderStore'
@@ -16,7 +16,7 @@ import { useDocumentMeta } from '../hooks/useDocumentMeta'
 export default function ProductPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const [product, setProduct] = useState(() => (id ? getProductById(id) : undefined))
+  const [product, setProduct] = useState(() => (id ? getOnlineProductById(id) : undefined))
 
   useDocumentMeta({
     title: product
@@ -32,9 +32,9 @@ export default function ProductPage() {
   const [availableSauces, setAvailableSauces] = useState(() => getSauces())
 
   useEffect(() => {
-    setProduct(id ? getProductById(id) : undefined)
+    setProduct(id ? getOnlineProductById(id) : undefined)
     return subscribeMenu(() => {
-      setProduct(id ? getProductById(id) : undefined)
+      setProduct(id ? getOnlineProductById(id) : undefined)
       setAvailableSauces(getSauces())
     })
   }, [id])
@@ -81,7 +81,7 @@ export default function ProductPage() {
     extras.reduce((n, x) => n + optionPrice(x, product.category), 0) +
     (meal ? MEAL_DEAL.price : 0)
 
-  const related = getProducts().filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4)
+  const related = getOnlineProducts().filter((p) => p.category === product.category && p.id !== product.id).slice(0, 4)
   const toggle = (list: string[], set: (v: string[]) => void, x: string) =>
     set(list.includes(x) ? list.filter((i) => i !== x) : [...list, x])
 

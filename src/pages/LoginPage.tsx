@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { loginWithPin, loginWithCredentials, loginWithGoogle, getCurrentUser, type Role } from '../services/authStore'
+import { loginWithPin, loginWithCredentials, loginWithGoogle, getCurrentUser, homePortalForRole, type Role } from '../services/authStore'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 
 type LoginTab = 'staff' | 'admin' | 'customer'
@@ -22,29 +22,9 @@ export default function LoginPage() {
   const [loadingGoogle, setLoadingGoogle] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  /**
-   * Single source of truth for post-login routing.
-   *
-   * The PIN and credential handlers each had their own copy of this and neither
-   * handled DRIVER, so a courier who signed in with PIN 7777 was authenticated
-   * correctly and then dropped on the customer homepage — with /driver linked from
-   * nowhere in the UI, the portal was effectively unreachable except by typing the
-   * URL. One helper keeps the two paths from drifting again.
-   */
-  const destinationForRole = (role?: Role): string => {
-    switch (role) {
-      case 'STAFF':
-        return '/staff'
-      case 'STORE_MANAGER':
-      case 'ADMIN':
-      case 'SUPER_ADMIN':
-        return '/admin'
-      case 'DRIVER':
-        return '/driver'
-      default:
-        return redirect
-    }
-  }
+  // Post-login routing lives in authStore so every role lands somewhere useful;
+  // customers (no portal) go back to wherever they came from.
+  const destinationForRole = (role?: Role): string => homePortalForRole(role) ?? redirect
 
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault()

@@ -1,11 +1,10 @@
-  import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import Reveal from './Reveal'
 import RevealImage from './RevealImage'
 import Backdrop from './Backdrop'
 import { type CategoryId } from '../data/menu'
-import { getCategories } from '../services/menuStore'
-import { getProducts, subscribeMenu } from '../services/menuStore'
+import { getCategories, getOnlineProducts, subscribeMenu } from '../services/menuStore'
 import { gbp } from '../utils/format'
 
 /**
@@ -19,11 +18,11 @@ import { gbp } from '../utils/format'
 const FOOD: CategoryId[] = ['SPUDS', 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS']
 
 export default function Range() {
-  const [products, setProducts] = useState(() => getProducts())
+  const [products, setProducts] = useState(() => getOnlineProducts())
 
   useEffect(() => {
     return subscribeMenu(() => {
-      setProducts(getProducts())
+      setProducts(getOnlineProducts())
     })
   }, [])
 

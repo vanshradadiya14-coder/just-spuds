@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { getProducts, subscribeMenu } from '../services/menuStore'
+import { getOnlineProducts, subscribeMenu } from '../services/menuStore'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 
 /**
@@ -16,12 +16,12 @@ import { useReducedMotion } from '../hooks/useReducedMotion'
  * removing a spud can never leave a dead link behind.
  */
 export default function NameBand() {
-  const [products, setProducts] = useState(() => getProducts())
+  const [products, setProducts] = useState(() => getOnlineProducts())
   const reduced = useReducedMotion()
 
   useEffect(() => {
     return subscribeMenu(() => {
-      setProducts(getProducts())
+      setProducts(getOnlineProducts())
     })
   }, [])
 

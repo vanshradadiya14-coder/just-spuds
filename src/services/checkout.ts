@@ -13,6 +13,7 @@ import {
   type CustomerInfo,
 } from './orderStore'
 import { isPhoneBlacklisted } from './blacklistStore'
+import { getProducts } from './menuStore'
 
 export type Fulfilment = 'collection' | 'delivery'
 
@@ -63,6 +64,28 @@ export async function processCheckout(payload: CheckoutPayload): Promise<Checkou
     return {
       ok: false,
       reason: pauseCheck.reason || 'Kitchen orders are temporarily paused by staff.',
+    }
+  }
+
+  // Central Inventory & Channel Availability check (prevent overselling online)
+  const products = getProducts()
+  for (const line of payload.lines) {
+    const prod = products.find((p) => p.id === line.productId || p.name === line.name)
+    if (prod) {
+      if (prod.channelVisibility === 'in_store_only') {
+        return {
+          ok: false,
+          reason: `"${prod.name}" is an in-store counter exclusive and cannot be ordered online.`,
+        }
+      }
+      const requiredQty = line.qty || 1
+      const currentStock = typeof prod.stockQuantity === 'number' ? prod.stockQuantity : 45
+      if (!prod.available || currentStock < requiredQty) {
+        return {
+          ok: false,
+          reason: `Sorry, "${prod.name}" is currently out of stock or insufficient quantity (Available: ${currentStock}). Please update your cart.`,
+        }
+      }
     }
   }
 

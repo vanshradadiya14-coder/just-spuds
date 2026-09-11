@@ -32,28 +32,6 @@ export function useScrollProgress<T extends HTMLElement>() {
   return { ref, progress }
 }
 
-/** Window scroll position in px, rAF-throttled. */
-export function useScrollY() {
-  const [y, setY] = useState(0)
-  useEffect(() => {
-    let frame = 0
-    const onScroll = () => {
-      if (frame) return
-      frame = requestAnimationFrame(() => {
-        frame = 0
-        setY(window.scrollY)
-      })
-    }
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      window.removeEventListener('scroll', onScroll)
-      if (frame) cancelAnimationFrame(frame)
-    }
-  }, [])
-  return y
-}
-
 /** Boolean state that only updates when crossing a scroll threshold (prevents re-renders on every pixel). */
 export function useIsScrolled(threshold = 40) {
   const [scrolled, setScrolled] = useState(() =>

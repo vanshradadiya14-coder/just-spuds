@@ -1,6 +1,22 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { getCurrentUser, subscribeAuth, logout, type AuthUser, hasRole } from '../services/authStore'
+import {
+  getCurrentUser,
+  subscribeAuth,
+  logout,
+  hasRole,
+  homePortalForRole,
+  INTERNAL_ROLES,
+  MANAGEMENT_ROLES,
+  type AuthUser,
+} from '../services/authStore'
+
+const PORTALS: Record<string, { label: string; icon: string }> = {
+  '/admin': { label: 'Admin Console', icon: '📊' },
+  '/staff': { label: 'Kitchen KDS', icon: '👨‍🍳' },
+  '/pos': { label: 'Till / POS', icon: '🧾' },
+  '/driver': { label: 'Driver Hub', icon: '🛵' },
+}
 
 export default function StaffPortalDock() {
   const [user, setUser] = useState<AuthUser | null>(getCurrentUser())
@@ -12,32 +28,18 @@ export default function StaffPortalDock() {
   }, [])
 
   // Do not show on internal portal routes themselves
-  const isInternalRoute =
-    location.pathname.startsWith('/staff') ||
-    location.pathname.startsWith('/admin') ||
-    location.pathname.startsWith('/driver') ||
-    location.pathname.startsWith('/login')
+  const isInternalRoute = ['/staff', '/admin', '/pos', '/till', '/cfd', '/customer-display', '/driver', '/login'].some((p) =>
+    location.pathname.startsWith(p),
+  )
 
   if (!user || isInternalRoute) return null
 
   // Only show if user has staff, manager, admin, or driver privileges
-  const isInternalUser = hasRole(user, ['STAFF', 'STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN', 'DRIVER'])
-  if (!isInternalUser) return null
+  if (!hasRole(user, INTERNAL_ROLES)) return null
 
-  const getPrimaryPortal = () => {
-    if (hasRole(user, ['ADMIN', 'SUPER_ADMIN'])) {
-      return { path: '/admin', label: 'Admin Console', icon: '📊' }
-    }
-    if (hasRole(user, ['STORE_MANAGER', 'STAFF'])) {
-      return { path: '/staff', label: 'Kitchen KDS', icon: '👨‍🍳' }
-    }
-    if (hasRole(user, ['DRIVER'])) {
-      return { path: '/driver', label: 'Driver Hub', icon: '🛵' }
-    }
-    return { path: '/staff', label: 'Staff Portal', icon: '⚡' }
-  }
-
-  const primary = getPrimaryPortal()
+  const primaryPath = homePortalForRole(user.role) ?? '/staff'
+  const primary = { path: primaryPath, ...(PORTALS[primaryPath] ?? { label: 'Staff Portal', icon: '⚡' }) }
+  const isManagement = hasRole(user, MANAGEMENT_ROLES)
 
   return (
     <aside
@@ -81,7 +83,7 @@ export default function StaffPortalDock() {
               <span>Back to {primary.label} →</span>
             </Link>
 
-            {hasRole(user, ['ADMIN', 'SUPER_ADMIN', 'STORE_MANAGER']) && primary.path !== '/staff' && (
+            {isManagement && primary.path !== '/staff' && (
               <Link
                 to="/staff"
                 className="hidden md:flex items-center gap-1 rounded-full border border-white/20 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/80 hover:bg-white/15 transition"
@@ -91,7 +93,7 @@ export default function StaffPortalDock() {
               </Link>
             )}
 
-            {hasRole(user, ['ADMIN', 'SUPER_ADMIN', 'STORE_MANAGER']) && primary.path !== '/admin' && (
+            {isManagement && primary.path !== '/admin' && (
               <Link
                 to="/admin"
                 className="hidden md:flex items-center gap-1 rounded-full border border-white/20 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/80 hover:bg-white/15 transition"

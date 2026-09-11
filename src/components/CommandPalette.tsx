@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { getProducts } from '../services/menuStore'
+import { getOnlineProducts } from '../services/menuStore'
 import { type Product } from '../data/menu'
 import { gbp } from '../utils/format'
 import SmartImage from './SmartImage'
@@ -15,12 +15,12 @@ interface CommandPaletteProps {
 
 export default function CommandPalette({ isOpen, onClose, onOpen }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
-  const [products, setProducts] = useState<Product[]>(() => getProducts())
+  const [products, setProducts] = useState<Product[]>(() => getOnlineProducts())
   const navigate = useNavigate()
 
   useEffect(() => {
     if (isOpen) {
-      setProducts(getProducts())
+      setProducts(getOnlineProducts())
       setQuery('')
     }
   }, [isOpen])
@@ -35,7 +35,7 @@ export default function CommandPalette({ isOpen, onClose, onOpen }: CommandPalet
         } else {
           // The open branch used to be an empty TODO, so the shortcut did nothing
           // at all — despite the navbar and this panel both advertising ⌘K.
-          setProducts(getProducts())
+          setProducts(getOnlineProducts())
           onOpen()
         }
       }

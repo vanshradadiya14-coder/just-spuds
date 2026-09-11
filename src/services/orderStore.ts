@@ -11,8 +11,13 @@ import {
   syncOrderToSupabase,
   fetchSupabaseOrders,
   initSupabaseOrderSubscription,
+  sourceFromShortId,
 } from './supabaseOrderSync'
 import { logAuditEvent } from './auditStore'
+import { deductStockForOrderLines, restoreStockForOrderLines } from './menuStore'
+import { recordOnlineOrderInShift } from './tillStore'
+
+export type OrderSource = 'WEBSITE' | 'TILL' | 'PHONE' | 'STAFF'
 
 export type OrderStatus =
   | 'placed'                  // Customer placed order, waiting for kitchen acceptance
@@ -137,6 +142,7 @@ export interface OrderAdminNote {
 export interface Order {
   id: string
   shortId: string
+  source: OrderSource
   createdAt: string
   status: OrderStatus
   fulfilment: 'delivery' | 'pickup'
@@ -200,13 +206,23 @@ export function getStoredOrders(): Order[] {
     if (cleaned.length !== parsed.length) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned))
     }
-    return cleaned
+    return cleaned.map((o) => (o.source ? o : { ...o, source: inferLegacySource(o) }))
   } catch {
     return INITIAL_ORDERS
   }
 }
 
-export const getOrders = getStoredOrders
+/**
+ * Orders saved before `source` existed carry no prefix on their short id
+ * (plain `JS-12345`), so fall back to the kitchen-note tag the till used to stamp.
+ */
+function inferLegacySource(o: Order): OrderSource {
+  const fromId = sourceFromShortId(o.shortId)
+  if (fromId !== 'WEBSITE') return fromId
+  if (o.kitchenNotes?.includes('POS TILL')) return 'TILL'
+  if (o.kitchenNotes?.includes('PHONE')) return 'PHONE'
+  return 'WEBSITE'
+}
 
 export function saveOrders(orders: Order[]): void {
   if (typeof window === 'undefined') return
@@ -471,7 +487,7 @@ export function createNewOrder(params: {
   }
 
   const shortNum = Math.floor(10000 + Math.random() * 90000)
-  const shortId = `JS-${shortNum}`
+  const shortId = `JS-W-${shortNum}`
   const id = `ord-${Date.now()}-${shortNum}`
   const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -484,6 +500,7 @@ export function createNewOrder(params: {
   const newOrder: Order = {
     id,
     shortId,
+    source: 'WEBSITE',
     createdAt: new Date().toISOString(),
     status: 'placed',
     fulfilment: params.fulfilment,
@@ -491,7 +508,9 @@ export function createNewOrder(params: {
     lines: params.lines,
     payment: {
       method: params.paymentMethod || (isDelivery ? 'driver_device' : 'in_store'),
-      status: params.fulfilment === 'delivery' ? 'pending_delivery' : 'pending_store',
+      status: (params.paymentMethod === 'card' || params.paymentMethod === 'apple_pay' || params.paymentMethod === 'google_pay')
+        ? 'paid'
+        : (params.fulfilment === 'delivery' ? 'pending_delivery' : 'pending_store'),
       cardLast4: params.cardLast4,
       cardBrand: params.cardBrand,
       subtotal: params.subtotal,
@@ -500,6 +519,9 @@ export function createNewOrder(params: {
       tip: params.tip,
       discount: params.discount,
       total: params.total,
+      paidAt: (params.paymentMethod === 'card' || params.paymentMethod === 'apple_pay' || params.paymentMethod === 'google_pay')
+        ? new Date().toISOString()
+        : undefined,
     },
     estimatedDeliveryTime,
     etaMinutes,
@@ -508,11 +530,6 @@ export function createNewOrder(params: {
     scheduleDate: params.scheduleDate,
     scheduleTime: params.scheduleTime,
     kitchenNotes: params.kitchenNotes,
-    // No driver until one actually claims the delivery (see claimDeliveryOrder).
-    // This used to stamp DEFAULT_DRIVER on every delivery order at payment time,
-    // so the customer was shown a named courier with a rating, a numberplate and a
-    // tappable phone number before anyone had accepted the job — and if a different
-    // courier took it, the tracking page still showed the placeholder.
     driver: undefined,
     timeline: [
       {
@@ -530,6 +547,13 @@ export function createNewOrder(params: {
   const updated = [newOrder, ...current]
   saveOrders(updated)
   setActiveCustomerOrderId(newOrder.id)
+
+  // Deduct inventory atomically across all retail channels
+  deductStockForOrderLines(params.lines, shortId, 'Online Web Customer')
+
+  // Web sales taken while the till is open belong on that shift's Z-report,
+  // otherwise the end-of-day figures only ever show counter takings.
+  recordOnlineOrderInShift(params.total)
 
   // Broadcast Web Audio chime to open admin tabs
   playKitchenChime()
@@ -713,6 +737,9 @@ export function cancelOrder(orderId: string, reason: string): { ok: boolean; ord
 
   saveOrders(updated)
   playKitchenChime(true)
+
+  // Restore inventory if food was not prepared
+  restoreStockForOrderLines(order.lines, order.shortId, 'Staff/Manager', reason)
 
   return {
     ok: true,
@@ -1045,28 +1072,6 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
     topProducts,
     topToppings,
     crmCustomers,
-  }
-}
-
-export function getAdminAnalytics() {
-  const orders = getStoredOrders()
-  const activeOrders = orders.filter((o) => !['delivered', 'collected', 'cancelled'].includes(o.status))
-  const completedOrders = orders.filter((o) => ['delivered', 'collected'].includes(o.status))
-  const cancelledOrders = orders.filter((o) => o.status === 'cancelled')
-
-  const totalRevenue = completedOrders.reduce((sum, o) => sum + o.payment.total, 0)
-  const deliveryOrdersCount = orders.filter((o) => o.fulfilment === 'delivery').length
-  const pickupOrdersCount = orders.filter((o) => o.fulfilment === 'pickup').length
-
-  return {
-    totalOrders: orders.length,
-    activeCount: activeOrders.length,
-    completedCount: completedOrders.length,
-    cancelledCount: cancelledOrders.length,
-    totalRevenue,
-    deliveryOrdersCount,
-    pickupOrdersCount,
-    avgPrepTimeMins: 14,
   }
 }
 
@@ -1535,7 +1540,7 @@ export function submitOrderReview(
   orderId: string,
   reviewData: { rating: number; tags?: string[]; comment?: string }
 ): Order | null {
-  const orders = getOrders()
+  const orders = getStoredOrders()
   const idx = orders.findIndex(
     (o) => o.id === orderId || o.shortId.toLowerCase() === orderId.toLowerCase()
   )
@@ -2205,6 +2210,7 @@ export interface ManualCounterOrderParams {
   splitDetails?: SplitTenderPortion[]
   buzzerNumber?: string
   tableNumber?: string
+  source?: OrderSource
 }
 
 /**
@@ -2214,8 +2220,10 @@ export function createManualCounterOrder(
   params: ManualCounterOrderParams,
   actor: string
 ): Order {
+  const source: OrderSource = params.source || 'TILL'
+  const prefix = source === 'PHONE' ? 'JS-P' : source === 'STAFF' ? 'JS-S' : 'JS-T'
   const shortNum = Math.floor(10000 + Math.random() * 90000)
-  const shortId = `JS-${shortNum}`
+  const shortId = `${prefix}-${shortNum}`
   const id = `ord-${Date.now()}-${shortNum}`
   const now = new Date()
   const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -2237,6 +2245,7 @@ export function createManualCounterOrder(
   const newOrder: Order = {
     id,
     shortId,
+    source,
     createdAt: now.toISOString(),
     status: 'accepted',
     fulfilment: params.fulfilment,
@@ -2261,19 +2270,19 @@ export function createManualCounterOrder(
       discount,
       total,
       paidAt: params.paymentStatus === 'paid' ? now.toISOString() : undefined,
-      paidNote: `Entered via POS Till / Counter by ${actor}`,
+      paidNote: `Entered via ${source} by ${actor}`,
       splitDetails: params.splitDetails,
     },
     estimatedDeliveryTime: params.fulfilment === 'delivery' ? '~25-35 mins' : '~10-15 mins',
     etaMinutes: params.fulfilment === 'delivery' ? 25 : 12,
-    kitchenNotes: specialTags ? `[MANUAL POS TILL] ${specialTags}` : '[MANUAL POS TILL ORDER]',
+    kitchenNotes: specialTags ? `[${source}] ${specialTags}` : `[${source} ORDER]`,
     deliveryDetails: deliveryPin ? { deliveryPin } : undefined,
     timeline: [
       {
         status: 'placed',
         timestamp: nowStr,
         title: 'Manual Order Created 📝',
-        description: `Directly entered by ${actor} (Phone / Counter Walk-in).`,
+        description: `Directly entered by ${actor} (${source}).`,
       },
       {
         status: 'accepted',
@@ -2287,7 +2296,7 @@ export function createManualCounterOrder(
         id: `note-${Date.now()}`,
         timestamp: now.toISOString(),
         author: actor,
-        note: `Created via Manual Order Entry at counter/phone.`,
+        note: `Created via ${source} entry by ${actor}.`,
       },
     ],
   }
@@ -2295,16 +2304,87 @@ export function createManualCounterOrder(
   const current = getStoredOrders()
   const updated = [newOrder, ...current]
   saveOrders(updated)
+
+  // Deduct inventory atomically across all retail channels
+  deductStockForOrderLines(params.lines, shortId, actor || 'Staff Cashier')
+
   playKitchenChime()
 
   logAuditEvent(
     actor,
     'order.manual_created',
     `#${shortId}`,
-    `${params.fulfilment.toUpperCase()} | £${(total / 100).toFixed(2)} | Items: ${params.lines.length}`
+    `${source} | ${params.fulfilment.toUpperCase()} | £${(total / 100).toFixed(2)} | Items: ${params.lines.length}`
   )
 
   return newOrder
+}
+
+/**
+ * Formal manager-authorized refund for completed or open orders.
+ */
+export function refundOrder(
+  orderId: string,
+  refundAmountPence: number,
+  reason: string,
+  managerName: string
+): { ok: boolean; order?: Order; message: string } {
+  const current = getStoredOrders()
+  const order = current.find((o) => o.id === orderId || o.shortId === orderId)
+  if (!order) return { ok: false, message: 'Order not found.' }
+
+  const now = new Date()
+  const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  let updatedOrder: Order | undefined
+
+  const updated = current.map((ord) => {
+    if (ord.id !== order.id) return ord
+
+    const isFullRefund = refundAmountPence >= ord.payment.total
+    updatedOrder = {
+      ...ord,
+      payment: {
+        ...ord.payment,
+        status: isFullRefund ? 'refunded' : ord.payment.status,
+        manualAdjustment: {
+          originalTotal: ord.payment.total,
+          adjustedTotal: Math.max(0, ord.payment.total - refundAmountPence),
+          reason,
+          adjustedBy: managerName,
+          adjustedAt: now.toISOString(),
+        },
+      },
+      timeline: [
+        ...ord.timeline,
+        {
+          status: ord.status,
+          timestamp: nowStr,
+          title: `Refund Processed (£${(refundAmountPence / 100).toFixed(2)}) 💸`,
+          description: `Authorized by Manager ${managerName}. Reason: ${reason}`,
+        },
+      ],
+      adminNotes: [
+        ...(ord.adminNotes || []),
+        {
+          id: `note-${Date.now()}`,
+          timestamp: now.toISOString(),
+          author: managerName,
+          note: `Manager Refund of £${(refundAmountPence / 100).toFixed(2)}. Reason: ${reason}`,
+        },
+      ],
+    }
+    return updatedOrder
+  })
+
+  saveOrders(updated)
+  logAuditEvent(
+    managerName,
+    'order.refund_processed',
+    `#${order.shortId}`,
+    `Refund: £${(refundAmountPence / 100).toFixed(2)} | Reason: ${reason}`
+  )
+
+  return { ok: true, order: updatedOrder, message: `Refund of £${(refundAmountPence / 100).toFixed(2)} recorded.` }
 }
 
 

@@ -11,7 +11,7 @@ import ReorderWidget from '../components/ReorderWidget'
 import {
   ALLERGY_NOTICE, MEAL_DEAL, type CategoryId, type Product,
 } from '../data/menu'
-import { getProducts, isProductSoldOut, subscribeMenu, getCategories } from '../services/menuStore'
+import { getOnlineProducts, isProductSoldOut, subscribeMenu, getCategories } from '../services/menuStore'
 import { SITE } from '../data/site'
 import { useCart } from '../hooks/useCart'
 import { cx, gbp } from '../utils/format'
@@ -32,7 +32,7 @@ const FILTER_TAGS = [
 
 export default function MenuPage() {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false)
-  const [products, setProducts] = useState<Product[]>(() => getProducts())
+  const [products, setProducts] = useState<Product[]>(() => getOnlineProducts())
   const activeCategories = getCategories()
 
   useDocumentMeta({
@@ -66,7 +66,7 @@ export default function MenuPage() {
 
   useEffect(() => {
     const unsubMenu = subscribeMenu(() => {
-      setProducts(getProducts())
+      setProducts(getOnlineProducts())
     })
     // Live stock updates: staff 86'ing an item now removes it here immediately,
     // rather than only on the next full page load.

@@ -121,14 +121,6 @@ export function saveDrivers(drivers: DriverProfile[]): void {
   }
 }
 
-export function getDriverById(id: string): DriverProfile | undefined {
-  return getDrivers().find((d) => d.id === id)
-}
-
-export function getDriverByPin(pin: string): DriverProfile | undefined {
-  return getDrivers().find((d) => d.pin === pin.trim())
-}
-
 export function setDriverOnlineStatus(driverId: string, isOnline: boolean): DriverProfile | undefined {
   const drivers = getDrivers()
   let updatedDriver: DriverProfile | undefined

@@ -9,7 +9,8 @@
  * 5. Cross-tab synchronization via BroadcastChannel & LocalStorage persistence.
  */
 
-import { kickCashDrawer } from './printerBridge'
+import { kickCashDrawer, setTouchSoundsEnabled } from './printerBridge'
+import { setAlertSoundsEnabled } from './alertSoundBus'
 import { logAuditEvent } from './auditStore'
 
 export interface CashDenominations {
@@ -152,6 +153,13 @@ function reloadFromStorage() {
   } catch (err) {
     console.error('Failed reading till store from localStorage:', err)
   }
+  applySoundSettings()
+}
+
+/** The sound modules can't import this store (it imports them), so push the flags down. */
+function applySoundSettings() {
+  setTouchSoundsEnabled(tillSettings.touchSounds)
+  setAlertSoundsEnabled(tillSettings.soundAlerts)
 }
 
 function saveActiveShift() {
@@ -193,13 +201,18 @@ export function getTillSettings(): TillSettings {
   return { ...tillSettings }
 }
 
-export function updateTillSettings(patch: Partial<TillSettings>): TillSettings {
+export function updateTillSettings(patch: Partial<TillSettings>, actor = 'Manager'): TillSettings {
+  const changed = (Object.keys(patch) as (keyof TillSettings)[]).filter((k) => tillSettings[k] !== patch[k])
   tillSettings = { ...tillSettings, ...patch }
   if (typeof window !== 'undefined') {
     localStorage.setItem(STORAGE_TILL_SETTINGS, JSON.stringify(tillSettings))
   }
+  applySoundSettings()
   channel?.postMessage({ type: 'SETTINGS_UPDATED' })
   notifySettings()
+  if (changed.length > 0) {
+    logAuditEvent(actor, 'till.settings_updated', 'Till Settings', changed.map((k) => `${k}=${String(tillSettings[k])}`).join(', '))
+  }
   return tillSettings
 }
 

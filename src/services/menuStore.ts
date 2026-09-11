@@ -17,6 +17,8 @@ import {
   type Category,
 } from '../data/menu'
 import { SITE } from '../data/site'
+import { logAuditEvent } from './auditStore'
+import type { CartLine } from '../hooks/useCart'
 
 export interface PromoCode {
   code: string
@@ -134,25 +136,218 @@ function notifyListeners() {
 }
 
 // -------------------------------------------------------------
-// PRODUCTS CRUD
+// PRODUCTS CRUD & CENTRAL INVENTORY ENGINE
 // -------------------------------------------------------------
+function normalizeProduct(p: Product): Product {
+  const price = typeof p.price === 'number' ? p.price : 450
+  return {
+    ...p,
+    available: p.available !== false,
+    stockQuantity: typeof p.stockQuantity === 'number' ? p.stockQuantity : 45,
+    lowStockThreshold: typeof p.lowStockThreshold === 'number' ? p.lowStockThreshold : 5,
+    costPrice: typeof p.costPrice === 'number' ? p.costPrice : Math.round(price * 0.32),
+    vatRate: typeof p.vatRate === 'number' ? p.vatRate : 20,
+    channelVisibility: p.channelVisibility || 'all',
+    barcode: p.barcode || ('5060' + p.id.replace(/\D/g, '').padEnd(8, '0')),
+  }
+}
+
 export function getProducts(): Product[] {
-  if (typeof window === 'undefined') return DEFAULT_PRODUCTS
+  if (typeof window === 'undefined') return DEFAULT_PRODUCTS.map(normalizeProduct)
   try {
     const raw = localStorage.getItem(PRODUCTS_STORAGE_KEY)
     if (!raw) {
-      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(DEFAULT_PRODUCTS))
-      return DEFAULT_PRODUCTS
+      const normalizedDefaults = DEFAULT_PRODUCTS.map(normalizeProduct)
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(normalizedDefaults))
+      return normalizedDefaults
     }
-    return JSON.parse(raw)
+    const parsed: Product[] = JSON.parse(raw)
+    return parsed.map(normalizeProduct)
   } catch {
-    return DEFAULT_PRODUCTS
+    return DEFAULT_PRODUCTS.map(normalizeProduct)
   }
 }
 
 export function getProductById(id: string): Product | undefined {
   const products = getProducts()
   return products.find((p) => p.id === id)
+}
+
+export function getProductByBarcode(barcode: string): Product | undefined {
+  if (!barcode) return undefined
+  const cleaned = barcode.trim().toLowerCase()
+  const products = getProducts()
+  return products.find(
+    (p) => (p.barcode && p.barcode.toLowerCase() === cleaned) || p.id.toLowerCase() === cleaned
+  )
+}
+
+/** Products the public storefront may list. In-store exclusives are hidden entirely. */
+export function isListedOnline(p: Product): boolean {
+  return p.channelVisibility !== 'in_store_only'
+}
+
+/** Products the till may ring up. Online-only items never appear on the counter grid. */
+export function isListedInStore(p: Product): boolean {
+  return p.channelVisibility !== 'online_only'
+}
+
+export function getOnlineProducts(): Product[] {
+  return getProducts().filter(isListedOnline)
+}
+
+/** Direct product-page lookup: an in-store exclusive should 404 online, not render. */
+export function getOnlineProductById(id: string): Product | undefined {
+  const p = getProductById(id)
+  return p && isListedOnline(p) ? p : undefined
+}
+
+export function getInStoreProducts(): Product[] {
+  return getProducts().filter(isListedInStore)
+}
+
+export function isOutOfStock(p: Pick<Product, 'stockQuantity'>): boolean {
+  return typeof p.stockQuantity === 'number' && p.stockQuantity <= 0
+}
+
+export function getLowStockProducts(): Product[] {
+  return getProducts().filter((p) => {
+    const qty = p.stockQuantity ?? 0
+    const threshold = p.lowStockThreshold ?? 5
+    return qty <= threshold
+  })
+}
+
+/**
+ * Atomically deducts stock for paid/confirmed order lines across web, till, and phone.
+ */
+export function deductStockForOrderLines(lines: CartLine[], orderId: string, actor = 'System'): void {
+  if (typeof window === 'undefined' || !lines || lines.length === 0) return
+  try {
+    const current = getProducts()
+    let changed = false
+    const deductedItems: string[] = []
+
+    const updated = current.map((prod) => {
+      const lineMatches = lines.filter((l) => l.productId === prod.id || l.name === prod.name)
+      if (lineMatches.length === 0) return prod
+
+      const totalQty = lineMatches.reduce((sum, l) => sum + (l.qty || 1), 0)
+      const currentStock = typeof prod.stockQuantity === 'number' ? prod.stockQuantity : 45
+      const newStock = Math.max(0, currentStock - totalQty)
+      changed = true
+      deductedItems.push(`${prod.name} (-${totalQty} -> ${newStock})`)
+
+      return {
+        ...prod,
+        stockQuantity: newStock,
+        available: newStock > 0 && prod.available,
+      }
+    })
+
+    if (changed) {
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
+      notifyListeners()
+      logAuditEvent(
+        actor,
+        'stock.order_deducted',
+        `#${orderId}`,
+        deductedItems.join(', ')
+      )
+    }
+  } catch (err) {
+    console.error('Failed to deduct stock for order', err)
+  }
+}
+
+/**
+ * Restores stock when an order is cancelled or refunded before food preparation.
+ */
+export function restoreStockForOrderLines(
+  lines: CartLine[],
+  orderId: string,
+  actor = 'Manager',
+  reason = 'Order Cancelled / Refunded'
+): void {
+  if (typeof window === 'undefined' || !lines || lines.length === 0) return
+  try {
+    const current = getProducts()
+    let changed = false
+    const restoredItems: string[] = []
+
+    const updated = current.map((prod) => {
+      const lineMatches = lines.filter((l) => l.productId === prod.id || l.name === prod.name)
+      if (lineMatches.length === 0) return prod
+
+      const totalQty = lineMatches.reduce((sum, l) => sum + (l.qty || 1), 0)
+      const currentStock = typeof prod.stockQuantity === 'number' ? prod.stockQuantity : 0
+      const newStock = currentStock + totalQty
+      changed = true
+      restoredItems.push(`${prod.name} (+${totalQty} -> ${newStock})`)
+
+      // Only re-enable if the product was disabled *because* it ran out. A manual
+      // 86 by a manager (available=false with stock still on hand) must survive.
+      return {
+        ...prod,
+        stockQuantity: newStock,
+        available: prod.available || currentStock <= 0,
+      }
+    })
+
+    if (changed) {
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
+      notifyListeners()
+      logAuditEvent(
+        actor,
+        'stock.order_restored',
+        `#${orderId}`,
+        `Reason: ${reason} | ${restoredItems.join(', ')}`
+      )
+    }
+  } catch (err) {
+    console.error('Failed to restore stock for order', err)
+  }
+}
+
+/**
+ * Manual stock quantity adjustment with manager audit trail.
+ */
+export function adjustProductStock(
+  productId: string,
+  newQuantity: number,
+  actor: string,
+  reason: string
+): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    const current = getProducts()
+    const index = current.findIndex((p) => p.id === productId)
+    if (index < 0) return false
+
+    const oldQty = current[index].stockQuantity ?? 0
+    const qty = Math.max(0, newQuantity)
+    const updated = [...current]
+    updated[index] = {
+      ...updated[index],
+      stockQuantity: qty,
+      // Same rule as restore: a stock-out disables, a restock only re-enables if
+      // the stock-out was the reason it went off sale.
+      available: qty > 0 && (updated[index].available || oldQty <= 0),
+    }
+
+    localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
+    notifyListeners()
+    logAuditEvent(
+      actor,
+      'stock.manual_adjustment',
+      updated[index].name,
+      `Changed from ${oldQty} to ${qty} | Reason: ${reason}`
+    )
+    return true
+  } catch (err) {
+    console.error('Failed to adjust product stock', err)
+    return false
+  }
 }
 
 export function saveProduct(product: Product): void {
@@ -268,14 +463,14 @@ export function deleteExtra(extraId: string): void {
  * dependency on orderStore.
  */
 export function isProductSoldOut(
-  product: Pick<Product, 'id' | 'available'>,
+  product: Pick<Product, 'id' | 'available' | 'stockQuantity'>,
   stockOverrides: Record<string, boolean>,
 ): boolean {
   // An explicit staff toggle is the most recent, most specific signal — it wins.
   if (typeof stockOverrides[product.id] === 'boolean') {
     return stockOverrides[product.id] === false
   }
-  return product.available === false
+  return product.available === false || isOutOfStock(product)
 }
 
 // -------------------------------------------------------------

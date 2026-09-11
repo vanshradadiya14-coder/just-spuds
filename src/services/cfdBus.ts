@@ -67,10 +67,6 @@ function notifyListeners() {
   listeners.forEach((l) => l({ ...currentCFDState }))
 }
 
-export function getCFDState(): CFDTicketState {
-  return { ...currentCFDState }
-}
-
 export function broadcastCFDState(state: Partial<CFDTicketState>): void {
   currentCFDState = {
     ...currentCFDState,

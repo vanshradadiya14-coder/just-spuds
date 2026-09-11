@@ -35,17 +35,3 @@ export default function Reveal({
     </Tag>
   )
 }
-
-/** A hairline that draws itself across as it enters. */
-export function RuleIn({ className, dark = false }: { className?: string; dark?: boolean }) {
-  const reduced = useReducedMotion()
-  return (
-    <motion.span
-      className={`block h-px w-full origin-left ${dark ? 'bg-white/15' : 'bg-ink/15'} ${className ?? ''}`}
-      initial={reduced ? undefined : { scaleX: 0 }}
-      whileInView={reduced ? undefined : { scaleX: 1 }}
-      viewport={{ once: true }}
-      transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
-    />
-  )
-}

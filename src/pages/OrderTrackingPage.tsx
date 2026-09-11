@@ -13,7 +13,7 @@ import {
   type Order,
   type OrderStatus,
 } from '../services/orderStore'
-import { getCurrentUser, hasRole } from '../services/authStore'
+import { getCurrentUser, hasRole, SHOP_FLOOR_ROLES } from '../services/authStore'
 import { lineUnitPrice } from '../hooks/useCart'
 import { SITE } from '../data/site'
 import ThermalReceipt from '../components/ThermalReceipt'
@@ -106,7 +106,7 @@ export default function OrderTrackingPage() {
 
   // Staff bypass check
   const currentUser = getCurrentUser()
-  const isStaff = hasRole(currentUser, ['ADMIN', 'STORE_MANAGER', 'STAFF'])
+  const isStaff = hasRole(currentUser, SHOP_FLOOR_ROLES)
 
   const [allActiveOrders, setAllActiveOrders] = useState<Order[]>(() => getAllActiveCustomerOrders())
 

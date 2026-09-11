@@ -8,7 +8,7 @@ import {
   CHEF_PRESETS, NUTRITION_MAP, MEAL_DEAL,
   optionLabel, optionPrice, extrasFor, type CategoryId, type Product, FRESH_SALAD_OPTIONS,
 } from '../data/menu'
-import { getProducts, getProductById, getSauces, isProductSoldOut, subscribeMenu } from '../services/menuStore'
+import { getOnlineProducts, getProductById, getSauces, isProductSoldOut, subscribeMenu } from '../services/menuStore'
 import { useCart } from '../hooks/useCart'
 import { subscribeStock } from '../services/orderStore'
 import { cx, gbp } from '../utils/format'
@@ -25,9 +25,9 @@ const BUILD_CATEGORIES = [
 ]
 
 export default function Builder({ embedded = false }: { embedded?: boolean } = {}) {
-  const [allProducts, setAllProducts] = useState<Product[]>(() => getProducts())
+  const [allProducts, setAllProducts] = useState<Product[]>(() => getOnlineProducts())
   const [activeCategory, setActiveCategory] = useState<CategoryId>('SPUDS')
-  const [baseId, setBaseId] = useState(() => getProducts().filter((p) => p.category === 'SPUDS')[0]?.id || 'classic-cheddar-beans')
+  const [baseId, setBaseId] = useState(() => getOnlineProducts().filter((p) => p.category === 'SPUDS')[0]?.id || 'classic-cheddar-beans')
   const [extras, setExtras] = useState<string[]>([])
   const [salads, setSalads] = useState<string[]>([])
   const [sauces, setSauces] = useState<string[]>([])
@@ -45,7 +45,7 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
 
   useEffect(() => {
     const unsub = subscribeMenu(() => {
-      setAllProducts(getProducts())
+      setAllProducts(getOnlineProducts())
       setAvailableSauces(getSauces())
     })
     return unsub

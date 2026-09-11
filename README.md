@@ -2,7 +2,8 @@
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://localhost:5174
+npm test           # exercises the real store modules (stock, roles, till shift, checkout)
 ```
 
 That's it. **No asset step is required** — see below.
@@ -38,7 +39,36 @@ Real routes, not anchors on one long page:
 | `/build`       | Build a spud                                           |
 | `/story`       | 1239 charter, Victorian street trade, the offer        |
 | `/find-us`     | Address, directions, order-ahead card                  |
+| `/track/:id`   | Live order tracking                                    |
 | anything else  | 404                                                    |
+
+### Staff portals
+
+Full-screen, no customer chrome. Sign in at `/login` with a PIN; each role
+lands on its own portal and the shop-floor gates accept every shop-floor role.
+
+| Route     | Who                                      | Demo PINs                    |
+|-----------|------------------------------------------|------------------------------|
+| `/pos`    | Till — cashiers and up                   | `1111` cashier               |
+| `/staff`  | Kitchen display — kitchen staff and up   | `1234` kitchen               |
+| `/admin`  | Reports, stock, menu, staff, audit       | `3333` supervisor, `5555` manager, `2468` owner, `8888` admin |
+| `/driver` | Courier hub                              | `7777`                       |
+| `/cfd`    | Customer-facing display for the till     | —                            |
+
+Manager-only actions on the till (refunds, no-sale, settings) prompt for a
+supervisor-or-above PIN. Till settings (auto receipt, drawer kick, siren, tap
+sounds, blind cash count, default float, USB printer) live behind ⚙️ on the
+till and sync to every open till tab.
+
+### Stock and channels
+
+Every product carries `stockQuantity`, `lowStockThreshold` and
+`channelVisibility` (`all` / `in_store_only` / `online_only`). Web, till and
+phone orders all deduct from the same count; cancellations put it back. A
+product that runs out goes off sale automatically and comes back when
+restocked — but a manual 86 by a manager survives both. In-store exclusives
+never appear on the public menu (a direct link 404s) and online-only items
+never appear on the till grid.
 
 `public/_redirects` and `vercel.json` are included so deep links survive a
 static host. Without one of those, refreshing on `/menu` 404s.

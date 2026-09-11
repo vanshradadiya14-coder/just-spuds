@@ -23,6 +23,8 @@ import {
   loginWithPin,
   logout,
   hasRole,
+  SHOP_FLOOR_ROLES,
+  MANAGEMENT_ROLES,
   type AuthUser,
 } from '../services/authStore'
 import { getProducts, subscribeMenu } from '../services/menuStore'
@@ -195,7 +197,7 @@ export default function StaffKDSPage() {
   }
 
   // If user is not authenticated or not staff/manager/admin, show quick PIN keypad
-  const isAuthorized = hasRole(user, ['STAFF', 'STORE_MANAGER', 'ADMIN'])
+  const isAuthorized = hasRole(user, SHOP_FLOOR_ROLES)
 
   if (!isAuthorized) {
     return (
@@ -302,7 +304,7 @@ export default function StaffKDSPage() {
       <div className="mx-auto max-w-[1700px] px-4 sm:px-6">
 
         {/* MANAGER COMMAND BAR (Visible when logged in as Manager or Admin) */}
-        {hasRole(user, ['STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN']) && (
+        {hasRole(user, MANAGEMENT_ROLES) && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-400/40 bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent p-3 font-body text-xs text-white shadow-lg backdrop-blur-md">
             <div className="flex items-center gap-2">
               <span className="grid h-7 w-7 place-items-center rounded-lg bg-amber-400 font-bold text-ink text-xs shadow-glow">
@@ -333,7 +335,7 @@ export default function StaffKDSPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide">JUST SPUDS &bull; KITCHEN DISPLAY</h1>
-                {hasRole(user, ['STORE_MANAGER', 'ADMIN']) ? (
+                {hasRole(user, MANAGEMENT_ROLES) ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-500/40 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-300">
                     👑 Store Manager
                   </span>

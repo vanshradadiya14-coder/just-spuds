@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { cx, gbp } from '../../utils/format'
 import { Order } from '../../services/orderStore'
 
@@ -20,12 +21,30 @@ export default function TicketCard({
   const isCancelled = ord.status === 'cancelled'
   const isComplete = ord.status === 'delivered' || ord.status === 'collected'
 
+  // Live Elapsed Preparation Timer
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (isComplete || isCancelled) return
+    const interval = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [isComplete, isCancelled])
+
+  const elapsedMs = Math.max(0, now - new Date(ord.createdAt).getTime())
+  const elapsedMins = Math.floor(elapsedMs / 60000)
+  const elapsedSecs = Math.floor((elapsedMs % 60000) / 1000)
+  const isLate = !isComplete && !isCancelled && elapsedMins >= 20
+  const isWarning = !isComplete && !isCancelled && elapsedMins >= 10 && elapsedMins < 20
+
+  const source = ord.source
+
   return (
     <div
       key={ord.id}
       className={cx(
         'rounded-3xl border flex flex-col justify-between shadow-2xl transition-all',
-        isCancelled
+        isLate
+          ? 'border-red-500 bg-gradient-to-b from-red-950/60 to-slate-900 ring-4 ring-red-500/50 shadow-red-950/50'
+          : isCancelled
           ? 'border-red-500/40 bg-red-950/20'
           : ord.status === 'placed'
           ? 'border-amber-400 bg-gradient-to-b from-amber-950/40 to-slate-900 ring-2 ring-amber-400/40'
@@ -34,19 +53,38 @@ export default function TicketCard({
           : 'border-white/10 bg-white/[0.04]'
       )}
     >
-      {/* Header */}
+      {/* Header: Distance Typography & Source Badges */}
       <div className="p-5 border-b border-white/10 flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="display text-2xl text-white font-bold">#{ord.shortId}</span>
+            <span className="display text-3xl text-white font-black tracking-tight">#{ord.shortId}</span>
+
+            {/* Order Source Badge */}
             <span
               className={cx(
-                'rounded-full px-2.5 py-0.5 font-body text-[10px] font-black uppercase tracking-wider',
+                'rounded-full px-2.5 py-0.5 font-body text-[11px] font-black uppercase tracking-wider',
+                source === 'TILL'
+                  ? 'bg-purple-500/30 text-purple-200 border border-purple-500/40'
+                  : source === 'PHONE'
+                  ? 'bg-amber-500/30 text-amber-200 border border-amber-500/40'
+                  : source === 'STAFF'
+                  ? 'bg-slate-500/30 text-slate-200 border border-slate-500/40'
+                  : 'bg-sky-500/30 text-sky-200 border border-sky-500/40'
+              )}
+            >
+              {source === 'TILL' ? '🖥️ TILL' : source === 'PHONE' ? '📞 PHONE' : source === 'STAFF' ? '👤 COUNTER' : '🌐 WEB'}
+            </span>
+
+            {/* Fulfilment Type */}
+            <span
+              className={cx(
+                'rounded-full px-2.5 py-0.5 font-body text-[11px] font-black uppercase tracking-wider',
                 isDelivery ? 'bg-amber-400 text-ink' : 'bg-emerald-400 text-ink'
               )}
             >
               {isDelivery ? '🛵 Delivery' : '🛍️ Pick Up'}
             </span>
+
             {ord.isScheduled && (
               <span className="rounded-full bg-purple-500/90 text-white px-2.5 py-0.5 font-body text-[10px] font-black uppercase tracking-wider shadow-sm flex items-center gap-1">
                 <span>📅</span>
@@ -54,23 +92,43 @@ export default function TicketCard({
               </span>
             )}
           </div>
-          <p className="font-body text-xs text-white/70 mt-0.5">
-            {ord.customer.name} &bull; {ord.customer.phone}
+
+          <p className="font-body text-sm text-white/80 font-medium mt-1">
+            <strong className="text-white">{ord.customer.name}</strong> &bull; {ord.customer.phone}
           </p>
           {isDelivery && ord.customer.streetAddress && (
-            <p className="font-body text-[11px] text-amber-300 font-medium">
+            <p className="font-body text-xs text-amber-300 font-semibold mt-0.5">
               📍 {ord.customer.streetAddress}, {ord.customer.postcode}
             </p>
           )}
         </div>
 
-        <div className="text-right shrink-0">
-          <span className="font-body text-xs text-white/50 block">
-            {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
+          {/* Elapsed Kitchen Prep Timer */}
+          <div
+            className={cx(
+              'px-2.5 py-1 rounded-xl text-xs font-black font-mono tracking-wider flex items-center gap-1.5 shadow-sm',
+              isLate
+                ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                : isWarning
+                ? 'bg-amber-500 text-slate-950 ring-1 ring-amber-300'
+                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+            )}
+          >
+            <span>⏱️</span>
+            <span>
+              {elapsedMins}m {elapsedSecs < 10 ? '0' : ''}{elapsedSecs}s
+            </span>
+            {isLate && <span className="text-[10px] bg-white text-red-700 px-1 rounded uppercase font-black">LATE</span>}
+          </div>
+
+          <span className="font-body text-[11px] text-white/50">
+            Ordered: {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
+
           <span
             className={cx(
-              'inline-block rounded px-2 py-0.5 font-body text-[10px] font-black uppercase mt-1',
+              'inline-block rounded px-2.5 py-0.5 font-body text-[10px] font-black uppercase tracking-wider',
               isCancelled
                 ? 'bg-red-500/30 text-red-300 border border-red-500/40'
                 : 'bg-white/10 text-amber-300'
@@ -106,33 +164,33 @@ export default function TicketCard({
         <div className="space-y-3 divide-y divide-white/6">
           {ord.lines.map((l) => (
             <div key={l.lineId} className="pt-2.5 first:pt-0">
-              <div className="flex items-center justify-between text-xs font-bold text-white">
-                <span className="text-sm">
-                  <span className="text-amber-400 mr-1.5 font-black">{l.qty}x</span>
-                  {l.name}
-                </span>
+              <div className="flex items-start justify-between text-sm font-bold text-white">
+                <div className="text-base font-bold text-white leading-tight">
+                  <span className="text-amber-400 mr-2 text-lg font-black">{l.qty}x</span>
+                  <span>{l.name}</span>
+                </div>
               </div>
 
               {l.extras && l.extras.length > 0 && (
-                <p className="font-body text-xs text-amber-200 mt-0.5 font-medium">
+                <p className="font-body text-xs text-amber-200 mt-1 font-semibold pl-6">
                   + {l.extras.join(', ')}
                 </p>
               )}
 
               {l.salads && l.salads.length > 0 && (
-                <p className="font-body text-[11px] text-emerald-300 font-medium">
+                <p className="font-body text-xs text-emerald-300 font-semibold mt-0.5 pl-6">
                   🥗 Salad: {l.salads.join(', ')}
                 </p>
               )}
 
               {l.sauces && l.sauces.length > 0 && (
-                <p className="font-body text-[11px] text-amber-400">
-                  Sauce: {l.sauces.join(', ')}
+                <p className="font-body text-xs text-amber-300 font-semibold mt-0.5 pl-6">
+                  🥫 Sauce: {l.sauces.join(', ')}
                 </p>
               )}
 
               {l.meal && (
-                <div className="mt-1 inline-flex items-center gap-1 rounded bg-white/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                <div className="mt-1.5 ml-6 inline-flex items-center gap-1.5 rounded-md bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300">
                   <span>🥤 Meal Deal:</span>
                   {l.mealDrink && <span>{l.mealDrink}</span>}
                   {l.mealSnack && <span>&bull; {l.mealSnack}</span>}
@@ -140,9 +198,9 @@ export default function TicketCard({
               )}
 
               {l.notes && (
-                <p className="font-body text-xs italic font-bold text-red-300 mt-0.5">
-                  * Note: {l.notes}
-                </p>
+                <div className="mt-1 ml-6 rounded-lg bg-red-950/60 border border-red-500/40 px-2 py-0.5 inline-block text-xs font-bold text-red-200">
+                  ⚠️ Special: {l.notes}
+                </div>
               )}
             </div>
           ))}
