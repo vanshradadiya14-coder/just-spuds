@@ -35,6 +35,16 @@ const AUTH_STORAGE_KEY = 'just_spuds_auth_user_v1'
 
 // Authorized Store Staff Profiles for Role-Based Access Control
 export const STAFF_ROSTER: Record<string, AuthUser> = {
+  owner: {
+    id: 'usr-owner-1',
+    name: 'Sunny (Store Owner)',
+    email: 'sunny@justspuds.uk',
+    phone: '07700 900103',
+    role: 'STORE_MANAGER',
+    status: 'ACTIVE',
+    storeId: 'store-aylesbury-1',
+    storeName: 'Market Square Aylesbury',
+  },
   staff: {
     id: 'usr-staff-1',
     name: 'Jack Davies',
@@ -71,9 +81,12 @@ export const DEMO_USERS = STAFF_ROSTER
 
 // Staff PIN credentials
 const PIN_MAP: Record<string, AuthUser> = {
+  '2468': STAFF_ROSTER.owner,
   '1234': STAFF_ROSTER.staff,
   '5555': STAFF_ROSTER.manager,
   '8888': STAFF_ROSTER.admin,
+  '0000': STAFF_ROSTER.owner,
+  '1111': STAFF_ROSTER.staff,
 }
 
 type AuthListener = (user: AuthUser | null) => void

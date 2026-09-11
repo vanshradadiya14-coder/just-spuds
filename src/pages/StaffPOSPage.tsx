@@ -831,7 +831,10 @@ export default function StaffPOSPage() {
                 <button
                   key={num}
                   type="button"
-                  onClick={() => setPinInput((prev) => (prev.length < 4 ? prev + num : prev))}
+                  onClick={() => {
+                    playPOSTouchTone('numpad')
+                    setPinInput((prev) => (prev.length < 4 ? prev + num : prev))
+                  }}
                   className="rounded-xl border border-white/10 bg-white/5 py-3.5 font-mono text-xl font-bold text-white hover:bg-white/15 transition active:scale-95"
                 >
                   {num}
@@ -839,21 +842,30 @@ export default function StaffPOSPage() {
               ))}
               <button
                 type="button"
-                onClick={() => setPinInput('')}
+                onClick={() => {
+                  playPOSTouchTone('tap')
+                  setPinInput('')
+                }}
                 className="rounded-xl border border-red-500/20 bg-red-950/20 py-3 font-body text-xs font-bold text-red-400 hover:bg-red-900/40"
               >
                 Clear
               </button>
               <button
                 type="button"
-                onClick={() => setPinInput((prev) => (prev.length < 4 ? prev + '0' : prev))}
+                onClick={() => {
+                  playPOSTouchTone('numpad')
+                  setPinInput((prev) => (prev.length < 4 ? prev + '0' : prev))
+                }}
                 className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-xl font-bold text-white hover:bg-white/15"
               >
                 0
               </button>
               <button
                 type="button"
-                onClick={() => setPinInput((prev) => prev.slice(0, -1))}
+                onClick={() => {
+                  playPOSTouchTone('tap')
+                  setPinInput((prev) => prev.slice(0, -1))
+                }}
                 className="rounded-xl border border-white/10 bg-white/5 py-3 font-body text-xs font-bold text-white hover:bg-white/15"
               >
                 ⌫
@@ -872,6 +884,63 @@ export default function StaffPOSPage() {
             >
               Sign In to Food Till →
             </button>
+
+            {/* Fast 1-Tap Login Profiles */}
+            <div className="pt-4 border-t border-white/10 space-y-2">
+              <p className="text-[10px] uppercase tracking-wider text-white/50 font-black">
+                Quick Access (Tap to Sign In):
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-left">
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('action')
+                    const res = loginWithPin('2468')
+                    if (res.ok) { setPinInput(''); setPinError(null) }
+                  }}
+                  className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-2.5 text-xs hover:bg-amber-400 hover:text-ink transition group active:scale-95"
+                >
+                  <span className="font-black block text-amber-300 group-hover:text-ink">👑 Sunny (Owner)</span>
+                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 2468</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('action')
+                    const res = loginWithPin('1234')
+                    if (res.ok) { setPinInput(''); setPinError(null) }
+                  }}
+                  className="rounded-2xl border border-emerald-400/40 bg-emerald-400/10 p-2.5 text-xs hover:bg-emerald-400 hover:text-ink transition group active:scale-95"
+                >
+                  <span className="font-black block text-emerald-300 group-hover:text-ink">👨‍🍳 Jack (Staff)</span>
+                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 1234</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('action')
+                    const res = loginWithPin('5555')
+                    if (res.ok) { setPinInput(''); setPinError(null) }
+                  }}
+                  className="rounded-2xl border border-sky-400/40 bg-sky-400/10 p-2.5 text-xs hover:bg-sky-400 hover:text-ink transition group active:scale-95"
+                >
+                  <span className="font-black block text-sky-300 group-hover:text-ink">👩‍💼 Elena (Manager)</span>
+                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 5555</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('action')
+                    const res = loginWithPin('8888')
+                    if (res.ok) { setPinInput(''); setPinError(null) }
+                  }}
+                  className="rounded-2xl border border-purple-400/40 bg-purple-400/10 p-2.5 text-xs hover:bg-purple-400 hover:text-ink transition group active:scale-95"
+                >
+                  <span className="font-black block text-purple-300 group-hover:text-ink">⚡ Admin (Vansh)</span>
+                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 8888</span>
+                </button>
+              </div>
+            </div>
           </form>
         </div>
       </div>
