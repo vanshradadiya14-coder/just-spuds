@@ -55,10 +55,30 @@ lands on its own portal and the shop-floor gates accept every shop-floor role.
 | `/driver` | Courier hub                              | `7777`                       |
 | `/cfd`    | Customer-facing display for the till     | —                            |
 
-Manager-only actions on the till (refunds, no-sale, settings) prompt for a
-supervisor-or-above PIN. Till settings (auto receipt, drawer kick, siren, tap
-sounds, blind cash count, default float, USB printer) live behind ⚙️ on the
-till and sync to every open till tab.
+Manager-only actions on the till (refunds, no-sale, settings, price override,
+voiding a sent item) prompt for a supervisor-or-above PIN. Till settings (auto
+receipt, drawer kick, siren, tap sounds, blind cash count, tip prompt, default
+float, USB printer) live behind ⚙️ on the till and sync to every open till tab.
+
+### Till flow (modelled on Square / Toast / Lightspeed quick-service)
+
+- **Ring up** from the category rail, ❤️ Favourites (owner's "popular" flags
+  plus the last 30 days' best sellers), speed keys, search, or a barcode scan.
+- **Attach a customer** (👤) by phone — visit count and lifetime spend show on
+  the ticket and the order is stored under their number.
+- **Send** fires the ticket to the KDS as an *open check* to be paid at
+  collection; **Cash / Card / Split** take payment now. Open Checks (📋) lists
+  everything sent but unpaid: settle it, reprint the ticket, or void it with a
+  reason. While settling you can add items; removing an item that already went
+  to the kitchen needs a reason and a manager PIN, and the stock goes back.
+- **Sale complete** shows change due (or total charged) and asks Print / Email /
+  No receipt — skipped when auto-receipt is on. Enter starts the next sale.
+- **Tips** on card payments are optional (⚙️) and recorded separately from sales.
+- **Time clock** (⏱️): staff clock in, break and out from the PIN gate without
+  opening the register; timecards are in Admin › Staff.
+- Keyboard: `F2` search, `F4` cash, `F5` card, `F6` split, `F8` send, `F9` hold,
+  `/` or `Ctrl+K` search. The header shows an OFFLINE pill when the network
+  drops — sales keep working locally and sync when it returns.
 
 ### Stock and channels
 

@@ -84,6 +84,8 @@ export interface TillSettings {
   defaultFloatPence: number
   blindShiftClose: boolean
   touchSounds: boolean
+  /** Ask for a gratuity before a card payment (off by default — UK takeaway). */
+  tipPrompt: boolean
 }
 
 const STORAGE_ACTIVE_SHIFT = 'just_spuds_till_active_shift_v1'
@@ -116,6 +118,7 @@ const DEFAULT_SETTINGS: TillSettings = {
   defaultFloatPence: 10000, // £100.00
   blindShiftClose: false,
   touchSounds: true,
+  tipPrompt: false,
 }
 
 let activeShift: TillShift | null = null

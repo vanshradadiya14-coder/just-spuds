@@ -2211,6 +2211,8 @@ export interface ManualCounterOrderParams {
   buzzerNumber?: string
   tableNumber?: string
   source?: OrderSource
+  /** Gratuity added at the card terminal, in pence. */
+  tip?: number
 }
 
 /**
@@ -2232,7 +2234,8 @@ export function createManualCounterOrder(
   const deliveryFee = params.fulfilment === 'delivery' ? 399 : 0
   const serviceFee = params.fulfilment === 'delivery' ? 99 : 0
   const discount = params.discount || 0
-  const total = Math.max(0, subtotal + deliveryFee + serviceFee - discount)
+  const tip = params.tip || 0
+  const total = Math.max(0, subtotal + deliveryFee + serviceFee - discount) + tip
 
   const deliveryPin = params.fulfilment === 'delivery' ? `${Math.floor(1000 + Math.random() * 9000)}` : undefined
 
@@ -2266,7 +2269,7 @@ export function createManualCounterOrder(
       subtotal,
       deliveryFee,
       serviceFee,
-      tip: 0,
+      tip,
       discount,
       total,
       paidAt: params.paymentStatus === 'paid' ? now.toISOString() : undefined,
@@ -2288,7 +2291,10 @@ export function createManualCounterOrder(
         status: 'accepted',
         timestamp: nowStr,
         title: 'Accepted & Sent to Kitchen 👨‍🍳',
-        description: 'Ticket printed and queued in KDS.',
+        description:
+          params.paymentStatus === 'paid'
+            ? 'Ticket printed and queued in KDS.'
+            : 'Open check — queued in KDS, payment to be taken at the counter.',
       },
     ],
     adminNotes: [
@@ -2318,6 +2324,169 @@ export function createManualCounterOrder(
   )
 
   return newOrder
+}
+
+// -------------------------------------------------------------
+// OPEN CHECKS (sent to kitchen, paid later at the counter)
+// -------------------------------------------------------------
+
+/** Till / phone orders that were fired to the kitchen but not yet paid. */
+export function getOpenTillChecks(): Order[] {
+  return getStoredOrders().filter(
+    (o) =>
+      o.source !== 'WEBSITE' &&
+      o.payment.status === 'pending_store' &&
+      !['cancelled', 'collected', 'delivered', 'completed'].includes(o.status),
+  )
+}
+
+export interface SettleOpenOrderParams {
+  /** Final lines — may include items added while settling; removed lines must go through voidOpenOrderLine. */
+  lines: CartLine[]
+  discount: number
+  tip?: number
+  paymentMethod: PaymentMethod
+  splitDetails?: SplitTenderPortion[]
+  cardLast4?: string
+  actor: string
+}
+
+/**
+ * Takes payment for an open check. Lines added since the check was sent are
+ * deducted from stock here; the original lines were deducted when it was fired.
+ */
+export function settleOpenOrder(orderId: string, params: SettleOpenOrderParams): Order | undefined {
+  const current = getStoredOrders()
+  const order = current.find((o) => o.id === orderId || o.shortId === orderId)
+  if (!order || order.payment.status === 'paid') return undefined
+
+  const now = new Date()
+  const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const subtotal = params.lines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0)
+  const tip = params.tip || 0
+  const total = Math.max(0, subtotal + order.payment.deliveryFee + order.payment.serviceFee - params.discount) + tip
+
+  const addedLines = params.lines.filter((l) => !order.lines.some((existing) => existing.lineId === l.lineId))
+
+  const settled: Order = {
+    ...order,
+    lines: params.lines,
+    payment: {
+      ...order.payment,
+      method: params.paymentMethod,
+      status: 'paid',
+      subtotal,
+      discount: params.discount,
+      tip,
+      total,
+      paidAt: now.toISOString(),
+      paidNote: `Open check settled at counter by ${params.actor}`,
+      splitDetails: params.splitDetails,
+      cardLast4: params.cardLast4,
+    },
+    timeline: [
+      ...order.timeline,
+      {
+        status: order.status,
+        timestamp: nowStr,
+        title: 'Paid at Counter 💷',
+        description: `${params.paymentMethod.toUpperCase()} • £${(total / 100).toFixed(2)} taken by ${params.actor}${addedLines.length ? ` • ${addedLines.length} item(s) added at settle` : ''}`,
+      },
+    ],
+  }
+
+  saveOrders(current.map((o) => (o.id === order.id ? settled : o)))
+  if (addedLines.length > 0) deductStockForOrderLines(addedLines, order.shortId, params.actor)
+  logAuditEvent(params.actor, 'order.open_check_settled', `#${order.shortId}`, `${params.paymentMethod} | £${(total / 100).toFixed(2)}`)
+  return settled
+}
+
+/**
+ * Voids one line on an open check (item already fired to the kitchen).
+ * Needs a reason and a manager, like Toast's sent-item void. Restores stock.
+ *
+ * `pendingLines` are items the cashier has rung onto the check at the till but
+ * not yet committed (they are normally written at settle). If the void would
+ * otherwise empty the check, they are committed first so the customer can swap
+ * the one thing they ordered without the KDS ever showing an empty ticket.
+ */
+export function voidOpenOrderLine(
+  orderId: string,
+  lineId: string,
+  reason: string,
+  managerName: string,
+  pendingLines: CartLine[] = [],
+): { ok: boolean; order?: Order; message: string } {
+  const current = getStoredOrders()
+  const order = current.find((o) => o.id === orderId || o.shortId === orderId)
+  if (!order) return { ok: false, message: 'Order not found.' }
+  if (order.payment.status === 'paid') return { ok: false, message: 'Check is already paid - use a refund instead.' }
+  const line = order.lines.find((l) => l.lineId === lineId)
+  if (!line) return { ok: false, message: 'Line not found on this check.' }
+
+  const newLines = pendingLines.filter((l) => !order.lines.some((existing) => existing.lineId === l.lineId))
+  let remaining = order.lines.filter((l) => l.lineId !== lineId)
+  let committed: CartLine[] = []
+  if (remaining.length === 0) {
+    if (newLines.length === 0) return { ok: false, message: 'Last item on the check - void the whole check instead.' }
+    remaining = newLines
+    committed = newLines
+  }
+
+  const now = new Date()
+  const subtotal = remaining.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0)
+  const total = Math.max(0, subtotal + order.payment.deliveryFee + order.payment.serviceFee - order.payment.discount)
+  const replacedWith = committed.map((l) => `${l.qty}x ${l.name}`).join(', ')
+  const updated: Order = {
+    ...order,
+    lines: remaining,
+    payment: { ...order.payment, subtotal, total },
+    timeline: [
+      ...order.timeline,
+      {
+        status: order.status,
+        timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        title: `Item Voided 🚫 (${line.qty}x ${line.name})`,
+        description: `Reason: ${reason}. Authorised by ${managerName}.${replacedWith ? ` Replaced with ${replacedWith}.` : ''}`,
+      },
+    ],
+    adminNotes: [
+      ...(order.adminNotes || []),
+      { id: `note-${Date.now()}`, timestamp: now.toISOString(), author: managerName, note: `Voided ${line.qty}x ${line.name} - ${reason}` },
+    ],
+  }
+  saveOrders(current.map((o) => (o.id === order.id ? updated : o)))
+  restoreStockForOrderLines([line], order.shortId, managerName, `Line void: ${reason}`)
+  if (committed.length > 0) deductStockForOrderLines(committed, order.shortId, managerName)
+  logAuditEvent(managerName, 'order.line_voided', `#${order.shortId}`, `${line.qty}x ${line.name} | ${reason}`)
+  return { ok: true, order: updated, message: `${line.name} voided.` }
+}
+
+export type ReceiptChannel = 'print' | 'email' | 'none'
+
+/**
+ * Records how the customer asked for their receipt. Email is logged and handed
+ * to the till's mail client - there is no outbound mail provider wired up.
+ */
+export function recordReceiptDelivery(orderId: string, channel: ReceiptChannel, destination: string | undefined, actor: string): void {
+  const current = getStoredOrders()
+  const order = current.find((o) => o.id === orderId)
+  if (!order) return
+  const updated: Order = {
+    ...order,
+    customer: channel === 'email' && destination ? { ...order.customer, email: destination } : order.customer,
+    adminNotes: [
+      ...(order.adminNotes || []),
+      {
+        id: `note-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        author: actor,
+        note: channel === 'none' ? 'Customer declined a receipt.' : channel === 'print' ? 'Receipt printed.' : `Receipt emailed to ${destination}.`,
+      },
+    ],
+  }
+  saveOrders(current.map((o) => (o.id === order.id ? updated : o)))
+  logAuditEvent(actor, `receipt.${channel}`, `#${order.shortId}`, destination || '')
 }
 
 /**

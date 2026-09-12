@@ -23,8 +23,18 @@ import {
   createManualCounterOrder,
   refundOrder,
   getOrderById,
+  getOpenTillChecks,
+  settleOpenOrder,
+  voidOpenOrderLine,
+  cancelOrder,
+  recordReceiptDelivery,
   type Order,
 } from '../services/orderStore'
+import OpenChecksModal from '../components/pos/OpenChecksModal'
+import SaleCompleteModal from '../components/pos/SaleCompleteModal'
+import TimeclockModal from '../components/pos/TimeclockModal'
+import CustomerLookupModal, { type AttachedCustomer } from '../components/pos/CustomerLookupModal'
+import { formatDuration, getActiveTimeclockEntry, isOnBreak, subscribeTimeclock, workedMs, type TimeclockEntry } from '../services/timeclockStore'
 import {
   getCurrentUser,
   subscribeAuth,
@@ -169,7 +179,7 @@ export default function StaffPOSPage() {
   // Safe Tender & Payment Terminal Simulation Modals
   const [isCashConfirmModalOpen, setIsCashConfirmModalOpen] = useState(false)
   const [isCardTerminalModalOpen, setIsCardTerminalModalOpen] = useState(false)
-  const [cardTerminalStep, setCardTerminalStep] = useState<'waiting' | 'processing' | 'approved'>('waiting')
+  const [cardTerminalStep, setCardTerminalStep] = useState<'tip' | 'waiting' | 'processing' | 'approved'>('waiting')
 
   // Manager PIN Authorization Gate
   const [isManagerAuthModalOpen, setIsManagerAuthModalOpen] = useState(false)
@@ -187,6 +197,23 @@ export default function StaffPOSPage() {
   const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [barcodeInput, setBarcodeInput] = useState('')
+
+  // Big-POS flow: open checks (send now, pay later), sale-complete screen, tips,
+  // attached customer, time clock, price override, favourites.
+  const [settlingOrder, setSettlingOrder] = useState<Order | null>(null)
+  const [isOpenChecksOpen, setIsOpenChecksOpen] = useState(false)
+  const [openChecksCount, setOpenChecksCount] = useState(() => getOpenTillChecks().length)
+  const [saleComplete, setSaleComplete] = useState<{ order: Order; changeDuePence: number; tenderLabel: string } | null>(null)
+  const [tipPence, setTipPence] = useState(0)
+  const [attachedCustomer, setAttachedCustomer] = useState<AttachedCustomer | null>(null)
+  const [isCustomerLookupOpen, setIsCustomerLookupOpen] = useState(false)
+  const [isTimeclockOpen, setIsTimeclockOpen] = useState(false)
+  const [myClock, setMyClock] = useState<TimeclockEntry | undefined>(undefined)
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
+  const [priceOverrideLineId, setPriceOverrideLineId] = useState<string | null>(null)
+  const [priceOverrideInput, setPriceOverrideInput] = useState('')
+  const [lineVoidTarget, setLineVoidTarget] = useState<CartLine | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
   // Subscriptions
   useEffect(() => {
@@ -208,6 +235,7 @@ export default function StaffPOSPage() {
 
     const unsubOrders = subscribeOrders((allOrders) => {
       setAllOrdersList(allOrders)
+      setOpenChecksCount(getOpenTillChecks().length)
       const placedOnline = allOrders.filter(
         (o) =>
           o.status === 'placed' &&
@@ -302,8 +330,9 @@ export default function StaffPOSPage() {
     return Math.min(disc, subtotalPence)
   }, [subtotalPence, discountPercent, discountFixedPence])
 
-  const totalDuePence = Math.max(0, subtotalPence - discountPence)
-  const vatIncludedPence = Math.round((totalDuePence / 1.2) * 0.2)
+  // Tips are not VATable and sit on top of the discounted goods total.
+  const totalDuePence = Math.max(0, subtotalPence - discountPence) + tipPence
+  const vatIncludedPence = Math.round(((totalDuePence - tipPence) / 1.2) * 0.2)
 
   // Fast Numpad Cash Tender Calculation
   const tenderedCashPence = tenderNumpadValue
@@ -327,18 +356,63 @@ export default function StaffPOSPage() {
     })
   }, [cartLines, subtotalPence, discountPence, totalDuePence, orderType, customerName, buzzerNumber, tableNumber])
 
-  // Global Keyboard Shortcuts (Ctrl+K or / for Fast Search)
+  // Global Keyboard Shortcuts: Ctrl+K or / search, F2 search, F4 cash, F5 card,
+  // F6 split, F8 send to kitchen, F9 hold. Ignored while a modal or input has focus.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && document.activeElement?.tagName !== 'INPUT')) {
         e.preventDefault()
         setIsFastSearchOpen(true)
         playPOSTouchTone('tap')
+        return
       }
+      if (!e.key.startsWith('F') || e.ctrlKey || e.altKey || e.metaKey) return
+      const modalOpen = document.querySelector('.fixed.inset-0.z-50, [role="dialog"]') !== null
+      if (modalOpen) return
+      const actions: Record<string, () => void> = {
+        F2: () => setIsFastSearchOpen(true),
+        F4: () => handleCompletePayment('cash'),
+        F5: () => handleCompletePayment('card'),
+        F6: () => handleOpenSplitModal(),
+        F8: () => handleSendToKitchen(),
+        F9: () => handleParkTicket(),
+      }
+      const action = actions[e.key]
+      if (!action) return
+      e.preventDefault()
+      action()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
+  })
+
+  // Time clock badge for the signed-in cashier
+  useEffect(() => {
+    if (!user) {
+      setMyClock(undefined)
+      return
+    }
+    return subscribeTimeclock(() => setMyClock(getActiveTimeclockEntry(user.id)))
+  }, [user])
+
+  // Connectivity pill — orders are stored locally first, so the till keeps
+  // working offline; this just tells the cashier cloud sync is paused.
+  useEffect(() => {
+    const on = () => setIsOnline(true)
+    const off = () => setIsOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+    }
   }, [])
+
+  useEffect(() => {
+    if (!flash) return
+    const id = setTimeout(() => setFlash(null), 4000)
+    return () => clearTimeout(id)
+  }, [flash])
 
   // Category Color Theming
   const getCategoryColor = (catId: string, isSelected: boolean) => {
@@ -525,6 +599,15 @@ export default function StaffPOSPage() {
 
   const handleClearAllTicket = () => {
     if (cartLines.length === 0) return
+    if (settlingOrder) {
+      const check = settlingOrder
+      requireManagerAuth('Void Open Check', `Void #${check.shortId} (${gbp(check.payment.total)}) — sent to kitchen, never paid`, (mgrName) => {
+        cancelOrder(check.id, `Till void by ${mgrName}`)
+        resetTicket()
+        setFlash(`Check #${check.shortId} voided`)
+      })
+      return
+    }
     requireManagerAuth('Void Entire Ticket', `Authorize full void of active ticket (${cartLines.length} items, ${gbp(subtotalPence)})`, (mgrName) => {
       playPOSTouchTone('action')
       setCartLines([])
@@ -541,7 +624,7 @@ export default function StaffPOSPage() {
   }
 
   const handleParkTicket = () => {
-    if (cartLines.length === 0) return
+    if (cartLines.length === 0 || settlingOrder) return
     playPOSTouchTone('action')
     const newParked = {
       id: `pk-${Date.now()}`,
@@ -577,6 +660,128 @@ export default function StaffPOSPage() {
     setIsParkedModalOpen(false)
   }
 
+  /** Every path that ends a ticket funnels through here so nothing is left over for the next customer. */
+  const resetTicket = () => {
+    setCartLines([])
+    setCustomerName('')
+    setAttachedCustomer(null)
+    setBuzzerNumber('')
+    setTableNumber('')
+    setDiscountPercent(0)
+    setDiscountFixedPence(0)
+    setTenderNumpadValue('')
+    setTipPence(0)
+    setSelectedLineId(null)
+    setSettlingOrder(null)
+    resetCFDState()
+  }
+
+  /** Common tail for every successful tender: last-order memory, CFD, receipt, and the sale-complete screen. */
+  const finishSale = (order: Order, changeDue: number, tenderLabel: string) => {
+    setLastCompletedTillOrder(order)
+    setLastOrder(order)
+    broadcastCFDState({ status: 'paid', completedOrderShortId: order.shortId, changeDuePence: changeDue, tenderMethod: tenderLabel })
+    if (tillSettings.autoPrintTillReceipt) {
+      recordReceiptDelivery(order.id, 'print', undefined, user?.name || 'Staff Cashier')
+      setReceiptOrder(order)
+    }
+    resetTicket()
+    setIsCashConfirmModalOpen(false)
+    setIsCardTerminalModalOpen(false)
+    setIsSplitModalOpen(false)
+    setIsBillSplitModalOpen(false)
+    setSaleComplete({ order, changeDuePence: changeDue, tenderLabel })
+  }
+
+  /**
+   * Toast "Send": fire the ticket to the KDS now and take payment when the food
+   * is handed over. The check sits in Open Checks until it is settled or voided.
+   */
+  const handleSendToKitchen = () => {
+    if (cartLines.length === 0 || settlingOrder) return
+    playPOSTouchTone('action')
+    const actor = user?.name || 'Staff Cashier'
+    const orderTitle = customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway')
+    const sent = createManualCounterOrder(
+      {
+        customerName: orderTitle,
+        customerPhone: attachedCustomer?.phone || '01296 423456',
+        customerEmail: attachedCustomer?.email,
+        fulfilment: 'pickup',
+        lines: cartLines,
+        paymentMethod: 'in_store',
+        paymentStatus: 'pending_store',
+        discount: discountPence,
+        buzzerNumber: buzzerNumber.trim() || undefined,
+        tableNumber: tableNumber.trim() || undefined,
+        notes: `[POS TILL #01] ${orderType.toUpperCase()} • OPEN CHECK • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
+        source: orderType === 'phone' ? 'PHONE' : 'TILL',
+      },
+      actor,
+    )
+    if (tillSettings.autoPrintTillReceipt) setReceiptOrder(sent)
+    resetTicket()
+    setFlash(`Sent #${sent.shortId} to kitchen — pay at collection (Open Checks)`)
+  }
+
+  /** Load an open check into the ticket so the normal tender buttons settle it. */
+  const handleSettleOpenCheck = (order: Order) => {
+    playPOSTouchTone('action')
+    setCartLines(order.lines)
+    setCustomerName(order.customer.name)
+    setBuzzerNumber(order.customer.buzzerNumber || '')
+    setTableNumber(order.customer.tableNumber || '')
+    setDiscountPercent(0)
+    setDiscountFixedPence(order.payment.discount || 0)
+    setTipPence(0)
+    setTenderNumpadValue('')
+    setSelectedLineId(null)
+    setOrderType(order.source === 'PHONE' ? 'phone' : order.kitchenNotes?.includes('EAT_IN') ? 'eat_in' : 'takeaway')
+    setSettlingOrder(order)
+    setIsOpenChecksOpen(false)
+  }
+
+  /** Void a line that was already fired to the kitchen: reason + manager, stock goes back. */
+  const handleVoidOpenCheckLine = (line: CartLine, reason: string) => {
+    if (!settlingOrder) return
+    requireManagerAuth('Void Sent Item', `${line.qty}x ${line.name} on #${settlingOrder.shortId} — ${reason}`, (mgrName) => {
+      const pending = cartLines.filter((l) => !settlingOrder.lines.some((sent) => sent.lineId === l.lineId))
+      const res = voidOpenOrderLine(settlingOrder.id, line.lineId, reason, mgrName, pending)
+      if (!res.ok || !res.order) {
+        setFlash(res.message)
+        setLineVoidTarget(null)
+        return
+      }
+      setSettlingOrder(res.order)
+      setCartLines((prev) => prev.filter((l) => l.lineId !== line.lineId))
+      setSelectedLineId(null)
+      setLineVoidTarget(null)
+      setFlash(`Voided ${line.name} — ${reason}`)
+    })
+  }
+
+  /** Manager price override on one line (Square "edit price"). */
+  const handleApplyPriceOverride = () => {
+    const lineId = priceOverrideLineId
+    const pence = Math.round((parseFloat(priceOverrideInput) || 0) * 100)
+    if (!lineId || pence < 0) return
+    const line = cartLines.find((l) => l.lineId === lineId)
+    if (!line) return
+    requireManagerAuth('Price Override', `${line.name}: ${gbp(lineUnitPrice(line))} → ${gbp(pence)}`, (mgrName) => {
+      setCartLines((prev) => prev.map((l) => (l.lineId === lineId ? { ...l, priceOverridePence: pence, priceOverrideReason: `Override by ${mgrName}` } : l)))
+      logAuditEvent(mgrName, 'pos.price_override', line.name, `${gbp(lineUnitPrice(line))} -> ${gbp(pence)}`)
+      setPriceOverrideLineId(null)
+      setPriceOverrideInput('')
+    })
+  }
+
+  const handleAttachCustomer = (c: AttachedCustomer) => {
+    playPOSTouchTone('tap')
+    setAttachedCustomer(c)
+    setCustomerName(c.name)
+    setIsCustomerLookupOpen(false)
+  }
+
   const handleNumpadPress = (char: string) => {
     playPOSTouchTone('numpad')
     if (char === 'C') {
@@ -606,7 +811,7 @@ export default function StaffPOSPage() {
       }
       setIsCashConfirmModalOpen(true)
     } else if (method === 'card') {
-      setCardTerminalStep('waiting')
+      setCardTerminalStep(tillSettings.tipPrompt && tipPence === 0 ? 'tip' : 'waiting')
       setIsCardTerminalModalOpen(true)
     }
   }
@@ -619,21 +824,34 @@ export default function StaffPOSPage() {
     const actor = user?.name || 'Staff Cashier'
     const orderTitle = customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway')
 
-    const newOrder = createManualCounterOrder(
-      {
-        customerName: orderTitle,
-        customerPhone: '01296 423456',
-        fulfilment: 'pickup',
-        lines: cartLines,
-        paymentMethod: method,
-        paymentStatus: 'paid',
-        discount: discountPence,
-        buzzerNumber: buzzerNumber.trim() || undefined,
-        tableNumber: tableNumber.trim() || undefined,
-        notes: `[POS TILL #01] ${orderType.toUpperCase()} • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
-      },
-      actor
-    )
+    // Settling an open check re-uses the order that was fired earlier.
+    const newOrder = settlingOrder
+      ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod: method, actor })
+      : createManualCounterOrder(
+          {
+            customerName: orderTitle,
+            customerPhone: attachedCustomer?.phone || '01296 423456',
+            customerEmail: attachedCustomer?.email,
+            fulfilment: 'pickup',
+            lines: cartLines,
+            paymentMethod: method,
+            paymentStatus: 'paid',
+            discount: discountPence,
+            tip: tipPence,
+            buzzerNumber: buzzerNumber.trim() || undefined,
+            tableNumber: tableNumber.trim() || undefined,
+            notes: `[POS TILL #01] ${orderType.toUpperCase()} • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
+            source: orderType === 'phone' ? 'PHONE' : 'TILL',
+          },
+          actor
+        )
+    if (!newOrder) {
+      setFlash('That check has already been settled on another till.')
+      resetTicket()
+      setIsCashConfirmModalOpen(false)
+      setIsCardTerminalModalOpen(false)
+      return
+    }
 
     recordTillSale({
       paymentMethod: method,
@@ -643,31 +861,7 @@ export default function StaffPOSPage() {
       staffName: actor,
     })
 
-    setLastCompletedTillOrder(newOrder)
-    setLastOrder(newOrder)
-
-    // Broadcast completion to Customer-Facing Display
-    broadcastCFDState({
-      status: 'paid',
-      completedOrderShortId: newOrder.shortId,
-      changeDuePence,
-      tenderMethod: method === 'cash' ? '💵 Cash' : '💳 Card',
-    })
-
-    if (tillSettings.autoPrintTillReceipt) {
-      setReceiptOrder(newOrder)
-    }
-
-    setCartLines([])
-    setCustomerName('')
-    setBuzzerNumber('')
-    setTableNumber('')
-    setDiscountPercent(0)
-    setDiscountFixedPence(0)
-    setTenderNumpadValue('')
-    setSelectedLineId(null)
-    setIsCashConfirmModalOpen(false)
-    setIsCardTerminalModalOpen(false)
+    finishSale(newOrder, method === 'cash' ? changeDuePence : 0, method === 'cash' ? '💵 Cash' : '💳 Card')
   }
 
   // Split Payment Handlers (e.g. Some online/card and rest cash)
@@ -713,22 +907,33 @@ export default function StaffPOSPage() {
       onlinePence > 0 ? `Online £${(onlinePence / 100).toFixed(2)}` : null,
     ].filter(Boolean).join(' + ')
 
-    const newOrder = createManualCounterOrder(
-      {
-        customerName: orderTitle,
-        customerPhone: '01296 423456',
-        fulfilment: 'pickup',
-        lines: cartLines,
-        paymentMethod: 'split',
-        paymentStatus: 'paid',
-        discount: discountPence,
-        buzzerNumber: buzzerNumber.trim() || undefined,
-        tableNumber: tableNumber.trim() || undefined,
-        notes: `[SPLIT TENDER: ${partsSummary}] • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
-        splitDetails,
-      },
-      actor
-    )
+    const newOrder = settlingOrder
+      ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod: 'split', splitDetails, actor })
+      : createManualCounterOrder(
+          {
+            customerName: orderTitle,
+            customerPhone: attachedCustomer?.phone || '01296 423456',
+            customerEmail: attachedCustomer?.email,
+            fulfilment: 'pickup',
+            lines: cartLines,
+            paymentMethod: 'split',
+            paymentStatus: 'paid',
+            discount: discountPence,
+            tip: tipPence,
+            buzzerNumber: buzzerNumber.trim() || undefined,
+            tableNumber: tableNumber.trim() || undefined,
+            notes: `[SPLIT TENDER: ${partsSummary}] • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
+            splitDetails,
+            source: orderType === 'phone' ? 'PHONE' : 'TILL',
+          },
+          actor
+        )
+    if (!newOrder) {
+      setFlash('That check has already been settled on another till.')
+      resetTicket()
+      setIsSplitModalOpen(false)
+      return
+    }
 
     recordTillSale({
       paymentMethod: 'split',
@@ -741,30 +946,8 @@ export default function StaffPOSPage() {
       splitOnlinePence: onlinePence,
     })
 
-    setLastCompletedTillOrder(newOrder)
-    setLastOrder(newOrder)
-
-    // Broadcast to Customer-Facing Display
-    broadcastCFDState({
-      status: 'paid',
-      completedOrderShortId: newOrder.shortId,
-      changeDuePence: parseFloat(splitCustomerCashGiven) > (cashPence / 100) ? Math.round((parseFloat(splitCustomerCashGiven) - cashPence / 100) * 100) : 0,
-      tenderMethod: '🔀 Split Tender',
-    })
-
-    if (tillSettings.autoPrintTillReceipt) {
-      setReceiptOrder(newOrder)
-    }
-
-    setCartLines([])
-    setCustomerName('')
-    setBuzzerNumber('')
-    setTableNumber('')
-    setDiscountPercent(0)
-    setDiscountFixedPence(0)
-    setTenderNumpadValue('')
-    setSelectedLineId(null)
-    setIsSplitModalOpen(false)
+    const splitChange = parseFloat(splitCustomerCashGiven) > cashPence / 100 ? Math.round((parseFloat(splitCustomerCashGiven) - cashPence / 100) * 100) : 0
+    finishSale(newOrder, splitChange, '🔀 Split Tender')
   }
 
   // Toast-Style Comps & Manager Discounts (Manager PIN required for > 20%)
@@ -825,38 +1008,34 @@ export default function StaffPOSPage() {
 
     if (nextStep >= evenSplitWays) {
       // Completed all split portions! Finalize order
-      const newOrder = createManualCounterOrder(
-        {
-          customerName: customerName.trim() || `Split Bill (${evenSplitWays}-Way)`,
-          customerPhone: '01296 423456',
-          fulfilment: 'pickup',
-          lines: cartLines,
-          paymentMethod: 'split',
-          paymentStatus: 'paid',
-          discount: discountPence,
-          buzzerNumber: buzzerNumber.trim() || undefined,
-          tableNumber: tableNumber.trim() || undefined,
-          notes: `[EVEN SPLIT BILL ${evenSplitWays}-WAY] • Cashier: ${actor}`,
-        },
-        actor
-      )
-
-      setLastCompletedTillOrder(newOrder)
-      setLastOrder(newOrder)
-      if (tillSettings.autoPrintTillReceipt) {
-        setReceiptOrder(newOrder)
-      }
-
-      setCartLines([])
-      setCustomerName('')
-      setBuzzerNumber('')
-      setTableNumber('')
-      setDiscountPercent(0)
-      setDiscountFixedPence(0)
-      setTenderNumpadValue('')
-      setSelectedLineId(null)
-      setIsBillSplitModalOpen(false)
+      const newOrder = settlingOrder
+        ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod: 'split', actor })
+        : createManualCounterOrder(
+            {
+              customerName: customerName.trim() || `Split Bill (${evenSplitWays}-Way)`,
+              customerPhone: attachedCustomer?.phone || '01296 423456',
+              customerEmail: attachedCustomer?.email,
+              fulfilment: 'pickup',
+              lines: cartLines,
+              paymentMethod: 'split',
+              paymentStatus: 'paid',
+              discount: discountPence,
+              tip: tipPence,
+              buzzerNumber: buzzerNumber.trim() || undefined,
+              tableNumber: tableNumber.trim() || undefined,
+              notes: `[EVEN SPLIT BILL ${evenSplitWays}-WAY] • Cashier: ${actor}`,
+              source: orderType === 'phone' ? 'PHONE' : 'TILL',
+            },
+            actor
+          )
       setEvenSplitPaidSteps(0)
+      if (!newOrder) {
+        setFlash('That check has already been settled on another till.')
+        resetTicket()
+        setIsBillSplitModalOpen(false)
+        return
+      }
+      finishSale(newOrder, 0, `➗ ${evenSplitWays}-Way Split`)
     }
   }
 
@@ -983,17 +1162,31 @@ export default function StaffPOSPage() {
     setIsCustomItemModalOpen(false)
   }
 
+  // Favourites = the owner's "popular" flags plus whatever has actually sold most
+  // in the last 30 days, so the quick-keys page maintains itself.
+  const favouriteIds = useMemo(() => {
+    const since = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const sold = new Map<string, number>()
+    for (const o of allOrdersList) {
+      if (o.status === 'cancelled' || new Date(o.createdAt).getTime() < since) continue
+      for (const l of o.lines) sold.set(l.productId, (sold.get(l.productId) || 0) + l.qty)
+    }
+    const top = [...sold.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id]) => id)
+    return new Set([...products.filter((p) => p.popular).map((p) => p.id), ...top])
+  }, [allOrdersList, products])
+
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       if (!isListedInStore(p)) return false
-      const matchCat = selectedCategory === 'ALL' || p.category === selectedCategory
+      const matchCat =
+        selectedCategory === 'ALL' || (selectedCategory === 'FAVOURITES' ? favouriteIds.has(p.id) : p.category === selectedCategory)
       const matchSearch =
         !searchQuery.trim() ||
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.description?.toLowerCase().includes(searchQuery.toLowerCase())
       return matchCat && matchSearch
     })
-  }, [products, selectedCategory, searchQuery])
+  }, [products, selectedCategory, searchQuery, favouriteIds])
 
   // Authentication PIN Gate
   if (!isAuthorized) {
@@ -1152,7 +1345,16 @@ export default function StaffPOSPage() {
               </div>
             </div>
           </form>
+
+          <button
+            type="button"
+            onClick={() => setIsTimeclockOpen(true)}
+            className="mt-4 w-full rounded-2xl border border-white/15 bg-white/5 py-3 text-xs font-bold text-white/80 hover:bg-white/15 transition"
+          >
+            ⏱️ Clock in / out only (no till access)
+          </button>
         </div>
+        {isTimeclockOpen && <TimeclockModal onClose={() => setIsTimeclockOpen(false)} />}
       </div>
     )
   }
@@ -1344,6 +1546,39 @@ export default function StaffPOSPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <span
+            className={`${isOnline ? 'hidden xl:inline-flex text-emerald-300' : 'inline-flex bg-rose-950/60 border border-rose-500/40 text-rose-300'} items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-bold`}
+            title={isOnline ? 'Cloud sync live' : 'Offline — sales are saved on this till and sync when the connection returns'}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-rose-400 animate-pulse'}`} />
+            {isOnline ? 'Online' : 'OFFLINE'}
+          </span>
+
+          <button
+            type="button"
+            onClick={() => setIsTimeclockOpen(true)}
+            className={`rounded-xl border px-2.5 py-1 text-xs font-bold transition flex items-center gap-1 ${
+              myClock ? (isOnBreak(myClock) ? 'border-amber-400/40 bg-amber-500/10 text-amber-300' : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300') : 'border-white/20 bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
+            title="Time clock — clock in, break, clock out"
+          >
+            <span>⏱️</span>
+            <span className="hidden xl:inline font-mono">{myClock ? (isOnBreak(myClock) ? 'On break' : formatDuration(workedMs(myClock))) : 'Clock in'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsOpenChecksOpen(true)}
+            className={`rounded-xl border px-2.5 py-1 text-xs font-bold transition flex items-center gap-1.5 ${
+              openChecksCount > 0 ? 'border-amber-400/60 bg-amber-500/15 text-amber-300' : 'border-white/20 bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
+            title="Open checks — sent to kitchen, not yet paid"
+          >
+            <span>📋</span>
+            <span className="hidden sm:inline">Open Checks</span>
+            {openChecksCount > 0 && <span className="grid h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 font-mono text-[10px] font-black text-ink">{openChecksCount}</span>}
+          </button>
+
           {activeAlerts.length > 0 && (
             <button
               type="button"
@@ -1474,6 +1709,19 @@ export default function StaffPOSPage() {
             }`}
           >
             ★ All Items
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('FAVOURITES')}
+            className={`w-full py-3 px-2 rounded-xl text-xs font-black uppercase tracking-wider text-center border transition ${
+              selectedCategory === 'FAVOURITES'
+                ? 'bg-rose-400 text-ink shadow-glow border-rose-300'
+                : 'bg-rose-500/10 text-rose-300 border-rose-400/30 hover:bg-rose-500/20'
+            }`}
+            title="Popular items plus the best sellers of the last 30 days"
+          >
+            ❤️ Favourites
           </button>
 
           {CATEGORIES.map((cat) => {
@@ -1693,9 +1941,9 @@ export default function StaffPOSPage() {
                 <button
                   type="button"
                   onClick={handleParkTicket}
-                  disabled={cartLines.length === 0}
+                  disabled={cartLines.length === 0 || !!settlingOrder}
                   className="rounded-xl border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-white/80 hover:bg-white/15 disabled:opacity-30"
-                  title="Park ticket to serve next customer"
+                  title="Park ticket to serve next customer (F9)"
                 >
                   ⏸️ Hold
                 </button>
@@ -1732,16 +1980,45 @@ export default function StaffPOSPage() {
                   className="w-full rounded-xl border border-white/10 bg-black/60 pl-7 pr-2 py-1.5 font-mono text-xs font-black text-indigo-300 placeholder-white/30 focus:border-indigo-400 focus:outline-none"
                 />
               </div>
-              <div className="col-span-5">
+              <div className="col-span-5 flex gap-1">
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Guest / Phone..."
-                  className="w-full rounded-xl border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:border-amber-400 focus:outline-none"
+                  placeholder="Guest name..."
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:border-amber-400 focus:outline-none"
                 />
+                <button
+                  type="button"
+                  onClick={() => setIsCustomerLookupOpen(true)}
+                  className={`shrink-0 rounded-xl border px-2 text-xs font-bold transition ${attachedCustomer ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300' : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/15'}`}
+                  title={attachedCustomer ? `${attachedCustomer.phone} • ${attachedCustomer.visits} visits` : 'Attach customer (phone lookup)'}
+                  aria-label="Attach customer"
+                >
+                  👤
+                </button>
               </div>
             </div>
+
+            {attachedCustomer && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[10px]">
+                <span className="text-emerald-200 truncate">
+                  <span className="font-mono">{attachedCustomer.phone}</span> &bull; {attachedCustomer.visits} {attachedCustomer.visits === 1 ? 'visit' : 'visits'} &bull; {gbp(attachedCustomer.lifetimeSpendPence)} lifetime
+                </span>
+                <button type="button" onClick={() => setAttachedCustomer(null)} className="text-white/50 hover:text-white" aria-label="Detach customer">✕</button>
+              </div>
+            )}
+
+            {settlingOrder && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px]">
+                <span className="text-amber-200">
+                  Settling open check <span className="font-mono font-black">#{settlingOrder.shortId}</span> — add items freely; removing a sent item needs a void reason.
+                </span>
+                <button type="button" onClick={resetTicket} className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 font-bold text-white/70 hover:bg-white/15">
+                  Put back
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Digital Receipt Journal */}
@@ -1840,6 +2117,9 @@ export default function StaffPOSPage() {
                         * Note: {line.notes}
                       </p>
                     )}
+                    {typeof line.priceOverridePence === 'number' && (
+                      <p className="pl-3 text-[10px] font-bold text-sky-300">↳ Price override {gbp(line.priceOverridePence)}</p>
+                    )}
 
                     {isSelected && (
                       <div className="mt-2 pt-1.5 border-t border-white/10 flex items-center justify-between">
@@ -1873,11 +2153,34 @@ export default function StaffPOSPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); handleVoidSelectedLine() }}
-                            className="rounded px-2 py-0.5 text-[10px] font-bold bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setPriceOverrideLineId(line.lineId)
+                              setPriceOverrideInput((lineUnitPrice(line) / 100).toFixed(2))
+                            }}
+                            className="rounded px-2 py-0.5 text-[10px] font-bold bg-white/10 text-white/80 hover:bg-white/20"
+                            title="Manager price override"
                           >
-                            Delete
+                            £ Price
                           </button>
+                          {settlingOrder && settlingOrder.lines.some((l) => l.lineId === line.lineId) ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setLineVoidTarget(line) }}
+                              className="rounded px-2 py-0.5 text-[10px] font-bold bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900"
+                              title="Item already sent to kitchen — void with reason"
+                            >
+                              Void
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleVoidSelectedLine() }}
+                              className="rounded px-2 py-0.5 text-[10px] font-bold bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1897,6 +2200,12 @@ export default function StaffPOSPage() {
               <div className="flex justify-between font-bold text-amber-300 text-[11px]">
                 <span>Discount Applied</span>
                 <span className="font-mono">-{gbp(discountPence)}</span>
+              </div>
+            )}
+            {tipPence > 0 && (
+              <div className="flex justify-between font-bold text-emerald-300 text-[11px]">
+                <span>Tip</span>
+                <span className="font-mono">+{gbp(tipPence)} <button type="button" onClick={() => setTipPence(0)} className="ml-1 text-white/40 hover:text-white" aria-label="Remove tip">✕</button></span>
               </div>
             )}
             <div className="flex justify-between text-white/40 text-[10px]">
@@ -1983,13 +2292,25 @@ export default function StaffPOSPage() {
               ))}
             </div>
 
-            {/* 3 Primary Tender Action Buttons: CASH, CARD, SPLIT PAY */}
-            <div className="grid grid-cols-3 gap-1.5 pt-1">
+            {/* SEND (pay later) + 3 Primary Tender Action Buttons: CASH, CARD, SPLIT PAY */}
+            <div className="grid grid-cols-4 gap-1.5 pt-1">
+              <button
+                type="button"
+                disabled={cartLines.length === 0 || !!settlingOrder}
+                onClick={handleSendToKitchen}
+                className="rounded-xl bg-orange-500 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-ink shadow-glow hover:bg-orange-400 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
+                title="Fire to kitchen now, take payment at collection (F8)"
+              >
+                <span className="text-base">🍳</span>
+                <span>SEND</span>
+              </button>
+
               {/* CASH TENDER BUTTON */}
               <button
                 type="button"
                 disabled={cartLines.length === 0}
                 onClick={() => handleCompletePayment('cash')}
+                title="Cash tender (F4)"
                 className="rounded-xl bg-emerald-500 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-ink shadow-glow hover:bg-emerald-400 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
               >
                 <span className="text-base">💵</span>
@@ -2001,6 +2322,7 @@ export default function StaffPOSPage() {
                 type="button"
                 disabled={cartLines.length === 0}
                 onClick={() => handleCompletePayment('card')}
+                title="Card tender (F5)"
                 className="rounded-xl bg-blue-500 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-white shadow-glow hover:bg-blue-400 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
               >
                 <span className="text-base">💳</span>
@@ -2013,7 +2335,7 @@ export default function StaffPOSPage() {
                 disabled={cartLines.length === 0}
                 onClick={handleOpenSplitModal}
                 className="rounded-xl bg-purple-600 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-white shadow-glow hover:bg-purple-500 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-                title="Split bill: some online/card and rest cash"
+                title="Split bill: some online/card and rest cash (F6)"
               >
                 <span className="text-base">🔀</span>
                 <span>SPLIT PAY</span>
@@ -3035,8 +3357,99 @@ export default function StaffPOSPage() {
         </div>
       )}
 
+      {flash && (
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-40 -translate-x-1/2 rounded-full border border-emerald-400/40 bg-slate-900/95 px-4 py-2 text-xs font-bold text-emerald-300 shadow-2xl backdrop-blur" role="status">
+          ✓ {flash}
+        </div>
+      )}
+
       {isSettingsModalOpen && (
         <TillSettingsModal onClose={() => setIsSettingsModalOpen(false)} actor={user?.name || 'Manager'} />
+      )}
+
+      {isOpenChecksOpen && (
+        <OpenChecksModal
+          onClose={() => setIsOpenChecksOpen(false)}
+          onSettle={handleSettleOpenCheck}
+          onReprint={(o) => setReceiptOrder(o)}
+          requireManagerAuth={requireManagerAuth}
+        />
+      )}
+
+      {saleComplete && (
+        <SaleCompleteModal
+          order={saleComplete.order}
+          changeDuePence={saleComplete.changeDuePence}
+          tenderLabel={saleComplete.tenderLabel}
+          actor={user?.name || 'Staff Cashier'}
+          autoPrinted={tillSettings.autoPrintTillReceipt}
+          onPrint={(o) => setReceiptOrder(o)}
+          onNewSale={() => setSaleComplete(null)}
+        />
+      )}
+
+      {isTimeclockOpen && <TimeclockModal onClose={() => setIsTimeclockOpen(false)} user={user} />}
+
+      {isCustomerLookupOpen && <CustomerLookupModal onClose={() => setIsCustomerLookupOpen(false)} onAttach={handleAttachCustomer} />}
+
+      {priceOverrideLineId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleApplyPriceOverride()
+            }}
+            className="w-full max-w-xs rounded-3xl border border-sky-400/40 bg-slate-900 p-5 shadow-2xl space-y-3 text-white font-body"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h3 className="font-bold text-sm">£ Price Override</h3>
+              <button type="button" onClick={() => setPriceOverrideLineId(null)} className="text-white/60 hover:text-white" aria-label="Close price override">✕</button>
+            </div>
+            <p className="text-[11px] text-white/60">New unit price for {cartLines.find((l) => l.lineId === priceOverrideLineId)?.name}. Manager PIN required.</p>
+            <div className="flex items-center gap-2 font-mono">
+              <span className="text-white/60">£</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={0.05}
+                autoFocus
+                value={priceOverrideInput}
+                onChange={(e) => setPriceOverrideInput(e.target.value)}
+                className="flex-1 rounded-xl border border-white/10 bg-black/60 px-3 py-2 text-right text-xl text-white focus:border-sky-400 focus:outline-none"
+              />
+            </div>
+            <button type="submit" className="w-full rounded-xl bg-sky-400 py-2.5 text-xs font-black uppercase tracking-wider text-ink hover:bg-sky-300">
+              Apply override →
+            </button>
+          </form>
+        </div>
+      )}
+
+      {lineVoidTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="w-full max-w-sm rounded-3xl border border-rose-500/40 bg-slate-900 p-5 shadow-2xl space-y-3 text-white font-body">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h3 className="font-bold text-sm">Void sent item</h3>
+              <button type="button" onClick={() => setLineVoidTarget(null)} className="text-white/60 hover:text-white" aria-label="Close void">✕</button>
+            </div>
+            <p className="text-[11px] text-white/60">
+              {lineVoidTarget.qty}x {lineVoidTarget.name} has already gone to the kitchen. Pick a reason — a manager PIN confirms it and stock is returned.
+            </p>
+            <div className="space-y-1.5">
+              {['Customer changed mind', 'Wrong item rung up', 'Kitchen unable to make', 'Quality issue / remake', 'Duplicate line'].map((reason) => (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => handleVoidOpenCheckLine(lineVoidTarget, reason)}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 p-2.5 text-left text-xs font-bold text-white hover:bg-rose-400 hover:text-ink transition"
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MODAL: PAY IN / PAY OUT (PETTY CASH) */}
@@ -3564,6 +3977,29 @@ export default function StaffPOSPage() {
 
             {/* Simulated Reader Interaction */}
             <div className="py-3">
+              {cardTerminalStep === 'tip' && (
+                <div className="space-y-3">
+                  <p className="font-bold text-sm text-white">Add a tip?</p>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[0, 50, 100, 200].map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => {
+                          playPOSTouchTone('tap')
+                          setTipPence(t)
+                          setCardTerminalStep('waiting')
+                        }}
+                        className={`rounded-xl border py-3 text-sm font-black transition ${t === 0 ? 'border-white/15 bg-white/5 text-white/70 hover:bg-white/15' : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-400 hover:text-ink'}`}
+                      >
+                        {t === 0 ? 'None' : gbp(t)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-white/40">Tips go to the team and are recorded separately from sales.</p>
+                </div>
+              )}
+
               {cardTerminalStep === 'waiting' && (
                 <div className="space-y-3 animate-pulse">
                   <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-blue-500/20 border border-blue-400/40 text-3xl">

@@ -28,6 +28,7 @@ const TOGGLES: { key: ToggleKey; label: string; hint: string }[] = [
   { key: 'soundAlerts', label: 'Online order siren', hint: 'Repeating chime until a new web order is accepted or muted.' },
   { key: 'touchSounds', label: 'Button tap sounds', hint: 'Short click on every till button.' },
   { key: 'blindShiftClose', label: 'Blind cash count at close', hint: 'Hides the expected cash figure until the drawer has been counted.' },
+  { key: 'tipPrompt', label: 'Ask for a tip on card payments', hint: 'Shows None / 50p / £1 / £2 before the card reader is armed.' },
 ]
 
 export default function TillSettingsModal({ onClose, actor }: TillSettingsModalProps) {

@@ -41,6 +41,9 @@ export interface CartLine {
   conversationalModifiers?: CartLineModifier[]
   station?: 'spuds' | 'grill' | 'drinks' | 'pass'
   isRush?: boolean
+  /** Manager-authorised unit price that replaces base + extras (till only). */
+  priceOverridePence?: number
+  priceOverrideReason?: string
 }
 
 export interface ToastMessage {
@@ -51,6 +54,7 @@ export interface ToastMessage {
 }
 
 export const lineUnitPrice = (l: CartLine): number => {
+  if (typeof l.priceOverridePence === 'number') return l.priceOverridePence
   const extrasCost = l.extras.reduce((n, id) => n + optionPrice(id, l.category), 0)
   const modifierCost = (l.conversationalModifiers || []).reduce((acc, m) => {
     return acc + (m.pricePence || (m.type === 'extra' ? 100 : 0))

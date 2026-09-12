@@ -205,13 +205,15 @@ export function subscribeAuth(fn: AuthListener): () => void {
   }
 }
 
-export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; message: string } {
+/**
+ * Resolves a PIN to a staff/courier account without starting a session — the
+ * time clock and manager overrides need to identify someone who is not the
+ * cashier currently signed in.
+ */
+export function findUserByPin(pin: string): AuthUser | undefined {
   const cleanPin = pin.trim()
   const match = PIN_MAP[cleanPin]
-  if (match) {
-    setCurrentUser(match)
-    return { ok: true, user: match, message: `Welcome back, ${match.name}!` }
-  }
+  if (match) return match
 
   // Dynamic Driver PIN verification from driver store
   try {
@@ -220,7 +222,7 @@ export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; messa
       const drivers = JSON.parse(rawDrivers)
       const driverMatch = drivers.find((d: { pin: string; status: string }) => d.pin === cleanPin && d.status === 'ACTIVE')
       if (driverMatch) {
-        const driverAuth: AuthUser = {
+        return {
           id: driverMatch.id,
           name: driverMatch.name,
           email: driverMatch.email,
@@ -230,8 +232,6 @@ export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; messa
           storeId: 'store-aylesbury-1',
           storeName: 'Market Square Aylesbury',
         }
-        setCurrentUser(driverAuth)
-        return { ok: true, user: driverAuth, message: `Welcome back, Courier ${driverMatch.name}!` }
       }
     }
   } catch {
@@ -240,7 +240,7 @@ export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; messa
 
   // Fallback seed driver PIN check
   if (cleanPin === '7777') {
-    const driver1: AuthUser = {
+    return {
       id: 'usr-driver-1',
       name: 'Liam Walker',
       email: 'liam.walker@justspuds.uk',
@@ -250,11 +250,19 @@ export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; messa
       storeId: 'store-aylesbury-1',
       storeName: 'Market Square Aylesbury',
     }
-    setCurrentUser(driver1)
-    return { ok: true, user: driver1, message: 'Welcome back, Courier Liam Walker!' }
   }
+  return undefined
+}
 
-  return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
+export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; message: string } {
+  const user = findUserByPin(pin)
+  if (!user) return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
+  setCurrentUser(user)
+  return {
+    ok: true,
+    user,
+    message: user.role === 'DRIVER' ? `Welcome back, Courier ${user.name}!` : `Welcome back, ${user.name}!`,
+  }
 }
 
 /**

@@ -78,6 +78,7 @@ import SmartImage from '../components/SmartImage'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
 import TillShiftHistory from './admin/components/TillShiftHistory'
+import StaffTimecards from './admin/components/StaffTimecards'
 import { getAuditLogs, subscribeAuditLogs, type AuditLogItem } from '../services/auditStore'
 import {
   getBlacklistEntries,
@@ -2997,6 +2998,8 @@ export default function AdminPage() {
         {/* TAB 9: STAFF ROSTER                                            */}
         {/* ============================================================== */}
         {activeTab === 'staff' && (
+          <div className="space-y-6">
+          <StaffTimecards actor={user?.name || 'Manager'} />
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
               <div>
@@ -3019,6 +3022,7 @@ export default function AdminPage() {
                 </div>
               ))}
             </div>
+          </div>
           </div>
         )}
 
