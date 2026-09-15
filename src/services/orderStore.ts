@@ -14,6 +14,7 @@ import {
   sourceFromShortId,
 } from './supabaseOrderSync'
 import { logAuditEvent } from './auditStore'
+import { getSharedAudioContext } from './printerBridge'
 import { deductStockForOrderLines, restoreStockForOrderLines } from './menuStore'
 import { recordOnlineOrderInShift } from './tillStore'
 
@@ -397,6 +398,19 @@ export function addCustomerPlacedOrderId(id: string): void {
   }
 }
 
+/** Stops this browser treating the given orders as "my orders" (test orders placed from a staff screen). */
+export function forgetCustomerOrderIds(ids: string[]): void {
+  if (typeof window === 'undefined') return
+  try {
+    const remaining = getCustomerPlacedOrderIds().filter((id) => !ids.includes(id))
+    localStorage.setItem(CUSTOMER_PLACED_ORDERS_KEY, JSON.stringify(remaining))
+    const active = getActiveCustomerOrderId()
+    if (active && ids.includes(active)) localStorage.removeItem(ACTIVE_ORDER_ID_KEY)
+  } catch {
+    // Ignore storage quota
+  }
+}
+
 export function isCustomerAuthorizedForOrder(order: Order, isStaffUser = false): boolean {
   if (isStaffUser) return true
   const activeId = getActiveCustomerOrderId()
@@ -555,9 +569,8 @@ export function createNewOrder(params: {
   // otherwise the end-of-day figures only ever show counter takings.
   recordOnlineOrderInShift(params.total)
 
-  // Broadcast Web Audio chime to open admin tabs
-  playKitchenChime()
-
+  // Staff screens ring for this order themselves (see services/orderAlerts.ts)
+  // — the customer's browser must not play the kitchen alarm.
   return newOrder
 }
 
@@ -832,7 +845,7 @@ export interface BusinessAnalytics {
   tipsTotal: number
   discountsTotal: number
   aggregatorSavingsPence: number
-  avgPrepTimeMins: number
+  avgPrepTimeMins: number | null
   hourlyRush: HourlyRushSlot[]
   dailyRevenue: DailyRevenueSlot[]
   topProducts: TopProductStat[]
@@ -854,6 +867,42 @@ const TOPPING_NAME_MAP: Record<string, string> = {
   'chilli-sauce': 'Fiery Sriracha',
   'bbq-sauce': 'Smoky Hickory BBQ',
   'butter': 'Salted Farmhouse Butter',
+}
+
+const READY_STATUSES: OrderStatus[] = ['ready_for_pickup', 'ready_for_delivery', 'out_for_delivery', 'collected', 'delivered']
+
+/** Parses a timeline stamp ("13:05" or "1:05 PM") back onto the order's calendar day. */
+function timelineStampToDate(stamp: string, createdAt: string): Date | null {
+  const m = stamp.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?$/)
+  if (!m) return null
+  let hours = parseInt(m[1], 10)
+  const minutes = parseInt(m[2], 10)
+  const meridiem = m[3]?.toUpperCase()
+  if (meridiem === 'PM' && hours < 12) hours += 12
+  if (meridiem === 'AM' && hours === 12) hours = 0
+  const placed = new Date(createdAt)
+  const d = new Date(placed.getFullYear(), placed.getMonth(), placed.getDate(), hours, minutes, 0, 0)
+  if (d.getTime() < placed.getTime() - 60_000) d.setDate(d.getDate() + 1) // crossed midnight
+  return d
+}
+
+/**
+ * Minutes from "placed" to "ready" averaged over completed orders — null until
+ * there is at least one order to measure. Timeline stamps are wall-clock
+ * strings, so anything unparseable is skipped rather than guessed.
+ */
+export function averagePrepMinutes(orders: Order[]): number | null {
+  const samples: number[] = []
+  orders.forEach((o) => {
+    const ready = o.timeline.find((t) => READY_STATUSES.includes(t.status))
+    if (!ready) return
+    const readyAt = timelineStampToDate(ready.timestamp, o.createdAt)
+    if (!readyAt) return
+    const mins = (readyAt.getTime() - new Date(o.createdAt).getTime()) / 60000
+    if (mins >= 0 && mins < 6 * 60) samples.push(mins)
+  })
+  if (samples.length === 0) return null
+  return Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
 }
 
 export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRange = 'today'): BusinessAnalytics {
@@ -885,19 +934,19 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
   const pickupOrdersCount = pickupOrders.length
   const completedCount = completedOrders.length
 
-  const deliveryPercent = completedCount > 0 ? Math.round((deliveryOrdersCount / completedCount) * 100) : 50
-  const pickupPercent = completedCount > 0 ? 100 - deliveryPercent : 50
+  const deliveryPercent = completedCount > 0 ? Math.round((deliveryOrdersCount / completedCount) * 100) : 0
+  const pickupPercent = completedCount > 0 ? 100 - deliveryPercent : 0
 
   const tipsTotal = completedOrders.reduce((sum, o) => sum + (o.payment.tip || 0), 0)
   const discountsTotal = completedOrders.reduce((sum, o) => sum + (o.payment.discount || 0), 0)
 
   // AOV: average order value
-  const aovPence = completedCount > 0 ? Math.round(grossRevenue / completedCount) : 1250
+  const aovPence = completedCount > 0 ? Math.round(grossRevenue / completedCount) : 0
 
   // Estimated food cost (approx 32% COGS in jacket potato shop)
   const estimatedFoodCost = Math.round(grossRevenue * 0.32)
   const estimatedNetProfit = Math.max(0, grossRevenue - estimatedFoodCost)
-  const grossMarginPercent = grossRevenue > 0 ? Math.round((estimatedNetProfit / grossRevenue) * 100) : 68
+  const grossMarginPercent = grossRevenue > 0 ? Math.round((estimatedNetProfit / grossRevenue) * 100) : 0
 
   // Aggregator savings vs Deliveroo / Uber Eats (average 30% commission saved)
   const aggregatorSavingsPence = Math.round(grossRevenue * 0.30)
@@ -908,14 +957,7 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
     hoursMap[h] = { count: 0, revenue: 0 }
   }
 
-  // Seed baseline distribution if filtered is small
-  hoursMap[12] = { count: 4, revenue: 4800 }
-  hoursMap[13] = { count: 6, revenue: 7600 }
-  hoursMap[18] = { count: 5, revenue: 6200 }
-  hoursMap[19] = { count: 7, revenue: 8900 }
-  hoursMap[20] = { count: 3, revenue: 3800 }
-
-  filteredOrders.forEach((ord) => {
+  filteredOrders.filter((o) => o.status !== 'cancelled').forEach((ord) => {
     const d = new Date(ord.createdAt)
     const h = d.getHours()
     if (hoursMap[h]) {
@@ -939,16 +981,17 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
   // Daily revenue trend (last 7 days)
   const daysMap: Record<string, { label: string; revenue: number; count: number }> = {}
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  // Keyed by *local* calendar day so a late-evening order lands on the right bar.
+  const localDayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   for (let i = 6; i >= 0; i--) {
     const dateObj = new Date(nowDayStart - i * 24 * 60 * 60 * 1000)
-    const key = dateObj.toISOString().split('T')[0]
     const label = `${dayNames[dateObj.getDay()]} ${dateObj.getDate()}`
-    daysMap[key] = { label, revenue: 0, count: 0 }
+    daysMap[localDayKey(dateObj)] = { label, revenue: 0, count: 0 }
   }
 
-  // Populate daily revenue
   orders.forEach((o) => {
-    const dateKey = o.createdAt.split('T')[0]
+    if (o.status === 'cancelled') return
+    const dateKey = localDayKey(new Date(o.createdAt))
     if (daysMap[dateKey]) {
       daysMap[dateKey].count += 1
       daysMap[dateKey].revenue += o.payment.total
@@ -958,19 +1001,19 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
   const dailyRevenue: DailyRevenueSlot[] = Object.keys(daysMap).map((date) => ({
     date,
     label: daysMap[date].label,
-    revenue: daysMap[date].revenue || Math.floor(6500 + Math.random() * 4000),
-    count: daysMap[date].count || Math.floor(5 + Math.random() * 4),
+    revenue: daysMap[date].revenue,
+    count: daysMap[date].count,
   }))
 
   // Top products ranking
   const productMap: Record<string, { name: string; count: number; revenue: number }> = {}
-  filteredOrders.forEach((o) => {
+  filteredOrders.filter((o) => o.status !== 'cancelled').forEach((o) => {
     o.lines.forEach((l) => {
       if (!productMap[l.productId]) {
         productMap[l.productId] = { name: l.name, count: 0, revenue: 0 }
       }
       productMap[l.productId].count += l.qty
-      productMap[l.productId].revenue += (l.base + (l.meal ? 195 : 0)) * l.qty
+      productMap[l.productId].revenue += lineUnitPrice(l) * l.qty
     })
   })
 
@@ -983,28 +1026,10 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
     }))
     .sort((a, b) => b.count - a.count)
 
-  // If empty, fill default top products
-  if (topProducts.length === 0) {
-    topProducts.push(
-      { id: 'classic-cheddar-beans', name: 'The Great British Classic', count: 18, revenue: 11200 },
-      { id: 'coronation-chicken-spud', name: 'The Spud Father (Chilli)', count: 14, revenue: 10450 },
-      { id: 'tuna-mayo-sweetcorn', name: 'Tuna Mayo & Sweetcorn Melt', count: 11, revenue: 7850 },
-      { id: 'cheesy-broccoli-bacon', name: 'Loaded Broccoli & Bacon', count: 9, revenue: 6700 },
-      { id: 'pulled-pork-bbq', name: 'BBQ Pulled Pork Deluxe', count: 8, revenue: 6400 }
-    )
-  }
-
   // Top toppings ranking
-  const extrasMap: Record<string, number> = {
-    'extra-cheddar': 24,
-    'crispy-onions': 19,
-    'bacon-bits': 16,
-    'baked-beans': 14,
-    'jalapenos': 11,
-    'tuna-mayo': 8,
-  }
+  const extrasMap: Record<string, number> = {}
 
-  filteredOrders.forEach((o) => {
+  filteredOrders.filter((o) => o.status !== 'cancelled').forEach((o) => {
     o.lines.forEach((l) => {
       l.extras.forEach((ext) => {
         extrasMap[ext] = (extrasMap[ext] || 0) + l.qty
@@ -1023,6 +1048,9 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
   // Customer CRM aggregation
   const customerMap: Record<string, CRMCustomer> = {}
   orders.forEach((o) => {
+    if (o.status === 'cancelled') return
+    // Walk-in till sales carry a placeholder identity — they are not a customer record.
+    if (o.customer.email?.endsWith('@justspuds.uk') || o.customer.phone === '01296 423456') return
     const key = o.customer.email.toLowerCase().trim() || o.customer.phone.trim()
     if (!customerMap[key]) {
       customerMap[key] = {
@@ -1066,7 +1094,7 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
     tipsTotal,
     discountsTotal,
     aggregatorSavingsPence,
-    avgPrepTimeMins: 14,
+    avgPrepTimeMins: averagePrepMinutes(completedOrders),
     hourlyRush,
     dailyRevenue,
     topProducts,
@@ -1218,16 +1246,14 @@ export function exportCustomersCSV(customers: CRMCustomer[]): void {
 }
 
 /**
- * Real-time Audio Chime synthesizer for new kitchen orders
- * Uses Web Audio API without needing external MP3 dependencies
+ * Short confirmation chime for status changes made on this screen (accept,
+ * dispatch, driver events). Uses the shared AudioContext — a fresh context per
+ * call hits the browser's context cap after a few plays and goes silent.
  */
 export function playKitchenChime(isAlert = false) {
-  if (typeof window === 'undefined') return
+  const ctx = getSharedAudioContext()
+  if (!ctx) return
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    if (!AudioCtx) return
-    const ctx = new AudioCtx()
-
     const now = ctx.currentTime
     const osc1 = ctx.createOscillator()
     const osc2 = ctx.createOscillator()
@@ -1460,15 +1486,48 @@ export function toggleItemStock(productId: string, inStock: boolean): void {
   }
 }
 
-export function playChimeSoundTest(): void {
-  playKitchenChime()
-}
-
+/**
+ * Two realistic web orders for testing the alarm, tickets and printer from the
+ * admin console. Priced from the lines so the ticket and the total agree.
+ */
 export function injectSimulatedRushOrders(): Order[] {
+  const lines1: CartLine[] = [
+    {
+      lineId: `line-sim-${Date.now()}-1`,
+      productId: 'spud-great-british',
+      name: 'The Great British Classic',
+      category: 'SPUDS',
+      image: '/assets/food/spuds/spud-father.png',
+      base: 695,
+      extras: ['cheese', 'crispy-onions'],
+      sauces: ['spud-special'],
+      meal: true,
+      mealDrink: 'Coca Cola Can',
+      mealSnack: 'Ready Salted Crisps',
+      qty: 2,
+    },
+  ]
+  const lines2: CartLine[] = [
+    {
+      lineId: `line-sim-${Date.now()}-2`,
+      productId: 'panini-chicken-bacon',
+      name: 'Chicken Breast & Bacon Melt Panini',
+      category: 'PANINIS',
+      image: '/assets/food/paninis/panini-chicken-bacon.png',
+      base: 595,
+      extras: ['extra-cheese'],
+      sauces: ['chipotle'],
+      meal: false,
+      qty: 1,
+    },
+  ]
+  const subtotalOf = (lines: CartLine[]) => lines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0)
+
+  const sub1 = subtotalOf(lines1)
   const sim1 = createNewOrder({
     fulfilment: 'delivery',
     customer: {
-      name: 'Oliver Thorne',
+      name: 'TEST ORDER — Oliver Thorne',
       phone: '07891 445566',
       email: 'oliver.t@example.co.uk',
       streetAddress: '14 Bicester Road, Meadowcroft',
@@ -1477,62 +1536,37 @@ export function injectSimulatedRushOrders(): Order[] {
     paymentMethod: 'apple_pay',
     cardLast4: '4242',
     cardBrand: 'Visa',
-    subtotal: 1540,
-    deliveryFee: 0,
+    subtotal: sub1,
+    deliveryFee: 399,
     serviceFee: 50,
     tip: 150,
     discount: 0,
-    total: 1740,
+    total: sub1 + 399 + 50 + 150,
     kitchenNotes: 'Extra crispy skins, well buttered. Please ring bell, dog is friendly.',
-    lines: [
-      {
-        lineId: `line-sim-${Date.now()}-1`,
-        productId: 'spud-great-british',
-        name: 'The Great British Classic',
-        category: 'SPUDS',
-        image: '/assets/food/spuds/spud-father.png',
-        base: 695,
-        extras: ['cheese', 'crispy-onions'],
-        sauces: ['spud-special'],
-        meal: true,
-        mealDrink: 'Coca Cola Can',
-        mealSnack: 'Ready Salted Crisps',
-        qty: 2,
-      },
-    ],
+    lines: lines1,
   })
 
+  const sub2 = subtotalOf(lines2)
   const sim2 = createNewOrder({
     fulfilment: 'pickup',
     customer: {
-      name: 'Sophie Bennett',
+      name: 'TEST ORDER — Sophie Bennett',
       phone: '07722 998811',
       email: 'sophie.b@aylesbury.org',
     },
     paymentMethod: 'google_pay',
-    subtotal: 745,
+    subtotal: sub2,
     deliveryFee: 0,
     serviceFee: 30,
     tip: 100,
     discount: 0,
-    total: 875,
+    total: sub2 + 30 + 100,
     kitchenNotes: 'Cut panini in half please. Collecting on lunch break at 12:45.',
-    lines: [
-      {
-        lineId: `line-sim-${Date.now()}-2`,
-        productId: 'panini-chicken-bacon',
-        name: 'Chicken Breast & Bacon Melt Panini',
-        category: 'PANINIS',
-        image: '/assets/food/paninis/panini-chicken-bacon.png',
-        base: 595,
-        extras: ['extra-cheese'],
-        sauces: ['chipotle'],
-        meal: false,
-        qty: 1,
-      },
-    ],
+    lines: lines2,
   })
 
+  // They were placed from a staff screen, not by this browser's customer.
+  forgetCustomerOrderIds([sim1.id, sim2.id])
   return [sim1, sim2]
 }
 

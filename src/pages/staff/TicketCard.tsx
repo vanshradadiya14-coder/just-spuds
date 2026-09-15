@@ -54,10 +54,10 @@ export default function TicketCard({
       )}
     >
       {/* Header: Distance Typography & Source Badges */}
-      <div className="p-5 border-b border-white/10 flex items-start justify-between gap-3">
+      <div className="p-4 border-b border-white/10 flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="display text-3xl text-white font-black tracking-tight">#{ord.shortId}</span>
+            <span className="display text-2xl xl:text-[26px] text-white font-black tracking-tight whitespace-nowrap">#{ord.shortId}</span>
 
             {/* Order Source Badge */}
             <span
@@ -263,7 +263,7 @@ export default function TicketCard({
                   className="rounded-xl border border-red-500/40 bg-red-950/40 py-3 font-body text-xs font-bold uppercase tracking-wider text-red-300 hover:bg-red-900/60 hover:text-white flex items-center justify-center gap-1.5 transition active:scale-95"
                 >
                   <span>✕</span>
-                  <span>Decline Order</span>
+                  <span>Decline</span>
                 </button>
               </div>
             )}

@@ -55,11 +55,11 @@ import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { triggerBrowserPrint, playPOSTouchTone } from '../services/printerBridge'
 import TillSettingsModal from '../components/TillSettingsModal'
 import {
-  notifyNewOnlineOrder,
   dismissOrderAlert,
   subscribeOrderAlerts,
   type OnlineOrderAlert,
 } from '../services/alertSoundBus'
+import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
 import {
   broadcastCFDState,
   resetCFDState,
@@ -236,24 +236,9 @@ export default function StaffPOSPage() {
     const unsubOrders = subscribeOrders((allOrders) => {
       setAllOrdersList(allOrders)
       setOpenChecksCount(getOpenTillChecks().length)
-      const placedOnline = allOrders.filter(
-        (o) =>
-          o.status === 'placed' &&
-          !o.kitchenNotes?.includes('[MANUAL PHONE/COUNTER]') &&
-          Date.now() - new Date(o.createdAt).getTime() < 30 * 60 * 1000
-      )
-
-      placedOnline.forEach((ord) => {
-        notifyNewOnlineOrder({
-          orderId: ord.id,
-          shortId: ord.shortId,
-          customerName: ord.customer.name,
-          total: ord.payment.total,
-          itemsSummary: ord.lines.map((l) => `${l.qty}x ${l.name}`).join(', '),
-          timestamp: ord.createdAt,
-        })
-      })
     })
+    // New web orders → alert queue + alarm, shared with the KDS and admin.
+    const stopAlertWatcher = startOnlineOrderAlertWatcher()
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
 
@@ -294,6 +279,7 @@ export default function StaffPOSPage() {
       unsubSettings()
       unsubAlerts()
       unsubOrders()
+      stopAlertWatcher()
       unsubMenu()
       clearInterval(timer)
       window.removeEventListener('keydown', handleBarcodeKey)
@@ -301,6 +287,11 @@ export default function StaffPOSPage() {
   }, [])
 
   const isAuthorized = hasRole(user, SHOP_FLOOR_ROLES)
+
+  // Nothing left in the queue → the queue modal has nothing to show; close it.
+  useEffect(() => {
+    if (activeAlerts.length === 0) setIsOnlineOrdersModalOpen(false)
+  }, [activeAlerts.length])
 
   const handlePinSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -3530,8 +3521,9 @@ export default function StaffPOSPage() {
                       type="button"
                       onClick={() => dismissOrderAlert(alert.orderId)}
                       className="rounded-xl border border-white/10 bg-white/5 px-2 py-2 text-xs text-white/60 hover:text-white"
+                      title="Stops the alarm for this order; it stays in the kitchen queue"
                     >
-                      Mute
+                      🔕 Silence
                     </button>
                   </div>
                 </div>

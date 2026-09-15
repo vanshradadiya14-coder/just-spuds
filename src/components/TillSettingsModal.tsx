@@ -12,6 +12,7 @@ import {
   subscribePrinterStatus,
   type PrinterDeviceStatus,
 } from '../services/printerBridge'
+import AlertSoundSettingsModal from './staff/AlertSoundSettingsModal'
 
 interface TillSettingsModalProps {
   onClose: () => void
@@ -36,6 +37,7 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
   const [printer, setPrinter] = useState<PrinterDeviceStatus>(() => getPrinterStatus())
   const [floatInput, setFloatInput] = useState(() => (getTillSettings().defaultFloatPence / 100).toFixed(2))
   const [busy, setBusy] = useState<'usb' | 'drawer' | null>(null)
+  const [isSoundOpen, setIsSoundOpen] = useState(false)
 
   useEffect(() => {
     const unsubSettings = subscribeTillSettings(setSettings)
@@ -111,6 +113,18 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
           })}
         </ul>
 
+        <button
+          type="button"
+          onClick={() => setIsSoundOpen(true)}
+          className="w-full flex items-center justify-between gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-left hover:bg-amber-500/20 transition"
+        >
+          <span>
+            <span className="block text-xs font-bold text-white">🔔 New order alert sound…</span>
+            <span className="block text-[10px] text-white/50 mt-0.5">Choose or upload the sound, set the volume, test it.</span>
+          </span>
+          <span className="text-white/60">→</span>
+        </button>
+
         <label className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
           <span>
             <span className="block text-xs font-bold text-white">Default opening float</span>
@@ -166,6 +180,7 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
 
         <p className="text-[10px] text-white/40 text-center">Changes apply to every till tab immediately and are written to the audit log.</p>
       </div>
+      {isSoundOpen && <AlertSoundSettingsModal onClose={() => setIsSoundOpen(false)} actor={actor} />}
     </div>
   )
 }

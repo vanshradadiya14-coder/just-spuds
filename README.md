@@ -80,6 +80,30 @@ float, USB printer) live behind ⚙️ on the till and sync to every open till t
   `/` or `Ctrl+K` search. The header shows an OFFLINE pill when the network
   drops — sales keep working locally and sync when it returns.
 
+### New online order alarm (KDS, till and admin)
+
+When a customer places a web order every staff screen raises it and the alarm
+**keeps ringing until someone accepts, declines or silences it** — the way a
+Deliveroo tablet or a Subway KDS behaves.
+
+- **KDS** (`/staff`) shows a full-screen alert with the whole ticket: Accept /
+  Accept & Print / Decline / Silence. `Enter` accepts the order in front; with
+  several waiting, "Accept all" clears the queue. The PIN screen shows a
+  "N new orders waiting" banner so a locked tablet still rings.
+- **Till** shows the red "Online Orders Pending" button → Accept & Print or
+  Silence. **Admin** gets a banner with one-tap Accept and a "N new" badge on
+  Live Orders.
+- Accepting anywhere (or a cancellation) silences every other screen. A
+  silenced order stays in the New column and never re-rings, even after a
+  reload. Several tabs on one PC share one sound (Web Locks) so it never doubles.
+- **The sound:** drop the store's file at `public/sounds/new-order.mp3` (or
+  `.wav` / `.ogg`); a manager can also upload a per-device sound, set the
+  volume and test it from KDS 🔔 ⚙️, Till ⚙️ → *New order alert sound*, or
+  Admin → *Alert Sound*. With no file the built-in two-tone siren plays. The
+  on/off switch is the till's "Online order siren" setting.
+- Browsers only allow sound after the first tap on the page; the alert shows
+  "Tap anywhere to enable sound" until then.
+
 ### Stock and channels
 
 Every product carries `stockQuantity`, `lowStockThreshold` and

@@ -62,12 +62,26 @@ export default {
           '0%, 100%': { transform: 'translate3d(0, 0, 0) scale(1)', opacity: '0.7' },
           '50%': { transform: 'translate3d(6%, -4%, 0) scale(1.12)', opacity: '0.95' },
         },
+        // Red/amber edge flash for the incoming-order alarm screen.
+        alarmFlash: {
+          '0%, 100%': { boxShadow: 'inset 0 0 0 6px rgba(244, 63, 94, 0.9), 0 0 60px rgba(244, 63, 94, 0.5)' },
+          '50%': { boxShadow: 'inset 0 0 0 6px rgba(251, 191, 36, 0.9), 0 0 90px rgba(251, 191, 36, 0.55)' },
+        },
+        bellRing: {
+          '0%, 100%': { transform: 'rotate(0deg)' },
+          '20%': { transform: 'rotate(18deg)' },
+          '40%': { transform: 'rotate(-14deg)' },
+          '60%': { transform: 'rotate(10deg)' },
+          '80%': { transform: 'rotate(-6deg)' },
+        },
       },
       animation: {
         marquee: 'marquee 30s linear infinite',
         pulseSlow: 'pulseSlow 4s ease-in-out infinite',
         toast: 'toastSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
         aurora: 'auroraFloat 18s ease-in-out infinite',
+        alarm: 'alarmFlash 1.1s ease-in-out infinite',
+        bell: 'bellRing 1s ease-in-out infinite',
       },
     },
   },

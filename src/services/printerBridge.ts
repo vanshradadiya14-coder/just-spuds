@@ -66,7 +66,7 @@ function notifyStatus() {
  * after a few dozen taps the sounds silently stopped.
  */
 let sharedAudioContext: AudioContext | null = null
-function getSharedAudioContext(): AudioContext | null {
+export function getSharedAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
   if (!sharedAudioContext) {
     const AudioCtx =

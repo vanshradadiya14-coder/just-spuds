@@ -36,11 +36,29 @@ globalThis.BroadcastChannel = class {
   addEventListener() {}
   removeEventListener() {}
 }
+// Fake <audio> that records what the alarm tried to play so tests can drive
+// the "file missing → siren" fallback by firing onerror themselves.
+const audioLog = []
 globalThis.Audio = class {
+  constructor(src) {
+    this.src = src
+    this.volume = 1
+    this.loop = false
+    this.currentTime = 0
+    this.paused = true
+    this.onended = null
+    this.onerror = null
+    audioLog.push(this)
+  }
   play() {
+    this.paused = false
     return Promise.resolve()
   }
+  pause() {
+    this.paused = true
+  }
 }
+const tick = () => new Promise((r) => setTimeout(r, 0))
 
 // Existing process.env values beat .env files in Vite, and supabase.ts falls
 // back to the live project when nothing is set - so point the test run at a
@@ -67,6 +85,8 @@ const authStore = await load('/src/services/authStore.ts')
 const checkout = await load('/src/services/checkout.ts')
 const tillStore = await load('/src/services/tillStore.ts')
 const timeclock = await load('/src/services/timeclockStore.ts')
+const alertBus = await load('/src/services/alertSoundBus.ts')
+const orderAlerts = await load('/src/services/orderAlerts.ts')
 
 let passed = 0
 let failed = 0
@@ -378,6 +398,173 @@ await test('clock in / break / clock out produce a timecard with breaks excluded
   assert.equal(timeclock.getActiveTimeclockEntry(user.id), undefined)
   const fake = { ...out, clockIn: new Date(Date.now() - 3 * 3600000).toISOString(), clockOut: new Date().toISOString(), breaks: [{ start: new Date(Date.now() - 2 * 3600000).toISOString(), end: new Date(Date.now() - 90 * 60000).toISOString() }] }
   assert.equal(timeclock.formatDuration(timeclock.workedMs(fake)), '2h 30m')
+})
+
+// ---------------------------------------------------------------------------
+section('📊 Admin analytics are real numbers, never placeholders')
+
+await test('an empty period reports zeros and no prep time, not seeded demo figures', () => {
+  const a = orderStore.getDetailedBusinessAnalytics([], 'today')
+  assert.equal(a.grossRevenue, 0)
+  assert.equal(a.aovPence, 0)
+  assert.equal(a.avgPrepTimeMins, null)
+  assert.equal(a.deliveryPercent + a.pickupPercent, 0)
+  assert.ok(a.hourlyRush.every((h) => h.count === 0), 'heatmap has no invented rush hours')
+  assert.ok(a.dailyRevenue.every((d) => d.revenue === 0 && d.count === 0), '7-day trend is empty, not random')
+  assert.deepEqual(a.topProducts, [])
+  assert.deepEqual(a.topToppings, [])
+})
+
+await test('prep time is measured from placed → ready on the ticket timeline', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 50, 'test', 'seed')
+  const placedAt = new Date(Date.now() - 12 * 60000)
+  const readyAt = new Date()
+  const stamp = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const order = {
+    ...orderStore.createManualCounterOrder(
+      { fulfilment: 'pickup', customerName: customer.name, customerPhone: customer.phone, customerEmail: customer.email, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' },
+      'Cashier',
+    ),
+    createdAt: placedAt.toISOString(),
+    status: 'collected',
+  }
+  order.timeline = [
+    { status: 'placed', timestamp: stamp(placedAt), title: 'Placed', description: '' },
+    { status: 'ready_for_pickup', timestamp: stamp(readyAt), title: 'Ready', description: '' },
+  ]
+  const a = orderStore.getDetailedBusinessAnalytics([order], 'today')
+  assert.equal(a.completedCount, 1)
+  assert.ok(a.avgPrepTimeMins >= 11 && a.avgPrepTimeMins <= 13, `prep time ${a.avgPrepTimeMins}m`)
+  assert.equal(a.aovPence, order.payment.total)
+  assert.equal(a.topProducts[0].name, p.name)
+  assert.equal(a.crmCustomers.length, 1, 'a named customer appears in the CRM once')
+  const cancelled = { ...order, status: 'cancelled' }
+  assert.equal(orderStore.getDetailedBusinessAnalytics([cancelled], 'today').dailyRevenue.reduce((s, d) => s + d.revenue, 0), 0, 'cancelled orders are not takings')
+})
+
+// ---------------------------------------------------------------------------
+section('🔔 New online order alarm')
+
+const webOrder = () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 50, 'test', 'seed')
+  return orderStore.createNewOrder({
+    fulfilment: 'pickup',
+    customer,
+    lines: [line(p, 1)],
+    subtotal: p.price,
+    deliveryFee: 0,
+    serviceFee: 0,
+    tip: 0,
+    discount: 0,
+    total: p.price,
+    paymentMethod: 'card',
+  })
+}
+const settle = () => {
+  // every pending web order from earlier tests gets acknowledged so only the
+  // order under test can ring
+  orderStore.getStoredOrders().forEach((o) => alertBus.dismissOrderAlert(o.id))
+}
+// The bus keeps one <audio> per URL, so "what is playing" is the newest element.
+const currentAudio = () => audioLog[audioLog.length - 1]
+
+await test('a placed web order rings the alarm until it is accepted', async () => {
+  settle()
+  const order = webOrder()
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  await tick()
+  assert.deepEqual(alertBus.getActiveAlerts().map((a) => a.orderId), [order.id])
+  assert.equal(alertBus.getAlertSoundState().sounding, true, 'alarm is sounding')
+  assert.equal(currentAudio()?.src, '/sounds/new-order.mp3', 'store sound file tried first')
+  assert.equal(currentAudio().paused, false)
+
+  orderStore.updateOrderStatus(order.id, 'accepted')
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  assert.deepEqual(alertBus.getActiveAlerts(), [], 'accepted order drops off the queue')
+  assert.equal(alertBus.getAlertSoundState().sounding, false, 'alarm stops')
+  assert.equal(currentAudio().paused, true)
+})
+
+await test('a silenced order stays silent through later order updates and reloads', () => {
+  settle()
+  const order = webOrder()
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  assert.equal(alertBus.getActiveAlerts().length, 1)
+  alertBus.dismissOrderAlert(order.id)
+  assert.equal(alertBus.getAlertSoundState().sounding, false)
+  // the next order-store tick (any status change anywhere) must not re-raise it
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  assert.deepEqual(alertBus.getActiveAlerts(), [])
+  assert.equal(alertBus.isOrderAlertAcknowledged(order.id), true)
+  assert.ok(JSON.parse(localStorage.getItem('just_spuds_alert_acked_v1')).includes(order.id), 'acknowledgement persisted')
+  assert.equal(orderStore.getOrderById(order.id).status, 'placed', 'silencing does not accept')
+})
+
+await test('till, phone and counter orders never ring the online alarm', () => {
+  settle()
+  const p = firstSpud()
+  orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Cashier')
+  orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'in_store', paymentStatus: 'pending_store', source: 'PHONE' }, 'Cashier')
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  assert.deepEqual(alertBus.getActiveAlerts(), [])
+  assert.equal(alertBus.getAlertSoundState().sounding, false)
+})
+
+await test('the watcher picks up a new web order from the order store by itself', async () => {
+  settle()
+  const stop = orderAlerts.startOnlineOrderAlertWatcher()
+  try {
+    const order = webOrder()
+    await tick()
+    assert.deepEqual(alertBus.getActiveAlerts().map((a) => a.orderId), [order.id])
+    orderStore.cancelOrder(order.id, 'test')
+    assert.deepEqual(alertBus.getActiveAlerts(), [], 'cancelled elsewhere → alert gone')
+  } finally {
+    stop()
+  }
+})
+
+await test('a missing sound file falls back to the built-in siren; a custom upload takes priority', async () => {
+  settle()
+  alertBus.setAlertSoundConfig({ source: 'default' })
+  const order = webOrder()
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  await tick()
+  // pretend none of the store files exist
+  for (let i = 0; i < 3; i++) {
+    const el = currentAudio()
+    assert.equal(el.src, alertBus.DEFAULT_SOUND_URLS[i])
+    el.onerror()
+  }
+  assert.equal(alertBus.getAlertSoundState().engine, 'synth', 'siren takes over')
+  assert.equal(alertBus.getAlertSoundState().sounding, true)
+
+  alertBus.setAlertSoundConfig({ source: 'custom', customName: 'bell.mp3', customDataUrl: 'data:audio/mpeg;base64,AAAA', volume: 0.5 })
+  await tick()
+  const custom = currentAudio()
+  assert.equal(custom.src, 'data:audio/mpeg;base64,AAAA', 'custom sound is what plays')
+  assert.equal(custom.volume, 0.5)
+  assert.equal(JSON.parse(localStorage.getItem('just_spuds_alert_sound_v1')).customName, 'bell.mp3')
+  alertBus.clearCustomAlertSound()
+  assert.equal(alertBus.getAlertSoundConfig().source, 'default')
+  alertBus.dismissOrderAlert(order.id)
+})
+
+await test('the till "Online order siren" switch mutes and un-mutes the alarm', async () => {
+  settle()
+  const order = webOrder()
+  orderAlerts.reconcileOrderAlerts(orderStore.getStoredOrders())
+  await tick()
+  assert.equal(alertBus.getAlertSoundState().sounding, true)
+  tillStore.updateTillSettings({ soundAlerts: false }, 'Manager')
+  assert.equal(alertBus.getAlertSoundState().sounding, false, 'muted')
+  assert.equal(alertBus.getActiveAlerts().length, 1, 'the order still needs accepting')
+  tillStore.updateTillSettings({ soundAlerts: true }, 'Manager')
+  await tick()
+  assert.equal(alertBus.getAlertSoundState().sounding, true, 'rings again while the order is still waiting')
+  alertBus.dismissOrderAlert(order.id)
 })
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ import {
   updateOrderStatus,
   sendOrderToDrivers,
   cancelOrder,
-  playKitchenChime,
   getMenuStockOverrides,
   toggleItemStock,
   getKitchenPauseState,
@@ -28,11 +27,22 @@ import {
   type AuthUser,
 } from '../services/authStore'
 import { getProducts, subscribeMenu } from '../services/menuStore'
+import {
+  dismissOrderAlert,
+  subscribeAlertSoundState,
+  subscribeOrderAlerts,
+  type AlertSoundState,
+  type OnlineOrderAlert,
+} from '../services/alertSoundBus'
+import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
+import { getTillSettings, subscribeTillSettings, updateTillSettings, type TillSettings } from '../services/tillStore'
 import { type Product } from '../data/menu'
 import TicketCard from './staff/TicketCard'
 import ThermalReceipt from '../components/ThermalReceipt'
 import ManualOrderFixModal from '../components/ManualOrderFixModal'
 import CreateManualOrderModal from '../components/CreateManualOrderModal'
+import NewOrderAlertModal from '../components/staff/NewOrderAlertModal'
+import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
 import { cx, gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 type StaffTab = 'active' | 'new' | 'baking' | 'dispatched' | 'completed' | 'stock'
@@ -58,8 +68,13 @@ export default function StaffKDSPage() {
   const [activeTab, setActiveTab] = useState<StaffTab>('active')
   const [stockOverrides, setStockOverrides] = useState<Record<string, boolean>>({})
   const [searchQuery, setSearchQuery] = useState('')
-  const [soundEnabled, setSoundEnabled] = useState(true)
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
+
+  // Incoming online order alarm — rings until someone accepts / declines / silences.
+  const [alerts, setAlerts] = useState<OnlineOrderAlert[]>([])
+  const [soundState, setSoundState] = useState<AlertSoundState>({ sounding: false, blocked: false, deferredToOtherTab: false, engine: null, enabled: true })
+  const [tillSettings, setTillSettings] = useState<TillSettings>(() => getTillSettings())
+  const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false)
 
   // Manual resolution and creation modals
   const [fixingOrder, setFixingOrder] = useState<Order | null>(null)
@@ -96,15 +111,44 @@ export default function StaffKDSPage() {
     const unsubAuth = subscribeAuth((u) => setUser(u))
     const unsubOrders = subscribeOrders((all) => setOrders(all))
     const unsubPause = subscribeKitchenPause((kp) => setKitchenPauseState(kp))
+    // The watcher runs even on the PIN screen so a locked kitchen tablet still rings.
+    const stopWatcher = startOnlineOrderAlertWatcher()
+    const unsubAlerts = subscribeOrderAlerts(setAlerts)
+    const unsubSound = subscribeAlertSoundState(setSoundState)
+    const unsubTill = subscribeTillSettings(setTillSettings)
     setStockOverrides(getMenuStockOverrides())
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => {
       unsubAuth()
       unsubOrders()
       unsubPause()
+      stopWatcher()
+      unsubAlerts()
+      unsubSound()
+      unsubTill()
       clearInterval(timer)
     }
   }, [])
+
+  // Browser tab title shows the count so a backgrounded KDS tab is still noticed.
+  useEffect(() => {
+    if (alerts.length === 0) return
+    const previous = document.title
+    document.title = `(${alerts.length}) NEW ORDER${alerts.length > 1 ? 'S' : ''} — Just Spuds KDS`
+    return () => {
+      document.title = previous
+    }
+  }, [alerts.length])
+
+  const handleAcceptAlert = (order: Order, print: boolean) => {
+    const accepted = updateOrderStatus(order.id, 'accepted')
+    dismissOrderAlert(order.id)
+    if (print && accepted) setPrintingOrder(accepted)
+  }
+
+  const handleSilenceAlert = (orderId: string) => dismissOrderAlert(orderId)
+
+  const toggleAlarmSound = () => updateTillSettings({ soundAlerts: !tillSettings.soundAlerts }, user?.name || 'Kitchen Staff')
 
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
@@ -219,6 +263,15 @@ export default function StaffKDSPage() {
           </Link>
         </div>
 
+        {alerts.length > 0 && (
+          <div className="mb-4 w-full max-w-sm rounded-2xl border-2 border-rose-500 bg-rose-950/60 p-3 text-center animate-alarm">
+            <p className="font-body text-sm font-black text-white">
+              🔔 {alerts.length} new online order{alerts.length > 1 ? 's' : ''} waiting
+            </p>
+            <p className="font-body text-[11px] text-rose-200/90">Sign in to accept — the alarm keeps ringing until it's dealt with.</p>
+          </div>
+        )}
+
         <div className="w-full max-w-sm rounded-3xl border border-amber-400/30 bg-gradient-to-b from-slate-900 to-black p-8 shadow-2xl text-center">
           <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl shadow-glow">
             👨‍🍳
@@ -303,29 +356,6 @@ export default function StaffKDSPage() {
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 pt-4 sm:pt-6">
       <div className="mx-auto max-w-[1700px] px-4 sm:px-6">
 
-        {/* MANAGER COMMAND BAR (Visible when logged in as Manager or Admin) */}
-        {hasRole(user, MANAGEMENT_ROLES) && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-400/40 bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent p-3 font-body text-xs text-white shadow-lg backdrop-blur-md">
-            <div className="flex items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-lg bg-amber-400 font-bold text-ink text-xs shadow-glow">
-                👑
-              </span>
-              <span>
-                <strong>Store Manager Session ({user?.name})</strong> &bull; Manager privileges active.
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Link
-                to="/admin"
-                className="rounded-xl bg-amber-400 px-3.5 py-1.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow transition hover:bg-amber-300 flex items-center gap-1.5"
-              >
-                <span>Open Sales &amp; Financial Console</span>
-                <span>📊 →</span>
-              </Link>
-            </div>
-          </div>
-        )}
-
         {/* STAFF DEDICATED TOP BAR */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4 mb-5">
           <div className="flex items-center gap-3">
@@ -342,7 +372,7 @@ export default function StaffKDSPage() {
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-400">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    👨‍🍳 Line Cook (PIN 1234)
+                    👨‍🍳 {user?.role === 'KITCHEN_STAFF' ? 'Line Cook' : user?.role === 'CASHIER' ? 'Cashier' : 'Staff'}
                   </span>
                 )}
               </div>
@@ -358,6 +388,17 @@ export default function StaffKDSPage() {
             <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-amber-300">
               🕒 {currentTime.toLocaleTimeString()}
             </div>
+
+            {hasRole(user, MANAGEMENT_ROLES) && (
+              <Link
+                to="/admin"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+                title="Admin console — sales, stock, staff"
+              >
+                <span>📊</span>
+                <span>Admin</span>
+              </Link>
+            )}
 
             {/* Counter Till POS Terminal Link */}
             <Link
@@ -412,15 +453,30 @@ export default function StaffKDSPage() {
               {isFullscreen ? '🗗 Exit Fullscreen' : '⛶ Fullscreen KDS'}
             </button>
 
-            <button
-              type="button"
-              onClick={() => { playKitchenChime(); setSoundEnabled(true) }}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-white hover:bg-white/10"
-              title="Test Kitchen Audio Chime"
-            >
-              <span>🔔</span>
-              <span>{soundEnabled ? 'Chime ON' : 'Muted'}</span>
-            </button>
+            <div className="inline-flex items-stretch rounded-xl border border-white/20 bg-white/5 overflow-hidden">
+              <button
+                type="button"
+                onClick={toggleAlarmSound}
+                className={cx(
+                  'inline-flex items-center gap-1.5 px-3 py-1.5 font-body text-xs font-bold transition',
+                  tillSettings.soundAlerts ? 'text-white hover:bg-white/10' : 'bg-red-950/40 text-red-300 hover:bg-red-900/40',
+                )}
+                title={tillSettings.soundAlerts ? 'New-order alarm is on — click to mute' : 'New-order alarm is MUTED — click to turn on'}
+                aria-pressed={tillSettings.soundAlerts}
+              >
+                <span>{tillSettings.soundAlerts ? '🔔' : '🔇'}</span>
+                <span>{tillSettings.soundAlerts ? 'Alarm on' : 'Alarm muted'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSoundSettingsOpen(true)}
+                className="border-l border-white/10 px-2.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                title="Alert sound settings — choose or upload the sound, volume, test"
+                aria-label="Alert sound settings"
+              >
+                ⚙️
+              </button>
+            </div>
 
             <Link
               to="/"
@@ -481,17 +537,17 @@ export default function StaffKDSPage() {
         {/* KITCHEN KANBAN BOARD */}
         <div className="flex flex-col flex-1 min-h-0">
           {/* Top Control Bar */}
-          <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-4 mb-4">
-            <div className="flex items-center gap-4">
-              <h2 className="text-xl font-display font-bold text-white">Live Kitchen Flow</h2>
-              <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4 mb-4">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-display font-bold text-white whitespace-nowrap">Live Kitchen Flow</h2>
+              <div className="flex items-center gap-2 whitespace-nowrap">
                 <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-xs text-white/60 font-body uppercase tracking-wider font-bold">Live Sync Active</span>
+                <span className="text-xs text-white/60 font-body uppercase tracking-wider font-bold">Live Sync</span>
               </div>
             </div>
-            
-            <div className="flex items-center gap-3">
-              <div className="relative min-w-[240px]">
+
+            <div className="flex flex-1 items-center gap-3 sm:justify-end min-w-0">
+              <div className="relative flex-1 sm:flex-none sm:w-64 min-w-0">
                 <input
                   type="text"
                   value={searchQuery}
@@ -569,11 +625,11 @@ export default function StaffKDSPage() {
             </div>
           ) : (
             /* KANBAN BOARD */
-            <div className="flex-1 overflow-x-auto pb-4 custom-scrollbar">
-              <div className="flex gap-6 h-full min-w-max">
+            <div className="flex-1 pb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-5 items-start">
                 
                 {/* Column 1: NEW / PENDING */}
-                <div className="w-[360px] flex flex-col gap-4 border-r border-white/10 pr-6">
+                <div className="min-w-0 flex flex-col gap-4 xl:border-r xl:border-white/10 xl:pr-5">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-amber-400 flex items-center gap-2">
                       📝 New &amp; Pending
@@ -599,7 +655,7 @@ export default function StaffKDSPage() {
                 </div>
 
                 {/* Column 2: IN PREP / OVEN */}
-                <div className="w-[360px] flex flex-col gap-4 border-r border-white/10 pr-6">
+                <div className="min-w-0 flex flex-col gap-4 xl:border-r xl:border-white/10 xl:pr-5">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-orange-400 flex items-center gap-2">
                       🍳 In Oven (Baking)
@@ -625,7 +681,7 @@ export default function StaffKDSPage() {
                 </div>
 
                 {/* Column 3: READY / DISPATCH */}
-                <div className="w-[360px] flex flex-col gap-4 border-r border-white/10 pr-6">
+                <div className="min-w-0 flex flex-col gap-4 xl:border-r xl:border-white/10 xl:pr-5">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-emerald-400 flex items-center gap-2">
                       🛵 Ready for Dispatch
@@ -651,7 +707,7 @@ export default function StaffKDSPage() {
                 </div>
 
                 {/* Column 4: COMPLETED */}
-                <div className="w-[360px] flex flex-col gap-4 pr-6">
+                <div className="min-w-0 flex flex-col gap-4">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-slate-400 flex items-center gap-2">
                       ✓ Completed (Recent)
@@ -680,6 +736,24 @@ export default function StaffKDSPage() {
             </div>
           )}
         </div>
+      {/* INCOMING ONLINE ORDER ALARM — hidden while a decision modal is up, the alarm itself keeps ringing */}
+      {alerts.length > 0 && !rejectingOrder && !printingOrder && !fixingOrder && !isSoundSettingsOpen && (
+        <NewOrderAlertModal
+          alerts={alerts}
+          orders={orders}
+          soundState={soundState}
+          printByDefault={tillSettings.autoPrintOnline}
+          onAccept={handleAcceptAlert}
+          onDecline={handleOpenRejectModal}
+          onSilence={handleSilenceAlert}
+          onOpenSoundSettings={() => setIsSoundSettingsOpen(true)}
+        />
+      )}
+
+      {isSoundSettingsOpen && (
+        <AlertSoundSettingsModal onClose={() => setIsSoundSettingsOpen(false)} actor={user?.name || 'Kitchen Staff'} />
+      )}
+
       {/* THERMAL POS RECEIPT PREVIEW / PRINT MODAL */}
       {printingOrder && (
         <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} />

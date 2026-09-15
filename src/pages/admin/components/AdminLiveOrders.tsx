@@ -2,6 +2,31 @@ import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../../utils/format'
 import { type Order } from '../../../services/orderStore'
 
+/** What "advance" will do to this order, so the button says it instead of "Next". */
+function nextStepLabel(o: Order): string | null {
+  switch (o.status) {
+    case 'placed':
+      return '✓ Accept'
+    case 'accepted':
+      return '🔥 Start baking'
+    case 'baking':
+      return o.fulfilment === 'delivery' ? '🛵 Out for delivery' : '🛍️ Ready to collect'
+    case 'out_for_delivery':
+      return '🎉 Delivered'
+    case 'ready_for_pickup':
+      return '🎉 Collected'
+    default:
+      return null
+  }
+}
+
+const SOURCE_BADGE: Record<Order['source'], { label: string; tone: string }> = {
+  WEBSITE: { label: '🌐 Web', tone: 'bg-sky-500/20 text-sky-200 border-sky-500/40' },
+  TILL: { label: '🖥️ Till', tone: 'bg-purple-500/20 text-purple-200 border-purple-500/40' },
+  PHONE: { label: '📞 Phone', tone: 'bg-amber-500/20 text-amber-200 border-amber-500/40' },
+  STAFF: { label: '👤 Counter', tone: 'bg-slate-500/20 text-slate-200 border-slate-500/40' },
+}
+
 interface AdminLiveOrdersProps {
   orderStatusFilter: string;
   setOrderStatusFilter: any;
@@ -36,6 +61,7 @@ export default function AdminLiveOrders({
           {(
             [
               { key: 'all', label: 'All Orders' },
+              { key: 'new', label: '🔔 New (unaccepted)' },
               { key: 'active', label: '🔥 Active in Kitchen' },
               { key: 'delivery', label: '🛵 Delivery' },
               { key: 'pickup', label: '🛍️ Store Pick Up' },
@@ -152,6 +178,9 @@ export default function AdminLiveOrders({
                       >
                         {ord.fulfilment === 'delivery' ? '🛵 Delivery' : '🛍️ Pick Up'}
                       </span>
+                      <span className={cx('block w-fit rounded-lg border px-2 py-0.5 text-[10px] font-bold', (SOURCE_BADGE[ord.source] || SOURCE_BADGE.WEBSITE).tone)}>
+                        {(SOURCE_BADGE[ord.source] || SOURCE_BADGE.WEBSITE).label}
+                      </span>
                       {ord.deliveryDetails?.deliveryPin && (
                         <p className="text-[10px] font-mono text-amber-300 font-bold">
                           PIN: {ord.deliveryDetails.deliveryPin}
@@ -211,14 +240,23 @@ export default function AdminLiveOrders({
                       </button>
                     )}
 
-                    {!['delivered', 'collected', 'cancelled'].includes(ord.status) && (
+                    {nextStepLabel(ord) && (
                       <button
                         type="button"
                         onClick={() => handleAdvanceStatus(ord.id)}
-                        className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-slate-950 hover:bg-emerald-400 transition shadow active:scale-95"
+                        className={cx(
+                          'rounded-lg px-2.5 py-1 text-[11px] font-bold transition shadow active:scale-95',
+                          ord.status === 'placed' ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400 animate-pulse' : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400',
+                        )}
+                        title="Move this order to its next step"
                       >
-                        ▶ Next
+                        {nextStepLabel(ord)}
                       </button>
+                    )}
+                    {['ready_for_delivery', 'driver_assigned', 'driver_arrived_at_store'].includes(ord.status) && (
+                      <span className="inline-block rounded-lg border border-white/10 px-2 py-1 text-[10px] text-white/50" title="Handled from the KDS / driver app">
+                        with courier
+                      </span>
                     )}
 
                     <button
@@ -229,13 +267,14 @@ export default function AdminLiveOrders({
                       🖨️
                     </button>
 
-                    {ord.status !== 'cancelled' && (
+                    {!['cancelled', 'delivered', 'collected'].includes(ord.status) && (
                       <button
                         type="button"
                         onClick={() => handleRefundCancel(ord.id)}
                         className="rounded-lg border border-red-500/30 bg-red-950/20 px-2 py-1 text-[11px] font-bold text-red-400 hover:bg-red-900/40"
+                        title={ord.payment.status === 'paid' ? 'Cancel the order and refund the customer' : 'Cancel the order (nothing was charged)'}
                       >
-                        Refund
+                        {ord.payment.status === 'paid' ? 'Cancel & refund' : 'Cancel'}
                       </button>
                     )}
 

@@ -20,7 +20,7 @@ import {
   exportOrdersCSV,
   exportCustomersCSV,
   injectSimulatedRushOrders,
-  playChimeSoundTest,
+  updateOrderStatus,
   type Order,
   type KitchenPauseState,
   type TimeRange,
@@ -79,6 +79,9 @@ import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
 import TillShiftHistory from './admin/components/TillShiftHistory'
 import StaffTimecards from './admin/components/StaffTimecards'
+import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
+import { dismissOrderAlert, subscribeOrderAlerts, type OnlineOrderAlert } from '../services/alertSoundBus'
+import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
 import { getAuditLogs, subscribeAuditLogs, type AuditLogItem } from '../services/auditStore'
 import {
   getBlacklistEntries,
@@ -124,7 +127,7 @@ export default function AdminPage() {
   const [productCategoryFilter, setProductCategoryFilter] = useState<string>('ALL')
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
   const [driverSearchQuery, setDriverSearchQuery] = useState('')
-  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'active' | 'delivery' | 'pickup' | 'completed' | 'cancelled'>('all')
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'new' | 'active' | 'delivery' | 'pickup' | 'completed' | 'cancelled'>('all')
   const [inventorySearch, setInventorySearch] = useState('')
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState<string>('ALL')
 
@@ -162,6 +165,10 @@ export default function AdminPage() {
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
   const [deliverySettings, setDeliverySettingsState] = useState<StoreDeliverySettings>(() => getDeliverySettings())
 
+  // New web orders nobody has accepted yet — same alarm as the KDS and till.
+  const [newOrderAlerts, setNewOrderAlerts] = useState<OnlineOrderAlert[]>([])
+  const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false)
+
   // PIN gate state
   const [adminPin, setAdminPin] = useState('')
   const [adminPinError, setAdminPinError] = useState<string | null>(null)
@@ -181,6 +188,8 @@ export default function AdminPage() {
       setPromos(getPromoCodes())
       setStoreSettingsState(getStoreSettings())
     })
+    const stopAlertWatcher = startOnlineOrderAlertWatcher()
+    const unsubAlerts = subscribeOrderAlerts(setNewOrderAlerts)
     setStockOverrides(getMenuStockOverrides())
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
 
@@ -193,9 +202,16 @@ export default function AdminPage() {
       unsubAudit()
       unsubBlacklist()
       unsubMenu()
+      stopAlertWatcher()
+      unsubAlerts()
       clearInterval(timer)
     }
   }, [])
+
+  const handleAcceptNewOrder = (orderId: string) => {
+    updateOrderStatus(orderId, 'accepted')
+    dismissOrderAlert(orderId)
+  }
 
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
@@ -453,6 +469,9 @@ export default function AdminPage() {
         const matchPhone = ord.customer.phone.toLowerCase().includes(q)
         if (!matchId && !matchName && !matchPhone) return false
       }
+      if (orderStatusFilter === 'new') {
+        return ord.status === 'placed'
+      }
       if (orderStatusFilter === 'active') {
         return !['delivered', 'collected', 'cancelled'].includes(ord.status)
       }
@@ -506,7 +525,14 @@ export default function AdminPage() {
   }
 
   const handleRefundCancel = (orderId: string) => {
-    const reason = window.prompt('Enter refund / cancellation rationale (logged to Audit trail):', 'Customer requested cancellation')
+    const target = orders.find((o) => o.id === orderId)
+    const paid = target?.payment.status === 'paid'
+    const reason = window.prompt(
+      paid
+        ? `Cancel #${target?.shortId} and refund ${gbp(target?.payment.total || 0)}? Enter the reason (shown to the customer, logged to the audit trail):`
+        : `Cancel #${target?.shortId ?? ''}? Nothing was charged. Enter the reason (shown to the customer, logged to the audit trail):`,
+      'Customer requested cancellation',
+    )
     if (reason) {
       cancelOrder(orderId, reason)
     }
@@ -543,12 +569,13 @@ export default function AdminPage() {
   }
 
   const handleSimulateRush = () => {
+    if (
+      !window.confirm(
+        'This creates 2 TEST orders (1 delivery, 1 collection). They ring the alarm on every staff screen and count in today\'s figures until declined. Continue?',
+      )
+    )
+      return
     injectSimulatedRushOrders()
-    alert('⚡ Simulated 2 incoming orders (1 Delivery, 1 Pickup)! Kitchen chime triggered.')
-  }
-
-  const handleSoundTest = () => {
-    playChimeSoundTest()
   }
 
   const handleIssueCustomerVoucher = (custName: string) => {
@@ -833,8 +860,8 @@ export default function AdminPage() {
             </span>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide">
-                  JUST SPUDS &bull; EXECUTIVE MANAGEMENT
+                <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide whitespace-nowrap">
+                  JUST SPUDS &bull; ADMIN
                 </h1>
                 <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2.5 py-0.5 text-[10px] font-black uppercase text-amber-300">
                   {user?.role || 'SUPER ADMIN'}
@@ -865,12 +892,12 @@ export default function AdminPage() {
 
             <button
               type="button"
-              onClick={handleSoundTest}
+              onClick={() => setIsSoundSettingsOpen(true)}
               className="inline-flex items-center gap-1 rounded-xl border border-white/20 bg-white/5 px-2.5 py-1.5 font-body text-xs text-white/80 hover:bg-white/15"
-              title="Test kitchen chime audio"
+              title="New-order alarm: choose or upload the sound, volume, test"
             >
-              <span>🔊</span>
-              <span>Sound Test</span>
+              <span>🔔</span>
+              <span>Alert Sound</span>
             </button>
 
             {kitchenPause.isPaused ? (
@@ -960,6 +987,59 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* NEW ONLINE ORDERS WAITING FOR ACCEPTANCE */}
+        {newOrderAlerts.length > 0 && (
+          <div className="mb-6 rounded-2xl border-2 border-rose-500/70 bg-gradient-to-r from-rose-950/70 via-slate-900 to-slate-900 p-4 shadow-2xl animate-alarm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-rose-500 text-2xl shadow-glow animate-bell">🔔</span>
+                <div>
+                  <p className="font-body text-sm font-black text-white">
+                    {newOrderAlerts.length} new online order{newOrderAlerts.length > 1 ? 's' : ''} waiting to be accepted
+                  </p>
+                  <p className="font-body text-[11px] text-rose-200/90">The alarm rings on every staff screen until each one is accepted, declined or silenced.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link to="/staff" className="rounded-xl bg-amber-400 px-3.5 py-2 font-body text-xs font-black text-ink shadow hover:bg-amber-300">
+                  👨‍🍳 Open KDS
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => newOrderAlerts.forEach((a) => dismissOrderAlert(a.orderId))}
+                  className="rounded-xl border border-white/20 bg-white/5 px-3 py-2 font-body text-xs font-bold text-white/70 hover:bg-white/15 hover:text-white"
+                  title="Stops the alarm; the orders stay in the kitchen queue"
+                >
+                  🔕 Silence all
+                </button>
+              </div>
+            </div>
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {newOrderAlerts
+                .slice()
+                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                .map((a) => (
+                  <li key={a.orderId} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-body text-xs font-bold text-white">
+                        <span className="font-mono text-amber-300">#{a.shortId}</span> &bull; {a.customerName} &bull; {gbp(a.total)}
+                        {a.fulfilment && <span className="ml-1 text-white/50">{a.fulfilment === 'delivery' ? '🛵' : '🛍️'}</span>}
+                      </p>
+                      <p className="truncate font-body text-[11px] text-white/50">{a.itemsSummary}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAcceptNewOrder(a.orderId)}
+                      className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 font-body text-[11px] font-black text-ink hover:bg-emerald-400"
+                    >
+                      ✓ Accept
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        )}
+
         {/* PRIMARY NAVIGATION TABS */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
           <div className="flex flex-wrap items-center gap-2">
@@ -1014,11 +1094,15 @@ export default function AdminPage() {
             >
               <span>📋</span>
               <span>Live Orders</span>
-              {analytics.activeCount > 0 && (
+              {newOrderAlerts.length > 0 ? (
+                <span className="rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-black text-white animate-pulse" title="New online orders waiting for acceptance">
+                  {newOrderAlerts.length} new
+                </span>
+              ) : analytics.activeCount > 0 ? (
                 <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-black text-ink">
                   {analytics.activeCount}
                 </span>
-              )}
+              ) : null}
             </button>
 
             <button
@@ -1169,8 +1253,8 @@ export default function AdminPage() {
                   {gbp(analytics.grossRevenue)}
                 </p>
                 <div className="mt-2 flex items-center justify-between text-[10px] text-white/60">
-                  <span>Net: {gbp(analytics.estimatedNetProfit)}</span>
-                  <span className="text-emerald-400 font-bold">~{analytics.grossMarginPercent}% margin</span>
+                  <span title="Estimate: takings less ~32% food cost">Est. net: {gbp(analytics.estimatedNetProfit)}</span>
+                  <span className="text-emerald-400 font-bold">{analytics.grossRevenue > 0 ? `~${analytics.grossMarginPercent}% margin` : ''}</span>
                 </div>
               </div>
 
@@ -1193,22 +1277,31 @@ export default function AdminPage() {
                   Avg Order Value (AOV)
                 </span>
                 <p className="display text-3xl text-white font-bold mt-1">
-                  {gbp(analytics.aovPence)}
+                  {analytics.completedCount > 0 ? gbp(analytics.aovPence) : '—'}
                 </p>
-                <span className="text-[10px] text-emerald-400 font-semibold mt-2 block">
-                  +14% vs Deliveroo standard
+                <span className="text-[10px] text-white/60 font-semibold mt-2 block">
+                  {analytics.completedCount > 0 ? `Across ${analytics.completedCount} completed order${analytics.completedCount === 1 ? '' : 's'}` : 'No completed orders yet'}
                 </span>
               </div>
 
               <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-lg">
                 <span className="font-body text-[10px] font-bold uppercase tracking-wider text-white/50">
-                  Kitchen Velocity
+                  Avg Prep Time
                 </span>
                 <p className="display text-3xl text-amber-300 font-bold mt-1">
-                  {analytics.avgPrepTimeMins}m
+                  {analytics.avgPrepTimeMins === null ? '—' : `${analytics.avgPrepTimeMins}m`}
                 </p>
-                <span className="text-[10px] text-emerald-400 font-semibold mt-2 block">
-                  ✓ Target &lt;18m maintained
+                <span
+                  className={cx(
+                    'text-[10px] font-semibold mt-2 block',
+                    analytics.avgPrepTimeMins === null ? 'text-white/50' : analytics.avgPrepTimeMins <= 18 ? 'text-emerald-400' : 'text-rose-400',
+                  )}
+                >
+                  {analytics.avgPrepTimeMins === null
+                    ? 'Placed → ready, once orders complete'
+                    : analytics.avgPrepTimeMins <= 18
+                    ? '✓ Within the 18-min target'
+                    : '⚠ Over the 18-min target'}
                 </span>
               </div>
 
@@ -1249,15 +1342,22 @@ export default function AdminPage() {
                       Order volume across operating hours ({storeSettings.openTime} – {storeSettings.closeTime})
                     </p>
                   </div>
-                  <span className="text-[10px] text-amber-400 font-bold">● Peak Rush (12-2pm / 6-8pm)</span>
+                  {(() => {
+                    const busiest = analytics.hourlyRush.reduce((best, s) => (s.count > best.count ? s : best), analytics.hourlyRush[0])
+                    return busiest && busiest.count > 0 ? (
+                      <span className="text-[10px] text-amber-400 font-bold">● Busiest: {busiest.label} ({busiest.count} order{busiest.count === 1 ? '' : 's'})</span>
+                    ) : (
+                      <span className="text-[10px] text-white/40 font-bold">No orders in this period yet</span>
+                    )
+                  })()}
                 </div>
 
                 <div className="pt-4">
                   <div className="grid grid-cols-12 gap-2 h-44 items-end border-b border-white/10 pb-2">
                     {analytics.hourlyRush.map((slot) => {
                       const maxCount = Math.max(...analytics.hourlyRush.map((s) => s.count), 1)
-                      const heightPercent = Math.max(12, Math.round((slot.count / maxCount) * 100))
-                      const isPeak = (slot.hour >= 12 && slot.hour <= 14) || (slot.hour >= 18 && slot.hour <= 20)
+                      const heightPercent = slot.count === 0 ? 3 : Math.max(12, Math.round((slot.count / maxCount) * 100))
+                      const isPeak = slot.count > 0 && slot.count === maxCount
 
                       return (
                         <div key={slot.hour} className="flex flex-col items-center h-full justify-end group">
@@ -1297,8 +1397,11 @@ export default function AdminPage() {
                 </div>
 
                 <div className="pt-4 space-y-3">
+                  {analytics.dailyRevenue.every((d) => d.revenue === 0) && (
+                    <p className="text-[11px] text-white/40">No takings recorded in the last 7 days.</p>
+                  )}
                   {analytics.dailyRevenue.map((day) => {
-                    const maxRev = Math.max(...analytics.dailyRevenue.map((d) => d.revenue), 1000)
+                    const maxRev = Math.max(...analytics.dailyRevenue.map((d) => d.revenue), 1)
                     const barPercent = Math.round((day.revenue / maxRev) * 100)
                     return (
                       <div key={day.date} className="flex items-center gap-3 text-xs">
@@ -3205,6 +3308,10 @@ export default function AdminPage() {
       {/* THERMAL POS RECEIPT PREVIEW / PRINT MODAL */}
       {printingOrder && (
         <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} />
+      )}
+
+      {isSoundSettingsOpen && (
+        <AlertSoundSettingsModal onClose={() => setIsSoundSettingsOpen(false)} actor={user?.name || 'Super Admin'} />
       )}
 
       {/* MANUAL ORDER PROBLEM FIXER MODAL */}

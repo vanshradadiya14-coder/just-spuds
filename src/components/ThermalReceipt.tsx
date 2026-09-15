@@ -188,7 +188,7 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
 
         {order.payment.tip > 0 && (
           <div className="flex justify-between font-bold">
-            <span>Driver Tip</span>
+            <span>{order.fulfilment === 'delivery' ? 'Driver Tip' : 'Tip'}</span>
             <span>{gbp(order.payment.tip)}</span>
           </div>
         )}
