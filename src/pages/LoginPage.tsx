@@ -91,8 +91,15 @@ export default function LoginPage() {
         
         {/* Header */}
         <div className="text-center">
-          <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-glow">
-            {tab === 'staff' ? '👨‍🍳' : tab === 'admin' ? '📊' : '👤'}
+          <div className="relative mx-auto mb-3 inline-block">
+            <img
+              src="/assets/brand/logo.png"
+              alt="Just Spuds Logo"
+              className="h-16 w-16 rounded-full object-cover shadow-lg ring-2 ring-amber-400/60"
+            />
+            <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-amber-400 text-xs shadow-md">
+              {tab === 'staff' ? '👨‍🍳' : tab === 'admin' ? '📊' : '👤'}
+            </span>
           </div>
           <h1 className="display text-2xl sm:text-3xl text-ink font-bold">
             {tab === 'staff' ? 'Kitchen Staff PIN' : tab === 'admin' ? 'Admin Management Login' : 'Customer Account'}
