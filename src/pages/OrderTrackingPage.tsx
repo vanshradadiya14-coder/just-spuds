@@ -392,7 +392,10 @@ export default function OrderTrackingPage() {
   const isFailed = order.status === 'failed_delivery'
   const isOffTrack = isCancelled || isFailed
   const isComplete = order.status === 'delivered' || order.status === 'collected'
-  const canCancel = ['placed', 'accepted', 'baking'].includes(order.status)
+  // Customers can cancel only until the kitchen accepts (Deliveroo / Uber Eats
+  // rule) — once the food is being made a cancellation is the store's call, by phone.
+  const canCancel = order.status === 'placed'
+  const cancelWindowClosed = ['accepted', 'baking', 'quality_check'].includes(order.status)
 
   const handleCopyOrderId = () => {
     navigator.clipboard.writeText(order.shortId)
@@ -1113,6 +1116,12 @@ export default function OrderTrackingPage() {
                 >
                   Cancel Order
                 </button>
+              )}
+              {cancelWindowClosed && (
+                <p className="rounded-2xl border border-ink/10 bg-paper p-3 font-body text-[11px] text-steel text-center">
+                  The kitchen has started on your order, so it can no longer be cancelled here — call us on{' '}
+                  <a href="tel:01296423456" className="font-bold text-ink">01296 423456</a> and we'll sort it out.
+                </p>
               )}
             </div>
 

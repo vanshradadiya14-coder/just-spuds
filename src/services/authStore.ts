@@ -152,12 +152,70 @@ export function homePortalForRole(role?: Role): string | null {
   }
 }
 
-export function verifyManagerPin(pin: string): { ok: boolean; managerName?: string; role?: Role } {
+/**
+ * PIN brute-force lockout. Four-digit PINs have 10,000 combinations, so every
+ * PIN prompt (sign-in, manager authorisation, time clock) shares one counter:
+ * five wrong PINs lock the device for 30 s, doubling each time up to 5 minutes.
+ */
+const PIN_LOCK_KEY = 'just_spuds_pin_lock_v1'
+const PIN_MAX_ATTEMPTS = 5
+const PIN_LOCK_BASE_MS = 30_000
+const PIN_LOCK_MAX_MS = 5 * 60_000
+
+function readPinLock(): { fails: number; until: number } {
+  if (typeof window === 'undefined') return { fails: 0, until: 0 }
+  try {
+    const raw = localStorage.getItem(PIN_LOCK_KEY)
+    return raw ? JSON.parse(raw) : { fails: 0, until: 0 }
+  } catch {
+    return { fails: 0, until: 0 }
+  }
+}
+
+function writePinLock(lock: { fails: number; until: number }) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(PIN_LOCK_KEY, JSON.stringify(lock))
+  } catch {
+    // ignore
+  }
+}
+
+/** Milliseconds until PIN entry is allowed again (0 = not locked). */
+export function getPinLockRemainingMs(now = Date.now()): number {
+  return Math.max(0, readPinLock().until - now)
+}
+
+export function pinLockMessage(remainingMs: number): string {
+  const secs = Math.ceil(remainingMs / 1000)
+  return `Too many wrong PINs. Try again in ${secs >= 60 ? `${Math.ceil(secs / 60)} min` : `${secs}s`}.`
+}
+
+function recordPinFailure() {
+  const lock = readPinLock()
+  const fails = lock.fails + 1
+  let until = lock.until
+  if (fails >= PIN_MAX_ATTEMPTS) {
+    const escalation = fails - PIN_MAX_ATTEMPTS
+    until = Date.now() + Math.min(PIN_LOCK_MAX_MS, PIN_LOCK_BASE_MS * 2 ** escalation)
+  }
+  writePinLock({ fails, until })
+}
+
+function clearPinFailures() {
+  writePinLock({ fails: 0, until: 0 })
+}
+
+export function verifyManagerPin(pin: string): { ok: boolean; managerName?: string; role?: Role; message?: string } {
+  const remaining = getPinLockRemainingMs()
+  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
   const user = PIN_MAP[pin.trim()]
   if (user && isManagerOrAdmin(user.role)) {
+    clearPinFailures()
     return { ok: true, managerName: user.name, role: user.role }
   }
-  return { ok: false }
+  recordPinFailure()
+  return { ok: false, message: 'That PIN is not a supervisor or manager PIN.' }
 }
 
 type AuthListener = (user: AuthUser | null) => void
@@ -254,48 +312,25 @@ export function findUserByPin(pin: string): AuthUser | undefined {
   return undefined
 }
 
-export function loginWithPin(pin: string): { ok: boolean; user?: AuthUser; message: string } {
+export function loginWithPin(pin: string, allowedRoles?: Role[]): { ok: boolean; user?: AuthUser; message: string } {
+  const remaining = getPinLockRemainingMs()
+  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
   const user = findUserByPin(pin)
-  if (!user) return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
+  if (!user) {
+    recordPinFailure()
+    return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
+  }
+  if (allowedRoles && !hasRole(user, allowedRoles)) {
+    recordPinFailure()
+    return { ok: false, message: 'That PIN does not have access to this area.' }
+  }
+  clearPinFailures()
   setCurrentUser(user)
   return {
     ok: true,
     user,
     message: user.role === 'DRIVER' ? `Welcome back, Courier ${user.name}!` : `Welcome back, ${user.name}!`,
   }
-}
-
-/**
- * ⚠️ DEMO LOGIN — NOT AUTHENTICATION. DO NOT SHIP TO A PUBLIC URL AS-IS.
- *
- * The password argument is ignored entirely, and any address containing "admin"
- * is granted SUPER_ADMIN. That is intentional so the portals can be demonstrated
- * without a backend, but it means /login currently hands full admin access to
- * anyone who opens it.
- *
- * Replace with a real POST /api/auth/login before this is reachable by the public:
- * see JUST_SPUDS_IMPLEMENTATION_PLAN.md, Phase 1.
- */
-export function loginWithCredentials(email: string, _pass: string): { ok: boolean; user?: AuthUser; message: string } {
-  const clean = email.toLowerCase().trim()
-  if (clean.includes('admin')) {
-    setCurrentUser(DEMO_USERS.admin)
-    return { ok: true, user: DEMO_USERS.admin, message: 'Admin authenticated successfully.' }
-  }
-  if (clean.includes('staff') || clean.includes('kitchen')) {
-    setCurrentUser(DEMO_USERS.staff)
-    return { ok: true, user: DEMO_USERS.staff, message: 'Staff authenticated successfully.' }
-  }
-  // Default to customer
-  const cust: AuthUser = {
-    id: `usr-cust-${Date.now()}`,
-    name: email.split('@')[0] || 'Valued Customer',
-    email: clean,
-    role: 'CUSTOMER',
-    status: 'ACTIVE',
-  }
-  setCurrentUser(cust)
-  return { ok: true, user: cust, message: 'Customer logged in.' }
 }
 
 export async function loginWithGoogle(): Promise<{ ok: boolean; user?: AuthUser; message: string }> {

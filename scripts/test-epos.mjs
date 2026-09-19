@@ -87,6 +87,7 @@ const tillStore = await load('/src/services/tillStore.ts')
 const timeclock = await load('/src/services/timeclockStore.ts')
 const alertBus = await load('/src/services/alertSoundBus.ts')
 const orderAlerts = await load('/src/services/orderAlerts.ts')
+const deliverySettings = await load('/src/services/deliverySettingsStore.ts')
 
 let passed = 0
 let failed = 0
@@ -118,6 +119,27 @@ const line = (p, qty = 1) => ({
   qty,
 })
 const customer = { name: 'Test Customer', phone: '07700 900000', email: 'test@example.com' }
+
+/** Web ordering is off by default (launch mode) — switch it on and open all day for checkout tests. */
+const openTheShop = () => {
+  deliverySettings.saveDeliverySettings({ isOnlineOrderingEnabled: true })
+  const allDay = { openTime: '00:00', closeTime: '23:59', isClosed: false }
+  const weeklyHours = Object.fromEntries(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((d) => [d, { ...allDay }]))
+  menuStore.saveStoreSettings({ ...menuStore.getStoreSettings(), weeklyHours })
+}
+const webPayload = (p, qty = 1, extra = {}) => ({
+  fulfilment: 'pickup',
+  customer,
+  lines: [line(p, qty)],
+  subtotal: p.price * qty,
+  deliveryFee: 0,
+  serviceFee: 49,
+  tip: 0,
+  discount: 0,
+  total: p.price * qty + 49,
+  paymentMethod: 'card',
+  ...extra,
+})
 
 // ---------------------------------------------------------------------------
 section('📦 Stock deduction is the single source of truth')
@@ -210,6 +232,7 @@ await test("restock does NOT re-enable a product a manager 86'd while stock was 
 section('🌐 Channel visibility & online overselling')
 
 await test('in-store-only products are hidden from the storefront and rejected at checkout', async () => {
+  openTheShop()
   const p = firstSpud()
   menuStore.saveProduct({ ...menuStore.getProductById(p.id), channelVisibility: 'in_store_only', stockQuantity: 10, available: true })
   assert.ok(!menuStore.getOnlineProducts().some((x) => x.id === p.id), 'should not be listed online')
@@ -240,6 +263,7 @@ await test('online-only products never appear on the till grid', () => {
 })
 
 await test('online checkout refuses more than is in stock', async () => {
+  openTheShop()
   const p = firstSpud()
   menuStore.adjustProductStock(p.id, 2, 'test', 'seed')
   const res = await checkout.processCheckout({
@@ -278,6 +302,28 @@ await test('manager PIN gate accepts supervisors and above, rejects cashier / ki
   assert.equal(authStore.verifyManagerPin('1111').ok, false)
   assert.equal(authStore.verifyManagerPin('1234').ok, false)
   assert.equal(authStore.verifyManagerPin('9999').ok, false)
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+})
+
+await test('five wrong PINs lock every PIN prompt for a while, a right PIN clears it', () => {
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+  for (let i = 0; i < 5; i++) assert.equal(authStore.loginWithPin('0001').ok, false)
+  assert.ok(authStore.getPinLockRemainingMs() > 0, 'locked after 5 failures')
+  const locked = authStore.loginWithPin('8888')
+  assert.equal(locked.ok, false, 'even the right PIN is refused while locked')
+  assert.match(locked.message, /try again/i)
+  assert.equal(authStore.verifyManagerPin('5555').ok, false, 'manager prompt shares the lock')
+  localStorage.setItem('just_spuds_pin_lock_v1', JSON.stringify({ fails: 5, until: Date.now() - 1 }))
+  assert.equal(authStore.loginWithPin('8888').ok, true, 'works again once the lock expires')
+  assert.equal(authStore.getPinLockRemainingMs(), 0, 'success clears the counter')
+  authStore.logout()
+})
+
+await test('the Admin login tab only admits management PINs', () => {
+  assert.equal(authStore.loginWithPin('1111', authStore.MANAGEMENT_ROLES).ok, false, 'cashier cannot open the admin console')
+  assert.equal(authStore.loginWithPin('5555', authStore.MANAGEMENT_ROLES).ok, true)
+  assert.equal(typeof authStore.loginWithCredentials, 'undefined', 'the any-email admin login is gone')
+  authStore.logout()
 })
 
 // ---------------------------------------------------------------------------
@@ -401,6 +447,133 @@ await test('clock in / break / clock out produce a timecard with breaks excluded
 })
 
 // ---------------------------------------------------------------------------
+section('🛡️ Web checkout enforces every ordering rule itself')
+
+await test('ordering switched off, or outside trading hours, is refused at the service — not just the button', async () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  deliverySettings.saveDeliverySettings({ isOnlineOrderingEnabled: false })
+  let res = await checkout.processCheckout(webPayload(p))
+  assert.equal(res.ok, false)
+  assert.match(res.reason, /unavailable|launching|paused/i)
+
+  openTheShop()
+  const closed = { openTime: '11:00', closeTime: '11:30', isClosed: false }
+  const weeklyHours = Object.fromEntries(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((d) => [d, { ...closed }]))
+  menuStore.saveStoreSettings({ ...menuStore.getStoreSettings(), weeklyHours })
+  const check = checkout.validateCheckout(webPayload(p), new Date(2026, 0, 5, 20, 0)) // 8pm, well past close
+  assert.equal(check.ok, false)
+  assert.match(check.reason, /closed/i)
+  const open = checkout.validateCheckout(webPayload(p), new Date(2026, 0, 5, 11, 5))
+  assert.equal(open.ok, true, 'inside hours is fine')
+  openTheShop()
+})
+
+await test('the basket is repriced from the live menu: stale prices and smuggled overrides are ignored', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  const cheap = { ...line(p, 2), base: 1, priceOverridePence: 0, priceOverrideReason: 'hacked' }
+  const res = await checkout.processCheckout({ ...webPayload(p, 2), lines: [cheap], subtotal: 2, total: 51 })
+  assert.equal(res.ok, true)
+  assert.equal(res.order.payment.subtotal, p.price * 2, 'subtotal comes from the menu price')
+  assert.equal(res.order.payment.total, p.price * 2 + 49)
+  assert.equal(res.order.lines[0].priceOverridePence, undefined, 'web lines never carry a price override')
+})
+
+await test('a voucher is re-validated at checkout and never applies under its minimum', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  menuStore.savePromoCode({ code: 'BIG20', discountPercent: 20, minOrderPence: 100000, description: 'test', active: true })
+  const res = await checkout.processCheckout({ ...webPayload(p), promoCode: 'BIG20', discount: 500, total: p.price + 49 - 500 })
+  assert.equal(res.ok, false)
+  assert.match(res.reason, /BIG20/)
+  menuStore.savePromoCode({ code: 'BIG20', discountPercent: 20, minOrderPence: 0, description: 'test', active: true })
+  const ok = await checkout.processCheckout({ ...webPayload(p), promoCode: 'BIG20' })
+  assert.equal(ok.ok, true)
+  assert.equal(ok.order.payment.discount, Math.round(p.price * 0.2), 'discount is what the voucher says, not what the client sent')
+  menuStore.deletePromoCode('BIG20')
+})
+
+await test('delivery needs a postcode we cover and the minimum basket', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  const far = await checkout.processCheckout({ ...webPayload(p), fulfilment: 'delivery', customer: { ...customer, streetAddress: '1 High St', postcode: 'SW1A 1AA' } })
+  assert.equal(far.ok, false)
+  deliverySettings.saveDeliverySettings({ minOrderPence: 100000 })
+  const small = await checkout.processCheckout({ ...webPayload(p), fulfilment: 'delivery', customer: { ...customer, streetAddress: '1 High St', postcode: 'HP20 1SN' } })
+  assert.equal(small.ok, false)
+  assert.match(small.reason, /minimum/i)
+  deliverySettings.saveDeliverySettings({ minOrderPence: 1000 })
+})
+
+// ---------------------------------------------------------------------------
+section('🔒 Order lifecycle guards')
+
+await test('an order cannot be cancelled twice (stock would come back twice)', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 5, 'test', 'seed')
+  const o = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 2)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Cashier')
+  assert.equal(menuStore.getProductById(p.id).stockQuantity, 3)
+  assert.equal(orderStore.cancelOrder(o.id, 'first').ok, true)
+  assert.equal(menuStore.getProductById(p.id).stockQuantity, 5)
+  assert.equal(orderStore.cancelOrder(o.id, 'again').ok, false)
+  assert.equal(menuStore.getProductById(p.id).stockQuantity, 5, 'stock unchanged by the refused second cancel')
+  assert.equal(orderStore.updateOrderStatus(o.id, 'accepted'), undefined, 'a cancelled order cannot be revived')
+  assert.equal(orderStore.settleOpenOrder(o.id, { lines: o.lines, discount: 0, paymentMethod: 'cash', actor: 'Cashier' }), undefined, 'nor settled')
+})
+
+await test('an unpaid till check cannot be completed from the kitchen until it is settled', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 5, 'test', 'seed')
+  const o = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'in_store', paymentStatus: 'pending_store' }, 'Cashier')
+  orderStore.updateOrderStatus(o.id, 'baking')
+  orderStore.updateOrderStatus(o.id, 'ready_for_pickup')
+  assert.match(orderStore.getStatusChangeBlocker(orderStore.getOrderById(o.id), 'collected'), /unpaid/i)
+  assert.equal(orderStore.updateOrderStatus(o.id, 'collected'), undefined)
+  assert.equal(orderStore.getOrderById(o.id).status, 'ready_for_pickup', 'still waiting')
+  orderStore.settleOpenOrder(o.id, { lines: o.lines, discount: 0, paymentMethod: 'cash', actor: 'Cashier' })
+  assert.equal(orderStore.updateOrderStatus(o.id, 'collected').status, 'collected', 'completes once paid')
+  assert.equal(orderStore.updateOrderStatus(o.id, 'baking'), undefined, 'a completed order is final')
+})
+
+await test('refunds: once only, never more than was paid, and a cash refund comes off the drawer', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 5, 'test', 'seed')
+  tillStore.openTillShift('Manager', 10000)
+  const o = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Cashier')
+  tillStore.recordTillSale({ paymentMethod: 'cash', totalPence: o.payment.total, orderId: o.shortId, staffName: 'Cashier' })
+  const before = tillStore.getCurrentShift().expectedCash
+  assert.equal(orderStore.refundOrder(o.id, o.payment.total + 100, 'too much', 'Manager').ok, false, 'over-refund refused')
+  const half = Math.floor(o.payment.total / 2)
+  assert.equal(orderStore.refundOrder(o.id, half, 'partial', 'Manager').ok, true)
+  assert.equal(tillStore.getCurrentShift().expectedCash, before - half, 'drawer expectation drops')
+  assert.equal(tillStore.getCurrentShift().refundsTotal, half)
+  const rest = orderStore.refundOrder(o.id, o.payment.total, 'rest', 'Manager')
+  assert.equal(rest.ok, false, 'cannot refund more than what is left')
+  assert.equal(orderStore.refundOrder(o.id, o.payment.total - half, 'rest', 'Manager').ok, true)
+  assert.equal(orderStore.getOrderById(o.id).payment.status, 'refunded')
+  assert.equal(orderStore.refundOrder(o.id, 1, 'again', 'Manager').ok, false, 'fully refunded orders are done')
+  tillStore.closeTillShift('Manager', { ...tillStore.EMPTY_DENOMINATIONS })
+})
+
+// ---------------------------------------------------------------------------
+section('🎫 Kitchen ticket notes')
+
+await test('till bookkeeping is split from real instructions; buzzer / table stay loud', async () => {
+  const notes = await load('/src/utils/kitchenNotes.ts')
+  const parsed = notes.parseKitchenNotes('[TILL] [🔔 BUZZER #12] [POS TILL #01] TAKEAWAY • OPEN CHECK • Cashier: Chloe • No onions, nut allergy')
+  assert.deepEqual(parsed.callouts, ['BUZZER #12'])
+  assert.ok(parsed.meta.includes('TAKEAWAY') && parsed.meta.includes('OPEN CHECK') && parsed.meta.some((m) => /Cashier/.test(m)))
+  assert.ok(!parsed.meta.includes('TILL'), 'the source badge already says TILL')
+  assert.equal(parsed.note, 'No onions, nut allergy')
+  assert.equal(notes.parseKitchenNotes('[TILL ORDER]').note, '', 'a bare till stamp is not an allergen alert')
+  assert.equal(notes.parseKitchenNotes('Extra crispy please').note, 'Extra crispy please')
+})
+
+// ---------------------------------------------------------------------------
 section('📊 Admin analytics are real numbers, never placeholders')
 
 await test('an empty period reports zeros and no prep time, not seeded demo figures', () => {
@@ -433,14 +606,15 @@ await test('prep time is measured from placed → ready on the ticket timeline',
     { status: 'placed', timestamp: stamp(placedAt), title: 'Placed', description: '' },
     { status: 'ready_for_pickup', timestamp: stamp(readyAt), title: 'Ready', description: '' },
   ]
-  const a = orderStore.getDetailedBusinessAnalytics([order], 'today')
+  // '7days' rather than 'today' so a run that straddles midnight still sees the order
+  const a = orderStore.getDetailedBusinessAnalytics([order], '7days')
   assert.equal(a.completedCount, 1)
   assert.ok(a.avgPrepTimeMins >= 11 && a.avgPrepTimeMins <= 13, `prep time ${a.avgPrepTimeMins}m`)
   assert.equal(a.aovPence, order.payment.total)
   assert.equal(a.topProducts[0].name, p.name)
   assert.equal(a.crmCustomers.length, 1, 'a named customer appears in the CRM once')
   const cancelled = { ...order, status: 'cancelled' }
-  assert.equal(orderStore.getDetailedBusinessAnalytics([cancelled], 'today').dailyRevenue.reduce((s, d) => s + d.revenue, 0), 0, 'cancelled orders are not takings')
+  assert.equal(orderStore.getDetailedBusinessAnalytics([cancelled], '7days').dailyRevenue.reduce((s, d) => s + d.revenue, 0), 0, 'cancelled orders are not takings')
 })
 
 // ---------------------------------------------------------------------------

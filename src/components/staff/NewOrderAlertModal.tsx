@@ -3,6 +3,7 @@ import { type Order } from '../../services/orderStore'
 import { type AlertSoundState, type OnlineOrderAlert } from '../../services/alertSoundBus'
 import { lineUnitPrice } from '../../hooks/useCart'
 import { cx, gbp } from '../../utils/format'
+import { parseKitchenNotes } from '../../utils/kitchenNotes'
 
 interface NewOrderAlertModalProps {
   alerts: OnlineOrderAlert[]
@@ -152,9 +153,9 @@ export default function NewOrderAlertModal({
             </div>
           </div>
 
-          {order.kitchenNotes && (
+          {parseKitchenNotes(order.kitchenNotes).note && (
             <div className="rounded-xl border-2 border-amber-400 bg-amber-400 p-3 text-xs font-black uppercase text-ink">
-              ⚠️ Kitchen note: <span className="normal-case font-bold">{order.kitchenNotes}</span>
+              ⚠️ Kitchen note: <span className="normal-case font-bold">{parseKitchenNotes(order.kitchenNotes).note}</span>
             </div>
           )}
 

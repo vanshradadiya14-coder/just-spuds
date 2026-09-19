@@ -196,6 +196,8 @@ export default function StaffPOSPage() {
   // Barcode / SKU Hardware & Manual Entry
   const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  // Below the lg breakpoint the ticket panel is a bottom sheet opened from the total bar.
+  const [isTicketSheetOpen, setIsTicketSheetOpen] = useState(false)
   const [barcodeInput, setBarcodeInput] = useState('')
 
   // Big-POS flow: open checks (send now, pay later), sale-complete screen, tips,
@@ -653,6 +655,7 @@ export default function StaffPOSPage() {
 
   /** Every path that ends a ticket funnels through here so nothing is left over for the next customer. */
   const resetTicket = () => {
+    setIsTicketSheetOpen(false)
     setCartLines([])
     setCustomerName('')
     setAttachedCustomer(null)
@@ -1279,62 +1282,6 @@ export default function StaffPOSPage() {
               Sign In to Food Till →
             </button>
 
-            {/* Fast 1-Tap Login Profiles */}
-            <div className="pt-4 border-t border-white/10 space-y-2">
-              <p className="text-[10px] uppercase tracking-wider text-white/50 font-black">
-                Quick Access (Tap to Sign In):
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-left">
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('action')
-                    const res = loginWithPin('2468')
-                    if (res.ok) { setPinInput(''); setPinError(null) }
-                  }}
-                  className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-2.5 text-xs hover:bg-amber-400 hover:text-ink transition group active:scale-95"
-                >
-                  <span className="font-black block text-amber-300 group-hover:text-ink">👑 Sunny (Owner)</span>
-                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 2468</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('action')
-                    const res = loginWithPin('1234')
-                    if (res.ok) { setPinInput(''); setPinError(null) }
-                  }}
-                  className="rounded-2xl border border-emerald-400/40 bg-emerald-400/10 p-2.5 text-xs hover:bg-emerald-400 hover:text-ink transition group active:scale-95"
-                >
-                  <span className="font-black block text-emerald-300 group-hover:text-ink">👨‍🍳 Jack (Staff)</span>
-                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 1234</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('action')
-                    const res = loginWithPin('5555')
-                    if (res.ok) { setPinInput(''); setPinError(null) }
-                  }}
-                  className="rounded-2xl border border-sky-400/40 bg-sky-400/10 p-2.5 text-xs hover:bg-sky-400 hover:text-ink transition group active:scale-95"
-                >
-                  <span className="font-black block text-sky-300 group-hover:text-ink">👩‍💼 Elena (Manager)</span>
-                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 5555</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('action')
-                    const res = loginWithPin('8888')
-                    if (res.ok) { setPinInput(''); setPinError(null) }
-                  }}
-                  className="rounded-2xl border border-purple-400/40 bg-purple-400/10 p-2.5 text-xs hover:bg-purple-400 hover:text-ink transition group active:scale-95"
-                >
-                  <span className="font-black block text-purple-300 group-hover:text-ink">⚡ Admin (Vansh)</span>
-                  <span className="text-[10px] text-white/50 group-hover:text-ink/80 font-mono">PIN: 8888</span>
-                </button>
-              </div>
-            </div>
           </form>
 
           <button
@@ -1520,7 +1467,7 @@ export default function StaffPOSPage() {
     <div className="h-screen w-screen bg-slate-950 text-slate-100 flex flex-col overflow-hidden select-none font-body">
       {/* 1. TOP EPOS COMMAND & STATUS BAR */}
       <header className="h-14 border-b border-white/10 bg-slate-900 px-3 flex items-center justify-between gap-2 shrink-0 z-20">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 shrink-0">
           <div className="flex items-center gap-2 rounded-xl bg-black/60 border border-white/10 px-2.5 py-1">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse shadow-glow" />
             <span className="font-mono text-xs font-black tracking-wider text-white">TILL 01</span>
@@ -1536,7 +1483,7 @@ export default function StaffPOSPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none [&>*]:shrink-0 py-1">
           <span
             className={`${isOnline ? 'hidden xl:inline-flex text-emerald-300' : 'inline-flex bg-rose-950/60 border border-rose-500/40 text-rose-300'} items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-bold`}
             title={isOnline ? 'Cloud sync live' : 'Offline — sales are saved on this till and sync when the connection returns'}
@@ -1657,6 +1604,12 @@ export default function StaffPOSPage() {
           <button
             type="button"
             onClick={() => {
+              // Unpaid checks would vanish from the books if the shift closed over them.
+              if (openChecksCount > 0) {
+                setFlash(`${openChecksCount} open check${openChecksCount > 1 ? 's' : ''} still unpaid — settle or void them before closing the shift.`)
+                setIsOpenChecksOpen(true)
+                return
+              }
               setClosingDenoms({ ...EMPTY_DENOMINATIONS })
               setIsZReportOpen(true)
             }}
@@ -1689,7 +1642,7 @@ export default function StaffPOSPage() {
       {/* 2. MAIN EPOS 3-PANEL WORKSPACE */}
       <div className="flex-1 flex overflow-hidden">
         {/* PANEL A: VERTICAL CATEGORY SPEED BUTTONS */}
-        <aside className="w-36 sm:w-44 lg:w-48 bg-slate-900 border-r border-white/10 flex flex-col shrink-0 p-2 space-y-1.5 overflow-y-auto scrollbar-none">
+        <aside className="hidden lg:flex w-44 xl:w-48 bg-slate-900 border-r border-white/10 flex-col shrink-0 p-2 space-y-1.5 overflow-y-auto scrollbar-none">
           <button
             type="button"
             onClick={() => setSelectedCategory('ALL')}
@@ -1769,6 +1722,48 @@ export default function StaffPOSPage() {
 
         {/* PANEL B: TOUCH ITEM GRID & SPEED SPUD BUILDER */}
         <section className="flex-1 flex flex-col min-w-0 bg-slate-950">
+          {/* Tablet / phone: categories as a swipeable strip */}
+          <div className="lg:hidden flex gap-1.5 overflow-x-auto scrollbar-none px-2 pt-2 pb-1 shrink-0 [&>button]:shrink-0">
+            <button
+              type="button"
+              onClick={() => setSelectedCategory('ALL')}
+              className={`rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider border transition ${
+                selectedCategory === 'ALL' ? 'bg-amber-400 text-ink border-amber-300' : 'bg-white/5 text-white/80 border-white/10'
+              }`}
+            >
+              ★ All
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCategory('FAVOURITES')}
+              className={`rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider border transition ${
+                selectedCategory === 'FAVOURITES' ? 'bg-rose-400 text-ink border-rose-300' : 'bg-rose-500/10 text-rose-300 border-rose-400/30'
+              }`}
+            >
+              ❤️ Favourites
+            </button>
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border transition ${getCategoryColor(cat.id, selectedCategory === cat.id)}`}
+              >
+                {cat.label}
+              </button>
+            ))}
+            {FAST_BAR_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleQuickAdd(item.name, item.price, item.id, item.cat)}
+                className="rounded-full border border-white/10 bg-black/40 px-3 py-1.5 text-[11px] font-bold text-white"
+              >
+                {item.name} <span className="font-mono text-amber-300">{gbp(item.price)}</span>
+              </button>
+            ))}
+          </div>
+
           <div className="p-2.5 border-b border-white/10 bg-slate-900/50 flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -1779,7 +1774,8 @@ export default function StaffPOSPage() {
               className="flex-1 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 py-2.5 px-4 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95 flex items-center justify-center gap-2"
             >
               <span className="text-base">🥔</span>
-              <span>+ Build Custom Jacket Potato (Wizard)</span>
+              <span className="hidden xl:inline">+ Build Custom Jacket Potato (Wizard)</span>
+              <span className="xl:hidden">🥔 Build a Spud</span>
             </button>
 
             <button
@@ -1809,7 +1805,7 @@ export default function StaffPOSPage() {
               <span className="hidden sm:inline">Barcode / SKU</span>
             </button>
 
-            <div className="w-44 sm:w-56">
+            <div className="w-32 sm:w-44 md:w-56">
               <input
                 type="text"
                 value={searchQuery}
@@ -1820,7 +1816,7 @@ export default function StaffPOSPage() {
             </div>
           </div>
 
-          <div className="flex-1 p-3 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 auto-rows-max">
+          <div className="flex-1 p-3 pb-24 lg:pb-3 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 auto-rows-max">
             {filteredProducts.map((prod) => {
               const soldOut = isOutOfStock(prod) || prod.available === false
               const isLowStock = !soldOut && typeof prod.stockQuantity === 'number' && prod.stockQuantity <= (prod.lowStockThreshold || 5)
@@ -1894,8 +1890,47 @@ export default function StaffPOSPage() {
           </div>
         </section>
 
+        {/* Tablet / phone: sticky total bar that opens the ticket sheet */}
+        {!isTicketSheetOpen && (
+          <div className="lg:hidden fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-slate-900/95 backdrop-blur px-3 py-2 flex items-center gap-2 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setIsTicketSheetOpen(true)}
+              className="flex-1 flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-left"
+              aria-label="View ticket"
+            >
+              <span className="text-xs font-bold text-white">
+                🧾 {cartLines.reduce((n, l) => n + l.qty, 0)} item{cartLines.reduce((n, l) => n + l.qty, 0) === 1 ? '' : 's'}
+                {settlingOrder && <span className="ml-1 text-amber-300">• settling #{settlingOrder.shortId}</span>}
+              </span>
+              <span className="font-mono text-lg font-black text-amber-300">{gbp(totalDuePence)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsTicketSheetOpen(true)}
+              disabled={cartLines.length === 0}
+              className="rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-ink shadow-glow disabled:opacity-40"
+            >
+              Pay →
+            </button>
+          </div>
+        )}
+
         {/* PANEL C: EPOS RECEIPT TAPE & NUMPAD CONSOLE */}
-        <aside className="w-80 sm:w-96 lg:w-[420px] bg-slate-900 border-l border-white/10 flex flex-col shrink-0 shadow-2xl">
+        <aside
+          className={`${isTicketSheetOpen ? 'flex' : 'hidden'} lg:flex fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto w-full lg:w-96 xl:w-[420px] bg-slate-900 lg:border-l border-white/10 flex-col shrink-0 shadow-2xl`}
+          aria-label="Till ticket"
+        >
+          <div className="lg:hidden flex items-center justify-between border-b border-white/10 bg-black/60 px-3 py-2 shrink-0">
+            <span className="text-xs font-black uppercase tracking-wider text-white/70">Ticket</span>
+            <button
+              type="button"
+              onClick={() => setIsTicketSheetOpen(false)}
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold text-white"
+            >
+              ← Back to menu
+            </button>
+          </div>
           <div className="p-2.5 border-b border-white/10 bg-black/40 space-y-2 shrink-0">
             <div className="flex items-center justify-between gap-1.5">
               <div className="flex rounded-xl bg-white/5 p-1 border border-white/10 text-xs">
@@ -4161,7 +4196,7 @@ export default function StaffPOSPage() {
                     }
                     setIsManagerAuthModalOpen(false)
                   } else {
-                    setManagerPinError('Invalid Manager PIN. (Authorized: 2468, 5555, 3333, 8888)')
+                    setManagerPinError(check.message || 'That PIN is not a supervisor or manager PIN.')
                   }
                 }}
                 className="flex-[2] rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink hover:bg-amber-300 shadow-glow"
@@ -4308,8 +4343,8 @@ export default function StaffPOSPage() {
                               (mgrName) => {
                                 const reason = prompt('Enter reason for refund (e.g. Customer return, Spillage, Incorrect item):', 'Customer return')
                                 if (reason) {
-                                  refundOrder(ord.id, ord.payment.total, reason, mgrName)
-                                  alert(`Order #${ord.shortId} refunded by ${mgrName}. Stock restored to central inventory.`)
+                                  const res = refundOrder(ord.id, ord.payment.total, reason, mgrName)
+                                  setFlash(res.ok ? `Order #${ord.shortId} refunded by ${mgrName} — ${res.message}` : res.message)
                                 }
                               }
                             )

@@ -16,7 +16,7 @@ import {
   type Option,
   type Category,
 } from '../data/menu'
-import { SITE } from '../data/site'
+import { DEFAULT_STORE_HOURS, SITE, parseTimeToDecimalHours, type StoreHoursConfig } from '../data/site'
 import { logAuditEvent } from './auditStore'
 import type { CartLine } from '../hooks/useCart'
 
@@ -89,21 +89,19 @@ const DEFAULT_PROMOS: PromoCode[] = [
 
 const defaultDailyHours = { openTime: '11:00', closeTime: '22:00', isClosed: false }
 
+const toClock = (decimal: number) => `${String(Math.floor(decimal)).padStart(2, '0')}:${String(Math.round((decimal % 1) * 60)).padStart(2, '0')}`
+/** Seeded from the confirmed business hours in data/site.ts (every day 11:00–22:00). */
+const DEFAULT_WEEKLY_HOURS: Record<string, DailyHours> = Object.fromEntries(
+  SITE.openingHours.schedule.map((d) => [d.day, { openTime: toClock(d.openHour), closeTime: toClock(d.closeHour), isClosed: false }]),
+)
+
 const DEFAULT_SETTINGS: StoreSettings = {
   storeName: SITE.name,
   phone: SITE.phone,
   address: 'Market Square, Aylesbury HP20 1EY',
   openTime: '11:00',
   closeTime: '22:00',
-  weeklyHours: {
-    'Monday': { ...defaultDailyHours },
-    'Tuesday': { ...defaultDailyHours, isClosed: true }, // Default Tuesday closed as example, or keep open
-    'Wednesday': { ...defaultDailyHours },
-    'Thursday': { ...defaultDailyHours },
-    'Friday': { ...defaultDailyHours, closeTime: '23:00' },
-    'Saturday': { ...defaultDailyHours, closeTime: '23:00' },
-    'Sunday': { ...defaultDailyHours, closeTime: '21:00' },
-  },
+  weeklyHours: DEFAULT_WEEKLY_HOURS,
   announcementBanner: {
     enabled: true,
     text: '0% Aggregator Markup — Order Direct & Save Up to £2.50 vs Deliveroo/Uber Eats!',
@@ -572,6 +570,26 @@ export function deletePromoCode(code: string): void {
 // -------------------------------------------------------------
 // STORE SETTINGS & ANNOUNCEMENTS
 // -------------------------------------------------------------
+/**
+ * Trading hours for a given date as configured in the admin console, falling
+ * back to the confirmed defaults if unset or malformed. Used by the storefront
+ * status banner and by checkout, so both agree on whether an order is accepted.
+ */
+export function getConfiguredHours(date: Date = new Date()): StoreHoursConfig {
+  try {
+    const settings = getStoreSettings()
+    const dayName = date.toLocaleDateString('en-GB', { weekday: 'long' })
+    const daily = settings.weeklyHours?.[dayName] ?? defaultDailyHours
+    return {
+      openHour: parseTimeToDecimalHours(daily.openTime) ?? DEFAULT_STORE_HOURS.openHour,
+      closeHour: parseTimeToDecimalHours(daily.closeTime) ?? DEFAULT_STORE_HOURS.closeHour,
+      isClosed: Boolean(daily.isClosed),
+    }
+  } catch {
+    return DEFAULT_STORE_HOURS
+  }
+}
+
 export function getStoreSettings(): StoreSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS
   try {

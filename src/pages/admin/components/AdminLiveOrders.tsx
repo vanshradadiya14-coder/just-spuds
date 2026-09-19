@@ -1,33 +1,13 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../../utils/format'
 import { type Order } from '../../../services/orderStore'
-
-/** What "advance" will do to this order, so the button says it instead of "Next". */
-function nextStepLabel(o: Order): string | null {
-  switch (o.status) {
-    case 'placed':
-      return '✓ Accept'
-    case 'accepted':
-      return '🔥 Start baking'
-    case 'baking':
-      return o.fulfilment === 'delivery' ? '🛵 Out for delivery' : '🛍️ Ready to collect'
-    case 'out_for_delivery':
-      return '🎉 Delivered'
-    case 'ready_for_pickup':
-      return '🎉 Collected'
-    default:
-      return null
-  }
-}
-
-const SOURCE_BADGE: Record<Order['source'], { label: string; tone: string }> = {
-  WEBSITE: { label: '🌐 Web', tone: 'bg-sky-500/20 text-sky-200 border-sky-500/40' },
-  TILL: { label: '🖥️ Till', tone: 'bg-purple-500/20 text-purple-200 border-purple-500/40' },
-  PHONE: { label: '📞 Phone', tone: 'bg-amber-500/20 text-amber-200 border-amber-500/40' },
-  STAFF: { label: '👤 Counter', tone: 'bg-slate-500/20 text-slate-200 border-slate-500/40' },
-}
+import OrderDetailDrawer from './OrderDetailDrawer'
+import { nextStepLabel, sourceBadge, statusTone } from './orderLabels'
 
 interface AdminLiveOrdersProps {
+  /** Every order, so the detail drawer can stay open on one that leaves the current filter. */
+  allOrders: Order[];
   orderStatusFilter: string;
   setOrderStatusFilter: any;
   searchQuery: string;
@@ -42,6 +22,7 @@ interface AdminLiveOrdersProps {
 }
 
 export default function AdminLiveOrders({
+  allOrders,
   orderStatusFilter,
   setOrderStatusFilter,
   searchQuery,
@@ -54,8 +35,21 @@ export default function AdminLiveOrders({
   setFixingOrder,
   setIsCreateManualOrderOpen,
 }: AdminLiveOrdersProps) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const openOrder = openId ? allOrders.find((o) => o.id === openId) : undefined
+
   return (
     <div className="space-y-6">
+      {openOrder && (
+        <OrderDetailDrawer
+          order={openOrder}
+          onClose={() => setOpenId(null)}
+          onAdvance={handleAdvanceStatus}
+          onPrint={setPrintingOrder}
+          onCancel={handleRefundCancel}
+          onFix={setFixingOrder}
+        />
+      )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-2">
           {(
@@ -85,7 +79,7 @@ export default function AdminLiveOrders({
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input
             type="text"
             value={searchQuery}
@@ -112,8 +106,8 @@ export default function AdminLiveOrders({
         </div>
       </div>
 
-      <div className="rounded-3xl border border-white/10 bg-white/5 overflow-hidden shadow-2xl">
-        <table className="w-full text-left font-body text-xs">
+      <div className="rounded-3xl border border-white/10 bg-white/5 overflow-x-auto custom-scrollbar shadow-2xl">
+        <table className="w-full min-w-[960px] text-left font-body text-xs">
           <thead className="border-b border-white/10 bg-white/5 text-[10px] font-bold uppercase text-white/50">
             <tr>
               <th className="p-4">Order ID &amp; Time</th>
@@ -134,7 +128,12 @@ export default function AdminLiveOrders({
               </tr>
             ) : (
               filteredOrders.map((ord) => (
-                <tr key={ord.id} className="hover:bg-white/[0.02] transition">
+                <tr
+                  key={ord.id}
+                  className="hover:bg-white/[0.04] transition cursor-pointer"
+                  onClick={() => setOpenId(ord.id)}
+                  title="Open order details"
+                >
                   <td className="p-4">
                     <p className="font-mono font-bold text-white text-sm">#{ord.shortId}</p>
                     <p className="text-[11px] text-white/50 mt-0.5">
@@ -178,8 +177,8 @@ export default function AdminLiveOrders({
                       >
                         {ord.fulfilment === 'delivery' ? '🛵 Delivery' : '🛍️ Pick Up'}
                       </span>
-                      <span className={cx('block w-fit rounded-lg border px-2 py-0.5 text-[10px] font-bold', (SOURCE_BADGE[ord.source] || SOURCE_BADGE.WEBSITE).tone)}>
-                        {(SOURCE_BADGE[ord.source] || SOURCE_BADGE.WEBSITE).label}
+                      <span className={cx('block w-fit rounded-lg border px-2 py-0.5 text-[10px] font-bold', sourceBadge(ord).tone)}>
+                        {sourceBadge(ord).label}
                       </span>
                       {ord.deliveryDetails?.deliveryPin && (
                         <p className="text-[10px] font-mono text-amber-300 font-bold">
@@ -191,26 +190,7 @@ export default function AdminLiveOrders({
 
                   <td className="p-4">
                     <div className="space-y-1">
-                      <span
-                        className={cx(
-                          'inline-block rounded-md px-2 py-0.5 text-[10px] font-black uppercase',
-                          ord.status === 'placed'
-                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                            : ord.status === 'accepted'
-                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                            : ord.status === 'baking'
-                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40 animate-pulse'
-                            : ord.status === 'ready_for_delivery'
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
-                            : ord.status === 'driver_assigned' || ord.status === 'driver_arrived_at_store'
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            : ord.status === 'out_for_delivery'
-                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse'
-                            : ord.status === 'delivered' || ord.status === 'collected'
-                            ? 'bg-emerald-500/30 text-emerald-200'
-                            : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                        )}
-                      >
+                      <span className={cx('inline-block rounded-md border px-2 py-0.5 text-[10px] font-black uppercase', statusTone(ord.status), ord.status === 'baking' || ord.status === 'out_for_delivery' ? 'animate-pulse' : '')}>
                         {ord.status.replace(/_/g, ' ')}
                       </span>
                       {ord.deliveryDetails?.assignedDriverName && (
@@ -228,7 +208,14 @@ export default function AdminLiveOrders({
                     </p>
                   </td>
 
-                  <td className="p-4 text-right space-x-2 whitespace-nowrap">
+                  <td className="p-4 text-right space-x-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(ord.id)}
+                      className="rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-white/15"
+                    >
+                      View
+                    </button>
                     {setFixingOrder && (
                       <button
                         type="button"

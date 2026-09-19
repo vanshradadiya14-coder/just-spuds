@@ -12,6 +12,7 @@ import {
 import {
   setDriverOnlineStatus,
   subscribeDrivers,
+  getDriverTodayEarnings,
   type DriverProfile,
 } from '../services/driverStore'
 import { getCurrentUser, loginWithPin, logout, hasRole, type AuthUser } from '../services/authStore'
@@ -151,7 +152,7 @@ export default function DriverDashboardPage() {
     const res = loginWithPin(pinInput)
     if (res.ok && res.user) {
       if (res.user.role !== 'DRIVER' && res.user.role !== 'SUPER_ADMIN') {
-        setPinError('This terminal is reserved for Courier / Driver accounts. Use PIN 7777 for Liam Walker.')
+        setPinError('This screen is for couriers. Ask a manager to set up your driver PIN in Admin → Drivers.')
         return
       }
       setCurrentUser(res.user)
@@ -406,7 +407,7 @@ export default function DriverDashboardPage() {
             <span className="display text-base text-emerald-400 font-bold">
               {/* Real persisted figure. This used to add `completedDeliveries.length * 450`
                   on top, inventing earnings the fleet view didn't agree with. */}
-              {gbp(currentDriver?.todayEarningsPence || 0)}
+              {gbp(currentDriver ? getDriverTodayEarnings(currentDriver) : 0)}
             </span>
           </div>
         </div>

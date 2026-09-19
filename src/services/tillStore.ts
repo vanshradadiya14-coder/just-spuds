@@ -46,7 +46,7 @@ export const EMPTY_DENOMINATIONS: CashDenominations = {
 export interface CashMovement {
   id: string
   timestamp: string
-  type: 'open_shift' | 'sale_cash' | 'pay_in' | 'pay_out' | 'no_sale_pop' | 'close_shift'
+  type: 'open_shift' | 'sale_cash' | 'pay_in' | 'pay_out' | 'no_sale_pop' | 'close_shift' | 'refund_cash' | 'refund_card'
   amount: number // in pence (0 for no-sale)
   reason: string
   staffName: string
@@ -69,6 +69,8 @@ export interface TillShift {
   cardSalesTotal: number // pence
   onlineOrdersTotal: number // pence
   totalDiscountGiven: number // pence
+  /** Money handed back during the shift (cash refunds also reduce expectedCash). */
+  refundsTotal: number // pence
   inStoreOrdersCount: number
   onlineOrdersCount: number
   movements: CashMovement[]
@@ -269,6 +271,7 @@ export function openTillShift(openedBy: string, startingFloatPence: number): Til
     cardSalesTotal: 0,
     onlineOrdersTotal: 0,
     totalDiscountGiven: 0,
+    refundsTotal: 0,
     inStoreOrdersCount: 0,
     onlineOrdersCount: 0,
     movements: [
@@ -374,6 +377,32 @@ export function recordTillSale(params: {
   }
 
   activeShift.inStoreOrdersCount += 1
+  saveActiveShift()
+}
+
+/**
+ * Record a refund given during the shift. Cash comes out of the drawer, so the
+ * expected cash drops; card refunds only show on the report.
+ */
+export function recordTillRefund(params: { orderId: string; amountPence: number; method: string; staffName: string; reason: string }) {
+  if (!activeShift || activeShift.status !== 'open') return
+  const amount = Math.max(0, Math.round(params.amountPence))
+  if (amount === 0) return
+  const isCash = params.method === 'cash' || params.method === 'in_store'
+  activeShift.refundsTotal = (activeShift.refundsTotal || 0) + amount
+  if (isCash) {
+    activeShift.expectedCash -= amount
+    if (tillSettings.kickDrawerOnCash) kickCashDrawer()
+  }
+  activeShift.movements.push({
+    id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    type: isCash ? 'refund_cash' : 'refund_card',
+    amount,
+    reason: `Refund Order #${params.orderId}: ${params.reason}`,
+    staffName: params.staffName,
+    orderId: params.orderId,
+  })
   saveActiveShift()
 }
 

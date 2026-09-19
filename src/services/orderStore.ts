@@ -16,7 +16,7 @@ import {
 import { logAuditEvent } from './auditStore'
 import { getSharedAudioContext } from './printerBridge'
 import { deductStockForOrderLines, restoreStockForOrderLines } from './menuStore'
-import { recordOnlineOrderInShift } from './tillStore'
+import { recordOnlineOrderInShift, recordTillRefund } from './tillStore'
 
 export type OrderSource = 'WEBSITE' | 'TILL' | 'PHONE' | 'STAFF'
 
@@ -574,14 +574,45 @@ export function createNewOrder(params: {
   return newOrder
 }
 
+const FINAL_STATUSES: OrderStatus[] = ['delivered', 'collected', 'cancelled']
+
+/**
+ * Why a status change is not allowed, or null when it is. Shared by the store
+ * (which refuses) and the KDS / admin (which explain instead of showing a button).
+ *
+ * - Cancelled and completed orders are final: a stale card must not resurrect one.
+ * - A till / phone open check that has not been paid cannot be completed from the
+ *   kitchen — completing marks it paid, and that money would never reach the till
+ *   shift. It has to be settled on the till (Open Checks) first.
+ */
+export function getStatusChangeBlocker(order: Order, nextStatus: OrderStatus): string | null {
+  if (order.status === nextStatus) return null
+  if (order.status === 'cancelled') return 'This order was cancelled.'
+  if (order.status === 'delivered' || order.status === 'collected') return 'This order is already complete.'
+  const completing = nextStatus === 'delivered' || nextStatus === 'collected'
+  if (completing && order.source !== 'WEBSITE' && order.payment.status === 'pending_store') {
+    return 'Unpaid — take payment on the till (Open Checks) before completing.'
+  }
+  return null
+}
+
 export function updateOrderStatus(orderId: string, nextStatus: OrderStatus): Order | undefined {
   const current = getStoredOrders()
   const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
+  const target = current.find((o) => o.id === orderId || o.shortId === orderId)
+  if (!target) return undefined
+  const blocker = getStatusChangeBlocker(target, nextStatus)
+  if (blocker) {
+    console.warn(`Status change refused for #${target.shortId} → ${nextStatus}: ${blocker}`)
+    return undefined
+  }
+  if (target.status === nextStatus) return target
+
   let updatedOrder: Order | undefined
 
   const updated = current.map((ord) => {
-    if (ord.id !== orderId && ord.shortId !== orderId) return ord
+    if (ord.id !== target.id) return ord
 
     let title = ''
     let description = ''
@@ -706,6 +737,11 @@ export function cancelOrder(orderId: string, reason: string): { ok: boolean; ord
     return { ok: false, message: 'Completed orders cannot be cancelled.' }
   }
 
+  // Cancelling twice would put the stock back twice and log a second refund.
+  if (order.status === 'cancelled') {
+    return { ok: false, message: 'This order is already cancelled.' }
+  }
+
   if (order.status === 'out_for_delivery') {
     return { ok: false, message: 'Driver is already on the road. Please call the store directly on ' + SITE.phone }
   }
@@ -750,6 +786,12 @@ export function cancelOrder(orderId: string, reason: string): { ok: boolean; ord
 
   saveOrders(updated)
   playKitchenChime(true)
+
+  // A paid counter sale that is cancelled hands money back over the till, so the
+  // shift must show it (web card payments are refunded by the gateway instead).
+  if (order.payment.status === 'paid' && order.source !== 'WEBSITE') {
+    recordTillRefund({ orderId: order.shortId, amountPence: refundAmount, method: order.payment.method, staffName: 'Staff/Manager', reason })
+  }
 
   // Restore inventory if food was not prepared
   restoreStockForOrderLines(order.lines, order.shortId, 'Staff/Manager', reason)
@@ -2392,7 +2434,7 @@ export interface SettleOpenOrderParams {
 export function settleOpenOrder(orderId: string, params: SettleOpenOrderParams): Order | undefined {
   const current = getStoredOrders()
   const order = current.find((o) => o.id === orderId || o.shortId === orderId)
-  if (!order || order.payment.status === 'paid') return undefined
+  if (!order || order.payment.status === 'paid' || FINAL_STATUSES.includes(order.status)) return undefined
 
   const now = new Date()
   const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -2535,6 +2577,18 @@ export function refundOrder(
   const current = getStoredOrders()
   const order = current.find((o) => o.id === orderId || o.shortId === orderId)
   if (!order) return { ok: false, message: 'Order not found.' }
+  if (order.payment.status === 'refunded' || order.status === 'cancelled') {
+    return { ok: false, message: 'This order has already been refunded.' }
+  }
+  if (order.payment.status !== 'paid') {
+    return { ok: false, message: 'Nothing was paid on this order, so there is nothing to refund.' }
+  }
+  // A partial refund earlier lowers what is left to give back; never more than that.
+  const alreadyRefunded = order.payment.manualAdjustment ? order.payment.manualAdjustment.originalTotal - order.payment.manualAdjustment.adjustedTotal : 0
+  const refundable = Math.max(0, order.payment.total - alreadyRefunded)
+  refundAmountPence = Math.round(refundAmountPence)
+  if (!Number.isFinite(refundAmountPence) || refundAmountPence <= 0) return { ok: false, message: 'Enter a refund amount above £0.' }
+  if (refundAmountPence > refundable) return { ok: false, message: `Only £${(refundable / 100).toFixed(2)} is left to refund on this order.` }
 
   const now = new Date()
   const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -2543,7 +2597,7 @@ export function refundOrder(
   const updated = current.map((ord) => {
     if (ord.id !== order.id) return ord
 
-    const isFullRefund = refundAmountPence >= ord.payment.total
+    const isFullRefund = refundAmountPence >= refundable
     updatedOrder = {
       ...ord,
       payment: {
@@ -2551,7 +2605,7 @@ export function refundOrder(
         status: isFullRefund ? 'refunded' : ord.payment.status,
         manualAdjustment: {
           originalTotal: ord.payment.total,
-          adjustedTotal: Math.max(0, ord.payment.total - refundAmountPence),
+          adjustedTotal: Math.max(0, ord.payment.total - alreadyRefunded - refundAmountPence),
           reason,
           adjustedBy: managerName,
           adjustedAt: now.toISOString(),
@@ -2580,6 +2634,8 @@ export function refundOrder(
   })
 
   saveOrders(updated)
+  // Cash refunds come out of the drawer — the shift's expected cash must follow.
+  recordTillRefund({ orderId: order.shortId, amountPence: refundAmountPence, method: order.payment.method, staffName: managerName, reason })
   logAuditEvent(
     managerName,
     'order.refund_processed',

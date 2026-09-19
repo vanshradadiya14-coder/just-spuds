@@ -19,7 +19,16 @@ export interface DriverProfile {
   rating: number
   deliveriesCompletedCount: number
   todayEarningsPence: number
+  /** Local calendar day (YYYY-MM-DD) that todayEarningsPence belongs to. */
+  todayEarningsDate?: string
   createdAt: string
+}
+
+const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+/** Earnings for today only — a figure from a previous day is stale, not "today's". */
+export function getDriverTodayEarnings(driver: Pick<DriverProfile, 'todayEarningsPence' | 'todayEarningsDate'>): number {
+  return driver.todayEarningsDate === localDay() ? driver.todayEarningsPence : 0
 }
 
 const DRIVERS_STORAGE_KEY = 'just_spuds_drivers_v1'
@@ -37,9 +46,9 @@ export const SEED_DRIVERS: DriverProfile[] = [
     status: 'ACTIVE',
     isOnline: true,
     pin: '7777',
-    rating: 4.95,
-    deliveriesCompletedCount: 142,
-    todayEarningsPence: 3850,
+    rating: 5,
+    deliveriesCompletedCount: 0,
+    todayEarningsPence: 0,
     createdAt: '2026-01-10T08:00:00.000Z',
   },
   {
@@ -53,8 +62,8 @@ export const SEED_DRIVERS: DriverProfile[] = [
     status: 'ACTIVE',
     isOnline: false,
     pin: '7778',
-    rating: 4.88,
-    deliveriesCompletedCount: 98,
+    rating: 5,
+    deliveriesCompletedCount: 0,
     todayEarningsPence: 0,
     createdAt: '2026-02-01T09:30:00.000Z',
   },
@@ -69,9 +78,9 @@ export const SEED_DRIVERS: DriverProfile[] = [
     status: 'ACTIVE',
     isOnline: true,
     pin: '7779',
-    rating: 4.92,
-    deliveriesCompletedCount: 215,
-    todayEarningsPence: 4600,
+    rating: 5,
+    deliveriesCompletedCount: 0,
+    todayEarningsPence: 0,
     createdAt: '2025-11-15T11:00:00.000Z',
   },
 ]
@@ -168,10 +177,12 @@ export function recordDriverDeliveryCompletion(driverId: string, deliveryFeePenc
   const drivers = getDrivers()
   const updated = drivers.map((d) => {
     if (d.id === driverId) {
+      const today = localDay()
       return {
         ...d,
         deliveriesCompletedCount: d.deliveriesCompletedCount + 1,
-        todayEarningsPence: d.todayEarningsPence + deliveryFeePence,
+        todayEarningsPence: (d.todayEarningsDate === today ? d.todayEarningsPence : 0) + deliveryFeePence,
+        todayEarningsDate: today,
       }
     }
     return d

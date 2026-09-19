@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { loginWithPin, loginWithCredentials, loginWithGoogle, getCurrentUser, homePortalForRole, type Role } from '../services/authStore'
+import { loginWithPin, loginWithGoogle, getCurrentUser, homePortalForRole, MANAGEMENT_ROLES, type Role } from '../services/authStore'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 
 type LoginTab = 'staff' | 'admin' | 'customer'
@@ -17,8 +17,6 @@ export default function LoginPage() {
 
   const [tab, setTab] = useState<LoginTab>('staff')
   const [pin, setPin] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [loadingGoogle, setLoadingGoogle] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -26,24 +24,16 @@ export default function LoginPage() {
   // customers (no portal) go back to wherever they came from.
   const destinationForRole = (role?: Role): string => homePortalForRole(role) ?? redirect
 
+  // The Admin tab is the same PIN keypad restricted to management roles — there
+  // is no email/password login (the old one granted admin to any address).
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!pin.trim()) return
-    const res = loginWithPin(pin)
+    const res = loginWithPin(pin, tab === 'admin' ? MANAGEMENT_ROLES : undefined)
     if (res.ok) {
-      navigate(destinationForRole(res.user?.role))
+      navigate(tab === 'admin' ? '/admin' : destinationForRole(res.user?.role))
     } else {
-      setError(res.message)
-    }
-  }
-
-  const handleCredSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!email.trim()) return
-    const res = loginWithCredentials(email, password)
-    if (res.ok) {
-      navigate(destinationForRole(res.user?.role))
-    } else {
+      setPin('')
       setError(res.message)
     }
   }
@@ -102,7 +92,7 @@ export default function LoginPage() {
             </span>
           </div>
           <h1 className="display text-2xl sm:text-3xl text-ink font-bold">
-            {tab === 'staff' ? 'Kitchen Staff PIN' : tab === 'admin' ? 'Admin Management Login' : 'Customer Account'}
+            {tab === 'staff' ? 'Staff PIN' : tab === 'admin' ? 'Manager PIN' : 'Customer Account'}
           </h1>
           <p className="font-body text-xs text-slate-500 mt-1">
             Just Spuds Aylesbury &bull; Market Square Portal
@@ -150,11 +140,11 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* TAB 1: STAFF QUICK PIN */}
-        {tab === 'staff' && (
+        {/* TAB 1 & 2: PIN KEYPAD (staff, or management-only for the Admin tab) */}
+        {(tab === 'staff' || tab === 'admin') && (
           <form onSubmit={handlePinSubmit} className="space-y-4">
             <label className="block text-center font-body text-xs font-bold text-slate-600">
-              Enter 4-Digit Staff PIN
+              {tab === 'admin' ? 'Enter your 4-digit supervisor / manager PIN' : 'Enter your 4-digit staff PIN'}
             </label>
             <input
               type="password"
@@ -211,46 +201,7 @@ export default function LoginPage() {
               type="submit"
               className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition"
             >
-              Access Kitchen KDS →
-            </button>
-          </form>
-        )}
-
-        {/* TAB 2: ADMIN CREDENTIALS */}
-        {tab === 'admin' && (
-          <form onSubmit={handleCredSubmit} className="space-y-4">
-            <div>
-              <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Admin Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@justspuds.uk"
-                className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-
-            {error && (
-              <p className="rounded-xl bg-red-50 border border-red-200 p-2.5 font-body text-xs text-red-600 text-center">
-                {error}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition"
-            >
-              Sign In to Management Console →
+              {tab === 'admin' ? 'Open Admin Console →' : 'Sign in →'}
             </button>
           </form>
         )}

@@ -345,6 +345,9 @@ export default function StaffKDSPage() {
     )
   }
 
+  // Changing a ticket's payment or total is a manager action, not a line cook's.
+  const canManualFix = hasRole(user, MANAGEMENT_ROLES)
+
   // Active counts
   const newOrders = orders.filter((o) => ['placed', 'accepted'].includes(o.status))
   const bakingOrders = orders.filter((o) => ['baking', 'quality_check'].includes(o.status))
@@ -647,7 +650,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
-                        setFixingOrder={setFixingOrder}
+                        setFixingOrder={canManualFix ? setFixingOrder : undefined}
                       />
                     ))}
                     {newOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No new tickets</div>}
@@ -673,7 +676,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
-                        setFixingOrder={setFixingOrder}
+                        setFixingOrder={canManualFix ? setFixingOrder : undefined}
                       />
                     ))}
                     {bakingOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">Oven is empty</div>}
@@ -699,7 +702,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
-                        setFixingOrder={setFixingOrder}
+                        setFixingOrder={canManualFix ? setFixingOrder : undefined}
                       />
                     ))}
                     {dispatchedOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No waiting dispatches</div>}
@@ -725,7 +728,7 @@ export default function StaffKDSPage() {
                         handleOpenRejectModal={handleOpenRejectModal} 
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
-                        setFixingOrder={setFixingOrder}
+                        setFixingOrder={canManualFix ? setFixingOrder : undefined}
                       />
                     ))}
                     {completedOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No recent completions</div>}

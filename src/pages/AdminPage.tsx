@@ -225,13 +225,13 @@ export default function AdminPage() {
 
   const handleAdminPinSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const res = loginWithPin(adminPin)
-    if (res.ok && hasRole(res.user ?? null, MANAGEMENT_ROLES)) {
+    const res = loginWithPin(adminPin, MANAGEMENT_ROLES)
+    if (res.ok) {
       setAdminPin('')
       setAdminPinError(null)
     } else {
-      if (res.ok) logout()
-      setAdminPinError('Invalid Admin PIN. (Enter 8888 for Super Admin, 5555 for Manager)')
+      setAdminPin('')
+      setAdminPinError(res.message)
     }
   }
 
@@ -841,7 +841,7 @@ export default function AdminPage() {
           </form>
 
           <p className="mt-6 text-[11px] text-white/40">
-            Admin PIN: <strong className="text-amber-400 font-mono">8888</strong> &bull; Staff KDS: <Link to="/staff" className="text-amber-300 underline">/staff</Link>
+            Supervisors, managers and the owner only &bull; Kitchen screen: <Link to="/staff" className="text-amber-300 underline">/staff</Link>
           </p>
         </div>
       </div>
@@ -859,8 +859,8 @@ export default function AdminPage() {
               🥔
             </span>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide whitespace-nowrap">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide">
                   JUST SPUDS &bull; ADMIN
                 </h1>
                 <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2.5 py-0.5 text-[10px] font-black uppercase text-amber-300">
@@ -1961,6 +1961,7 @@ export default function AdminPage() {
         {/* ============================================================== */}
         {activeTab === 'orders' && (
           <AdminLiveOrders
+            allOrders={orders}
             orderStatusFilter={orderStatusFilter}
             setOrderStatusFilter={setOrderStatusFilter}
             searchQuery={searchQuery}
@@ -2441,8 +2442,8 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-white/5 overflow-hidden shadow-2xl">
-              <table className="w-full text-left font-body text-xs">
+            <div className="rounded-3xl border border-white/10 bg-white/5 overflow-x-auto custom-scrollbar shadow-2xl">
+              <table className="w-full min-w-[760px] text-left font-body text-xs">
                 <thead className="border-b border-white/10 bg-white/5 text-[10px] font-bold uppercase text-white/50">
                   <tr>
                     <th className="p-4">Customer</th>
@@ -2934,7 +2935,8 @@ export default function AdminPage() {
                   No delivery orders currently on the road.
                 </div>
               ) : (
-                <table className="w-full text-left font-body text-xs">
+                <div className="overflow-x-auto custom-scrollbar">
+                <table className="w-full min-w-[720px] text-left font-body text-xs">
                   <thead className="border-b border-white/10 bg-white/5 text-[10px] font-bold uppercase text-white/50">
                     <tr>
                       <th className="p-3.5">Order</th>
@@ -2983,6 +2985,7 @@ export default function AdminPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
 
@@ -2994,7 +2997,8 @@ export default function AdminPage() {
                 </h3>
               </div>
 
-              <table className="w-full text-left font-body text-xs">
+              <div className="overflow-x-auto custom-scrollbar">
+              <table className="w-full min-w-[720px] text-left font-body text-xs">
                 <thead className="border-b border-white/10 bg-white/5 text-[10px] font-bold uppercase text-white/50">
                   <tr>
                     <th className="p-4">Courier</th>
@@ -3093,6 +3097,7 @@ export default function AdminPage() {
                     ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </div>
         )}

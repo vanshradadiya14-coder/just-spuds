@@ -60,6 +60,18 @@ voiding a sent item) prompt for a supervisor-or-above PIN. Till settings (auto
 receipt, drawer kick, siren, tap sounds, blind cash count, tip prompt, default
 float, USB printer) live behind ⚙️ on the till and sync to every open till tab.
 
+**PIN policy.** Staff sign in by PIN only — there is no email/password staff
+login, no on-screen PIN hints and no tap-to-sign-in profiles. Five wrong PINs
+lock every PIN prompt on that device for 30 s, doubling to a 5-minute cap.
+"Manual fix" (changing an order's payment or total) is a manager-only tool.
+
+**Screens.** Everything works from a phone up to a kitchen monitor. Below
+1024px the till turns into a tablet layout: categories become a swipeable
+strip, the ticket lives in a bottom sheet opened from the sticky total bar,
+and the toolbar scrolls sideways instead of clipping. The KDS shows four
+columns on a 1366px screen and stacks on a phone; admin tables scroll inside
+their cards.
+
 ### Till flow (modelled on Square / Toast / Lightspeed quick-service)
 
 - **Ring up** from the category rail, ❤️ Favourites (owner's "popular" flags
@@ -103,6 +115,24 @@ Deliveroo tablet or a Subway KDS behaves.
   on/off switch is the till's "Online order siren" setting.
 - Browsers only allow sound after the first tap on the page; the alert shows
   "Tap anywhere to enable sound" until then.
+
+### Order rules (enforced in the stores, not just the buttons)
+
+- **Web checkout** (`services/checkout.ts`) re-checks everything itself:
+  ordering switched on, trading hours and last-orders cutoffs, kitchen pause,
+  stock and channel, delivery postcode and minimum basket, and it re-prices the
+  basket from the live menu — stale prices, a voucher that no longer applies or
+  a smuggled price override are corrected, never trusted.
+- **Status changes**: cancelled and completed orders are final; a till/phone
+  open check that hasn't been paid cannot be "completed" from the kitchen (the
+  card says *take payment on the till* instead), so no sale slips past the shift.
+- **Cancel / refund**: an order cancels once (stock comes back once); refunds
+  are capped at what's left to refund; cash refunds reduce the drawer's
+  expected cash and show on the Z-report; a shift can't close over unpaid checks.
+- **Customers** can cancel from the tracking page only until the kitchen
+  accepts — after that it's a phone call.
+- **Admin › Live Orders**: click any row for the full order (ticket, customer,
+  payment, timeline, notes) with one-tap next-step / print / cancel.
 
 ### Stock and channels
 

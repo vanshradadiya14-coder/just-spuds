@@ -102,9 +102,15 @@ export default function ZReportReceipt({ shift, onClose, isModal = true }: ZRepo
             <span>-{gbp(shift.totalDiscountGiven)}</span>
           </div>
         )}
+        {(shift.refundsTotal || 0) > 0 && (
+          <div className="flex justify-between text-gray-700">
+            <span>REFUNDS GIVEN:</span>
+            <span>-{gbp(shift.refundsTotal)}</span>
+          </div>
+        )}
         <div className="flex justify-between font-black text-sm pt-2 border-t border-black">
           <span>TOTAL STORE TAKINGS:</span>
-          <span>{gbp(shift.cashSalesTotal + shift.cardSalesTotal)}</span>
+          <span>{gbp(shift.cashSalesTotal + shift.cardSalesTotal - (shift.refundsTotal || 0))}</span>
         </div>
       </div>
 
@@ -119,6 +125,12 @@ export default function ZReportReceipt({ shift, onClose, isModal = true }: ZRepo
           <span>CASH TAKINGS:</span>
           <span>+{gbp(shift.cashSalesTotal)}</span>
         </div>
+        {shift.movements.some((m) => m.type === 'refund_cash') && (
+          <div className="flex justify-between">
+            <span>CASH REFUNDS:</span>
+            <span>-{gbp(shift.movements.filter((m) => m.type === 'refund_cash').reduce((n, m) => n + m.amount, 0))}</span>
+          </div>
+        )}
         <div className="flex justify-between font-bold pt-1 border-t border-gray-300">
           <span>EXPECTED CASH IN DRAWER:</span>
           <span>{gbp(shift.expectedCash)}</span>

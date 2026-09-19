@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
-import { processCheckout } from '../services/checkout'
+import { processCheckout, SERVICE_FEE_PENCE } from '../services/checkout'
 import { getMenuStockOverrides, type PaymentMethod, type CustomerInfo } from '../services/orderStore'
 import { gbp, cx } from '../utils/format'
 import { SITE } from '../data/site'
@@ -16,7 +16,7 @@ interface CheckoutModalProps {
 }
 
 const TIPS = [0, 100, 200, 300] // in pence
-const SERVICE_FEE = 49 // 49p packaging & service fee
+const SERVICE_FEE = SERVICE_FEE_PENCE // packaging & service fee — one definition, shared with checkout validation
 
 const SCHEDULE_TIMES = [
   '11:00 AM',
@@ -57,7 +57,7 @@ function getScheduleDates(): string[] {
 export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
   const navigate = useNavigate()
   const {
-    lines, rawSubtotal, subtotal, discount, fulfilment, deliveryFee,
+    lines, rawSubtotal, subtotal, discount, promoCode, fulfilment, deliveryFee,
     deliveryAddress, setDeliveryAddress, kitchenNotes, clear, close: closeCart,
     timingMode, setTimingMode, isScheduled, formattedScheduledTime, scheduleDate, setScheduleDate, scheduleTime, setScheduleTime,
     postcodeValidation, minOrderPence, isMinOrderMet, storeStatus, kitchenPause,
@@ -226,6 +226,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
       tip: activeTip,
       discount,
       total: grandTotal,
+      promoCode,
       kitchenNotes,
       isScheduled,
       scheduledFor: isScheduled ? formattedScheduledTime : undefined,

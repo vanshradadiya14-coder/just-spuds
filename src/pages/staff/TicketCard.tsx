@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../utils/format'
-import { Order } from '../../services/orderStore'
+import { getStatusChangeBlocker, type Order } from '../../services/orderStore'
+import { parseKitchenNotes } from '../../utils/kitchenNotes'
 
 export default function TicketCard({
   ord,
@@ -36,6 +38,7 @@ export default function TicketCard({
   const isWarning = !isComplete && !isCancelled && elapsedMins >= 10 && elapsedMins < 20
 
   const source = ord.source
+  const notes = parseKitchenNotes(ord.kitchenNotes)
 
   return (
     <div
@@ -54,7 +57,42 @@ export default function TicketCard({
       )}
     >
       {/* Header: Distance Typography & Source Badges */}
-      <div className="p-4 border-b border-white/10 flex items-start justify-between gap-2">
+      <div className="p-4 border-b border-white/10 space-y-2">
+        {/* Timer / placed-at / status: one wrapping row, so nothing is clipped in a narrow column */}
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <div
+            className={cx(
+              'px-2.5 py-1 rounded-xl text-xs font-black font-mono tracking-wider flex items-center gap-1.5 shadow-sm',
+              isLate
+                ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                : isWarning
+                ? 'bg-amber-500 text-slate-950 ring-1 ring-amber-300'
+                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+            )}
+          >
+            <span>⏱️</span>
+            <span>
+              {elapsedMins}m {elapsedSecs < 10 ? '0' : ''}{elapsedSecs}s
+            </span>
+            {isLate && <span className="text-[10px] bg-white text-red-700 px-1 rounded uppercase font-black">LATE</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-body text-[11px] text-white/50">
+              {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <span
+              className={cx(
+                'inline-block rounded px-2 py-0.5 font-body text-[10px] font-black uppercase tracking-wider',
+                isCancelled
+                  ? 'bg-red-500/30 text-red-300 border border-red-500/40'
+                  : 'bg-white/10 text-amber-300'
+              )}
+            >
+              {isCancelled ? '❌ DECLINED' : ord.status.replace(/_/g, ' ')}
+            </span>
+          </div>
+        </div>
+
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="display text-2xl xl:text-[26px] text-white font-black tracking-tight whitespace-nowrap">#{ord.shortId}</span>
@@ -102,41 +140,6 @@ export default function TicketCard({
             </p>
           )}
         </div>
-
-        <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
-          {/* Elapsed Kitchen Prep Timer */}
-          <div
-            className={cx(
-              'px-2.5 py-1 rounded-xl text-xs font-black font-mono tracking-wider flex items-center gap-1.5 shadow-sm',
-              isLate
-                ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
-                : isWarning
-                ? 'bg-amber-500 text-slate-950 ring-1 ring-amber-300'
-                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-            )}
-          >
-            <span>⏱️</span>
-            <span>
-              {elapsedMins}m {elapsedSecs < 10 ? '0' : ''}{elapsedSecs}s
-            </span>
-            {isLate && <span className="text-[10px] bg-white text-red-700 px-1 rounded uppercase font-black">LATE</span>}
-          </div>
-
-          <span className="font-body text-[11px] text-white/50">
-            Ordered: {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </span>
-
-          <span
-            className={cx(
-              'inline-block rounded px-2.5 py-0.5 font-body text-[10px] font-black uppercase tracking-wider',
-              isCancelled
-                ? 'bg-red-500/30 text-red-300 border border-red-500/40'
-                : 'bg-white/10 text-amber-300'
-            )}
-          >
-            {isCancelled ? '❌ DECLINED & REFUNDED' : ord.status.replace(/_/g, ' ')}
-          </span>
-        </div>
       </div>
 
       {/* Body: Allergen Alerts & Food Checklist */}
@@ -152,11 +155,27 @@ export default function TicketCard({
           </div>
         )}
 
-        {/* CRITICAL ALLERGEN / INSTRUCTION BOX */}
-        {ord.kitchenNotes && !isCancelled && (
+        {/* Buzzer / table callouts and till bookkeeping — separate from real instructions */}
+        {!isCancelled && (notes.callouts.length > 0 || notes.meta.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {notes.callouts.map((c) => (
+              <span key={c} className="rounded-lg bg-amber-400 px-2.5 py-1 font-body text-sm font-black uppercase tracking-wider text-ink shadow">
+                {/buzzer/i.test(c) ? '🔔' : '🪑'} {c}
+              </span>
+            ))}
+            {notes.meta.map((m) => (
+              <span key={m} className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-body text-[10px] font-bold uppercase tracking-wider text-white/50">
+                {m}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* CRITICAL ALLERGEN / INSTRUCTION BOX — only genuine notes go in here */}
+        {notes.note && !isCancelled && (
           <div className="rounded-xl border-2 border-amber-400 bg-amber-400 text-ink p-3 font-body text-xs font-black uppercase shadow-lg">
             <p className="text-[10px] underline">⚠️ ALLERGEN / KITCHEN ALERT:</p>
-            <p className="mt-0.5">{ord.kitchenNotes}</p>
+            <p className="mt-0.5">{notes.note}</p>
           </div>
         )}
 
@@ -361,16 +380,28 @@ export default function TicketCard({
                     🛵 In transit with <strong>{ord.deliveryDetails?.assignedDriverName || ord.driver?.name}</strong>
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleStatusChange(ord.id, isDelivery ? 'delivered' : 'collected')
-                  }
-                  className="w-full rounded-xl bg-emerald-500 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow hover:bg-emerald-400 flex items-center justify-center gap-1.5"
-                >
-                  <span>🎉</span>
-                  <span>Complete Order</span>
-                </button>
+                {(() => {
+                  const blocker = getStatusChangeBlocker(ord, isDelivery ? 'delivered' : 'collected')
+                  return blocker ? (
+                    <Link
+                      to="/pos"
+                      className="w-full rounded-xl border border-amber-400/50 bg-amber-500/10 py-3 font-body text-xs font-bold text-amber-300 hover:bg-amber-500/20 flex items-center justify-center gap-1.5 text-center"
+                      title={blocker}
+                    >
+                      <span>💷</span>
+                      <span>Unpaid — take payment on the till →</span>
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleStatusChange(ord.id, isDelivery ? 'delivered' : 'collected')}
+                      className="w-full rounded-xl bg-emerald-500 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow hover:bg-emerald-400 flex items-center justify-center gap-1.5"
+                    >
+                      <span>🎉</span>
+                      <span>Complete Order</span>
+                    </button>
+                  )
+                })()}
               </div>
             )}
           </div>

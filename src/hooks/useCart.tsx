@@ -2,11 +2,8 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode,
 } from 'react'
 import { MEAL_DEAL, optionPrice, type Product } from '../data/menu'
-import { getPromoCodes, getProducts, getStoreSettings, subscribeMenu } from '../services/menuStore'
-import {
-  getStoreStatus, parseTimeToDecimalHours, DEFAULT_STORE_HOURS,
-  type StoreStatus, type StoreHoursConfig,
-} from '../data/site'
+import { getConfiguredHours, getPromoCodes, getProducts, subscribeMenu } from '../services/menuStore'
+import { getStoreStatus, type StoreStatus } from '../data/site'
 import { validateDeliveryPostcode, type PostcodeValidationResult } from '../data/deliveryZones'
 import { getKitchenPauseState, subscribeKitchenPause, type KitchenPauseState } from '../services/orderStore'
 import { getDeliverySettings, subscribeDeliverySettings, type StoreDeliverySettings } from '../services/deliverySettingsStore'
@@ -259,36 +256,6 @@ const Ctx = createContext<CartApi | null>(null)
 export const DEFAULT_FREE_DELIVERY_THRESHOLD = 2500
 export const DEFAULT_DELIVERY_FEE = 400
 
-/**
- * Trading hours as configured by the admin console, falling back to the defaults
- * if unset or malformed. This is the bridge that makes the admin hours editor
- * actually govern whether orders are accepted — getStoreStatus takes hours as a
- * parameter because site.ts cannot import menuStore without a circular dependency.
- */
-function readConfiguredHours(date: Date = new Date()): StoreHoursConfig {
-  try {
-    const settings = getStoreSettings()
-    const dayName = date.toLocaleDateString('en-GB', { weekday: 'long' })
-    const daily = settings.weeklyHours?.[dayName]
-    
-    if (daily) {
-      return {
-        openHour: parseTimeToDecimalHours(daily.openTime) ?? DEFAULT_STORE_HOURS.openHour,
-        closeHour: parseTimeToDecimalHours(daily.closeTime) ?? DEFAULT_STORE_HOURS.closeHour,
-        isClosed: daily.isClosed,
-      }
-    }
-
-    return {
-      openHour: parseTimeToDecimalHours(settings.openTime) ?? DEFAULT_STORE_HOURS.openHour,
-      closeHour: parseTimeToDecimalHours(settings.closeTime) ?? DEFAULT_STORE_HOURS.closeHour,
-      isClosed: false,
-    }
-  } catch {
-    return DEFAULT_STORE_HOURS
-  }
-}
-
 export function CartProvider({ children }: { children: ReactNode }) {
   const [lines, dispatch] = useReducer(reducer, undefined, loadPersistedCart)
   const [isOpen, setOpen] = useState(false)
@@ -306,16 +273,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
   const [deliverySettings, setDeliverySettingsState] = useState<StoreDeliverySettings>(() => getDeliverySettings())
   const [storeStatus, setStoreStatus] = useState<StoreStatus>(() =>
-    getStoreStatus(new Date(), getKitchenPauseState(), readConfiguredHours(new Date())),
+    getStoreStatus(new Date(), getKitchenPauseState(), getConfiguredHours(new Date())),
   )
 
   useEffect(() => {
     const refresh = () =>
-      setStoreStatus(getStoreStatus(new Date(), getKitchenPauseState(), readConfiguredHours(new Date())))
+      setStoreStatus(getStoreStatus(new Date(), getKitchenPauseState(), getConfiguredHours(new Date())))
 
     const unsubPause = subscribeKitchenPause((kp) => {
       setKitchenPauseState(kp)
-      setStoreStatus(getStoreStatus(new Date(), kp, readConfiguredHours(new Date())))
+      setStoreStatus(getStoreStatus(new Date(), kp, getConfiguredHours(new Date())))
     })
     const unsubDeliverySettings = subscribeDeliverySettings((ds) => {
       setDeliverySettingsState(ds)
@@ -409,6 +376,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const promos = getPromoCodes()
     const activePromo = promos.find((p) => p.code.toUpperCase() === promoCode.toUpperCase() && p.active)
     if (!activePromo) return 0
+    // A voucher's minimum basket keeps applying after it was entered — taking
+    // items out again must not leave the discount behind.
+    if (activePromo.minOrderPence && rawSubtotal < activePromo.minOrderPence) return 0
     if (activePromo.discountPercent) {
       return Math.round(rawSubtotal * (activePromo.discountPercent / 100))
     }
