@@ -801,7 +801,7 @@ export default function AdminPage() {
             </p>
           ) : (
             <p className="font-body text-xs text-white/60 mt-1 mb-6">
-              Enter Admin PIN or log in with credentials to access sales and executive controls.
+              Enter a supervisor, manager or owner PIN to open sales, menu and staff controls.
             </p>
           )}
 
