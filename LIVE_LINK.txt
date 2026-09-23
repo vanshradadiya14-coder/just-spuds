@@ -6,14 +6,14 @@ JUST SPUDS AYLESBURY - ACTIVE LIVE PREVIEW & TILL LINK
    Main Storefront:
    https://vertical-org-choir-screens.trycloudflare.com
 
-   Staff POS & EPOS Till Terminal (PIN: 2468):
+   Staff POS & EPOS Till Terminal (staff PIN — never write PINs in this file):
    https://vertical-org-choir-screens.trycloudflare.com/pos
 
    Customer-Facing Display (CFD Second Screen):
    https://vertical-org-choir-screens.trycloudflare.com/cfd
 
    Kitchen Display System (KDS):
-   https://vertical-org-choir-screens.trycloudflare.com/kds
+   https://vertical-org-choir-screens.trycloudflare.com/staff
 
 2. Permanent Production Domain (Vercel Global CDN):
    https://www.justspuds.uk

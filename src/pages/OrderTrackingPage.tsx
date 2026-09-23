@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { getBusinessDetails } from '../services/menuStore'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getOrderById,
@@ -15,7 +16,6 @@ import {
 } from '../services/orderStore'
 import { getCurrentUser, hasRole, SHOP_FLOOR_ROLES } from '../services/authStore'
 import { lineUnitPrice } from '../hooks/useCart'
-import { SITE } from '../data/site'
 import ThermalReceipt from '../components/ThermalReceipt'
 import { gbp, cx } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
@@ -533,7 +533,7 @@ export default function OrderTrackingPage() {
                     ? `Full refund of £${((order.cancellation?.refundAmount || order.payment.total) / 100).toFixed(2)} processed.`
                     : 'This order was cancelled. No payment was collected.')
                   : isFailed
-                  ? `Our courier couldn’t hand over your order. Please call the shop on ${SITE.phone} and we’ll put it right.`
+                  ? `Our courier couldn’t hand over your order. Please call the shop on ${getBusinessDetails().phone} and we’ll put it right.`
                   : isDelivery
                   ? `Delivering to ${order.customer.streetAddress || 'Aylesbury'}, ${order.customer.postcode || 'HP20'}`
                   : `Collection at Market Square counter, Aylesbury (HP20 1SN)`}
@@ -649,10 +649,10 @@ export default function OrderTrackingPage() {
                     Browse Other Spuds &rarr;
                   </Link>
                   <a
-                    href={`tel:${SITE.phone}`}
+                    href={getBusinessDetails().phoneHref}
                     className="rounded-full border border-ink/10 bg-paper px-4 py-3 font-body text-xs font-bold text-ink hover:bg-line transition"
                   >
-                    Call Store ({SITE.phone})
+                    Call Store ({getBusinessDetails().phone})
                   </a>
                 </div>
               </div>
@@ -1120,7 +1120,7 @@ export default function OrderTrackingPage() {
               {cancelWindowClosed && (
                 <p className="rounded-2xl border border-ink/10 bg-paper p-3 font-body text-[11px] text-steel text-center">
                   The kitchen has started on your order, so it can no longer be cancelled here — call us on{' '}
-                  <a href="tel:01296423456" className="font-bold text-ink">01296 423456</a> and we'll sort it out.
+                  <a href={getBusinessDetails().phoneHref} className="font-bold text-ink">{getBusinessDetails().phone}</a> and we'll sort it out.
                 </p>
               )}
             </div>
@@ -1134,7 +1134,7 @@ export default function OrderTrackingPage() {
                 Call the Just Spuds Market Square kitchen directly for live updates or special instructions:
               </p>
               <p className="font-mono font-bold text-ink text-sm">
-                📞 01296 423456
+                📞 {getBusinessDetails().phone}
               </p>
             </div>
           </div>

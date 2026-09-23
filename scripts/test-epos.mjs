@@ -560,6 +560,39 @@ await test('refunds: once only, never more than was paid, and a cash refund come
 })
 
 // ---------------------------------------------------------------------------
+section('🧾 VAT follows each product’s rate')
+
+await test('0% cold takeaway, 20% hot food, eat-in all standard, tips outside VAT, discount spread by value', async () => {
+  const vat = await load('/src/services/vat.ts')
+  const products = menuStore.getProducts()
+  const hot = products.find((p) => p.category === 'SPUDS')
+  const cold = products.find((p) => p.category === 'SALADS')
+  menuStore.saveProduct({ ...menuStore.getProductById(hot.id), vatRate: 20, price: 600 })
+  menuStore.saveProduct({ ...menuStore.getProductById(cold.id), vatRate: 0, price: 400 })
+  const hotLine = { ...line(menuStore.getProductById(hot.id), 1) }
+  const coldLine = { ...line(menuStore.getProductById(cold.id), 1) }
+
+  const takeaway = vat.computeVat({ lines: [hotLine, coldLine] })
+  assert.equal(takeaway.vat, 100, '£6.00 at 20% contains £1.00; the cold item none')
+  assert.deepEqual(takeaway.bands.map((b) => [b.rate, b.gross]), [[20, 600], [0, 400]])
+
+  const eatIn = vat.computeVat({ lines: [hotLine, coldLine], eatIn: true })
+  assert.equal(eatIn.vat, Math.round((1000 * 20) / 120), 'eaten in, the salad is standard-rated too')
+
+  const discounted = vat.computeVat({ lines: [hotLine, coldLine], discount: 100 })
+  assert.equal(discounted.bands.find((b) => b.rate === 20).gross, 540, '£1 off spread 60/40 by value')
+
+  const order = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer, lines: [hotLine, coldLine], paymentMethod: 'card', paymentStatus: 'paid', tip: 200 },
+    'Cashier',
+  )
+  assert.equal(vat.orderVat(order).vat, 100, 'the £2 tip carries no VAT')
+  const z = orderStore.generateZReport([{ ...order, status: 'collected' }])
+  assert.equal(z.vatStandardAmount, 100)
+  assert.deepEqual(z.vatBands.map((b) => b.rate), [20, 0])
+})
+
+// ---------------------------------------------------------------------------
 section('🎫 Kitchen ticket notes')
 
 await test('till bookkeeping is split from real instructions; buzzer / table stay loud', async () => {
@@ -740,6 +773,279 @@ await test('the till "Online order siren" switch mutes and un-mutes the alarm', 
   assert.equal(alertBus.getAlertSoundState().sounding, true, 'rings again while the order is still waiting')
   alertBus.dismissOrderAlert(order.id)
 })
+
+// ---------------------------------------------------------------------------
+section('☁️ Cross-device sync (in-memory server standing in for Supabase)')
+
+const cloud = await load('/src/services/cloudSync.ts')
+const { createMemoryBackend } = await load('/src/services/sync/backend.ts')
+const roster = await load('/src/services/staffRoster.ts')
+const blacklist = await load('/src/services/blacklistStore.ts')
+const audit = await load('/src/services/auditStore.ts')
+const orderRows = await load('/src/services/supabaseOrderSync.ts')
+const mem = createMemoryBackend()
+const DOC = (n) => `just_spuds::doc::${n}`
+let clockAhead = 1
+/** A timestamp later than anything this device has written — "another device, just now". */
+const later = () => new Date(Date.now() + 60_000 + clockAhead++ * 1000).toISOString()
+const remoteDoc = (name, data) => {
+  const at = later()
+  return { key: DOC(name), value: { data, at, by: 'dev-other' }, updatedAt: at }
+}
+/** Another device writes to the server: stored there, and pushed live to subscribers. */
+const serverPut = (row) => {
+  mem.kv.set(row.key, row)
+  mem.emitKv(row)
+}
+const serverOrder = (o) => {
+  mem.orders.set(o.id, o)
+  mem.emitOrder(o)
+}
+localStorage.removeItem('just_spuds_pin_lock_v1')
+
+await test('a manager device seeds the menu, settings, staff list and stock on first sync', async () => {
+  assert.equal(authStore.loginWithPin('5555').ok, true)
+  await cloud.startCloudSync({ backend: mem, timers: false })
+  for (const name of ['menu.products', 'menu.promos', 'store.settings', 'delivery.settings', 'staff.roster', 'drivers', 'kitchen.pause']) {
+    // kitchen.pause only exists once someone pauses; everything else is seeded
+    if (name === 'kitchen.pause') continue
+    assert.ok(mem.kv.has(DOC(name)), `${name} published`)
+  }
+  const products = mem.kv.get(DOC('menu.products')).value.data
+  assert.ok(products.length > 0)
+  assert.ok(products.every((p) => p.stockQuantity === undefined), 'stock never rides in the menu document')
+  assert.ok(mem.stock.size >= products.length, 'every product has a shared stock count')
+  const rosterDoc = mem.kv.get(DOC('staff.roster')).value.data
+  assert.ok(!JSON.stringify(rosterDoc).includes('"5555"'), 'no plaintext PINs leave the device')
+  assert.equal(cloud.getSyncStatus().state, 'synced')
+})
+
+await test('the online-ordering switch and kitchen pause travel both ways', async () => {
+  deliverySettings.saveDeliverySettings({ isOnlineOrderingEnabled: true })
+  orderStore.setKitchenPause({ isPaused: true, reasonCode: 'rush_capacity', reasonText: 'Rush', resumeAt: 'manual' })
+  await cloud.syncNow()
+  assert.equal(mem.kv.get(DOC('delivery.settings')).value.data.isOnlineOrderingEnabled, true, 'published')
+  assert.equal(mem.kv.get(DOC('kitchen.pause')).value.data.isPaused, true)
+  // the owner switches it off from home
+  const current = mem.kv.get(DOC('delivery.settings')).value.data
+  mem.kv.set(DOC('delivery.settings'), remoteDoc('delivery.settings', { ...current, isOnlineOrderingEnabled: false }))
+  mem.kv.set(DOC('kitchen.pause'), remoteDoc('kitchen.pause', { isPaused: false, reasonCode: 'rush_capacity', reasonText: '' }))
+  await cloud.syncNow()
+  assert.equal(deliverySettings.getDeliverySettings().isOnlineOrderingEnabled, false)
+  assert.equal(orderStore.getKitchenPauseState().isPaused, false)
+})
+
+await test('a price change made on another device lands instantly and keeps this device’s stock count', () => {
+  const p = firstSpud()
+  const stockBefore = menuStore.getProductById(p.id).stockQuantity
+  let notified = 0
+  const unsub = menuStore.subscribeMenu(() => notified++)
+  const remote = mem.kv.get(DOC('menu.products')).value.data.map((x) => (x.id === p.id ? { ...x, price: 999 } : x))
+  serverPut(remoteDoc('menu.products', remote))
+  unsub()
+  assert.equal(menuStore.getProductById(p.id).price, 999)
+  assert.equal(menuStore.getProductById(p.id).stockQuantity, stockBefore)
+  assert.ok(notified > 0, 'open screens re-render')
+})
+
+await test('stock moves by delta: a sale here and one on another till both count', async () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  await cloud.syncNow()
+  assert.equal(mem.stock.get(p.id).qty, 10)
+  mem.stock.set(p.id, { id: p.id, qty: 7 }) // the other till sold 3; this device has not heard yet
+  orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 2)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Cashier')
+  assert.equal(menuStore.getProductById(p.id).stockQuantity, 8)
+  await cloud.syncNow()
+  assert.equal(mem.stock.get(p.id).qty, 5, '10 − 3 − 2')
+  assert.equal(menuStore.getProductById(p.id).stockQuantity, 5)
+})
+
+let offlineOrder
+await test('an order taken while offline waits in the outbox and uploads when the network returns', async () => {
+  const p = firstSpud()
+  mem.state.fail = true
+  offlineOrder = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Cashier')
+  assert.equal(await cloud.syncNow(), false)
+  assert.ok(!mem.orders.has(offlineOrder.id))
+  assert.ok(JSON.parse(localStorage.getItem('just_spuds_order_outbox_v1')).includes(offlineOrder.id), 'kept in the outbox')
+  assert.equal(cloud.getSyncStatus().state, 'offline')
+  assert.ok(cloud.getSyncStatus().pending > 0)
+  mem.state.fail = false
+  assert.equal(await cloud.syncNow(), true)
+  assert.ok(mem.orders.has(offlineOrder.id), 'uploaded once back online')
+  assert.ok(!JSON.parse(localStorage.getItem('just_spuds_order_outbox_v1')).includes(offlineOrder.id))
+})
+
+await test('the newer copy of an order wins; a late, stale echo cannot undo it', () => {
+  const remote = { ...mem.orders.get(offlineOrder.id), status: 'baking', updatedAt: later() }
+  serverOrder(remote)
+  assert.equal(orderStore.getOrderById(offlineOrder.id).status, 'baking')
+  mem.emitOrder({ ...remote, status: 'accepted', updatedAt: new Date(Date.now() - 3600_000).toISOString() })
+  assert.equal(orderStore.getOrderById(offlineOrder.id).status, 'baking')
+})
+
+await test('void reasons, manager overrides, schedule and the test flag survive the orders table', () => {
+  const o = {
+    ...offlineOrder,
+    adminNotes: [{ id: 'n1', timestamp: new Date().toISOString(), author: 'Manager', note: 'Voided 1x Coke' }],
+    manualOverrides: [{ id: 'm1', overriddenAt: new Date().toISOString(), overriddenBy: 'Manager', reason: 'x', changesSummary: 'y' }],
+    scheduleDate: 'Today',
+    scheduleTime: '1:00 PM',
+    isTest: true,
+    deliveryDetails: { deliveryPin: '4821' },
+  }
+  const back = orderRows.rowToOrder(orderRows.orderToRow(o))
+  assert.deepEqual(back.adminNotes, o.adminNotes)
+  assert.deepEqual(back.manualOverrides, o.manualOverrides)
+  assert.equal(back.scheduleDate, 'Today')
+  assert.equal(back.isTest, true)
+  assert.deepEqual(back.deliveryDetails, { deliveryPin: '4821' }, 'packing key never leaks into the order')
+})
+
+await test('web orders from customer phones count on the open till shift exactly once', () => {
+  tillStore.openTillShift('Manager', 0)
+  const before = tillStore.getCurrentShift().onlineOrdersTotal
+  const now = new Date().toISOString()
+  const web = {
+    id: 'ord-remote-web-1', shortId: 'JS-W-11111', source: 'WEBSITE', createdAt: now, updatedAt: now, status: 'placed',
+    fulfilment: 'pickup', customer, lines: [], timeline: [], estimatedDeliveryTime: '', etaMinutes: 15,
+    payment: { method: 'card', status: 'paid', subtotal: 1234, deliveryFee: 0, serviceFee: 0, tip: 0, discount: 0, total: 1234 },
+  }
+  serverOrder(web)
+  serverOrder({ ...web, status: 'accepted', updatedAt: later() })
+  assert.equal(tillStore.getCurrentShift().onlineOrdersTotal - before, 1234)
+})
+
+await test('training orders never touch stock, the shift or the reports', () => {
+  const ids = ['spud-great-british', 'panini-chicken-bacon']
+  const stockBefore = ids.map((id) => menuStore.getProductById(id)?.stockQuantity)
+  const shiftBefore = tillStore.getCurrentShift().onlineOrdersTotal
+  const sims = orderStore.injectSimulatedRushOrders()
+  assert.ok(sims.every((o) => o.isTest))
+  assert.deepEqual(ids.map((id) => menuStore.getProductById(id)?.stockQuantity), stockBefore)
+  assert.equal(tillStore.getCurrentShift().onlineOrdersTotal, shiftBefore)
+  const done = sims.map((o) => ({ ...o, status: 'collected' }))
+  assert.equal(orderStore.getDetailedBusinessAnalytics(done, '7days').completedCount, 0)
+  assert.equal(orderStore.generateZReport(done).orderCount, 0)
+  tillStore.closeTillShift('Manager', { ...tillStore.EMPTY_DENOMINATIONS })
+})
+
+await test('a Z-report closed on the till appears in the admin history on another device', () => {
+  const now = new Date().toISOString()
+  const shift = {
+    id: 'shift-remote-1', shiftNumber: 7, status: 'closed', openedAt: now, closedAt: now, openedBy: 'Chloe', startingFloat: 10000,
+    expectedCash: 12000, cashSalesTotal: 2000, cardSalesTotal: 0, onlineOrdersTotal: 0, totalDiscountGiven: 0, refundsTotal: 0,
+    inStoreOrdersCount: 3, onlineOrdersCount: 0, movements: [], updatedAt: now,
+  }
+  serverPut({ key: 'just_spuds::rec::shifts::shift-remote-1', value: shift, updatedAt: now })
+  assert.ok(tillStore.getPastZReports().some((s) => s.id === 'shift-remote-1'))
+  assert.notEqual(tillStore.getCurrentShift()?.id, 'shift-remote-1', 'another till’s shift is never rung up on here')
+})
+
+await test('a PIN change reaches every device and ends sessions opened with the old PIN', async () => {
+  const res = roster.setStaffPin('usr-cashier-1', '482913', 'Manager')
+  assert.equal(res.ok, true, res.message)
+  await cloud.syncNow()
+  const published = mem.kv.get(DOC('staff.roster')).value.data
+  assert.equal(published.members.find((m) => m.id === 'usr-cashier-1').defaultPin, false)
+  assert.equal(authStore.loginWithPin('1111').ok, false, 'old PIN dead')
+  assert.equal(authStore.loginWithPin('482913').ok, true, 'new PIN works')
+  // someone changes the cashier's PIN on another device → this session ends
+  const changed = {
+    ...published,
+    members: published.members.map((m) => (m.id === 'usr-cashier-1' ? { ...m, pinHash: roster.hashPin('736150', published.salt) } : m)),
+  }
+  serverPut(remoteDoc('staff.roster', changed))
+  assert.equal(authStore.getCurrentUser(), null, 'signed out on this device')
+  assert.equal(authStore.loginWithPin('736150').ok, true)
+  assert.equal(roster.validateNewPin('1234', undefined).ok, false, 'starter / sequential PINs refused')
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+})
+
+await test('a fresh browser refuses the published starter PINs until it has checked the server', async () => {
+  authStore.logout()
+  localStorage.removeItem('just_spuds_sync_last_pull_v1')
+  const meta = JSON.parse(localStorage.getItem('just_spuds_sync_meta_v1'))
+  delete meta['staff.roster']
+  localStorage.setItem('just_spuds_sync_meta_v1', JSON.stringify(meta))
+  const blocked = authStore.loginWithPin('3333') // supervisor still on the starter PIN
+  assert.equal(blocked.ok, false)
+  assert.match(blocked.message, /checking/i)
+  await cloud.syncNow()
+  assert.equal(authStore.loginWithPin('3333').ok, true, 'fine once the real staff list is known')
+})
+
+await test('a customer device publishes nothing and keeps only its own orders', async () => {
+  const p = firstSpud()
+  authStore.logout()
+  localStorage.removeItem('just_spuds_staff_device_v1')
+  localStorage.removeItem('just_spuds_customer_placed_order_ids_v1')
+  localStorage.removeItem('just_spuds_active_order_id')
+  const settingsAt = mem.kv.get(DOC('delivery.settings')).value.at
+  deliverySettings.saveDeliverySettings({ deliveryFeePence: 1 }) // a curious customer in devtools
+  const mine = orderStore.createNewOrder({
+    fulfilment: 'pickup', customer, lines: [line(p, 1)], subtotal: p.price, deliveryFee: 0, serviceFee: 0, tip: 0, discount: 0, total: p.price, paymentMethod: 'card',
+  })
+  await cloud.syncNow({ fullOrders: true })
+  assert.equal(mem.kv.get(DOC('delivery.settings')).value.at, settingsAt, 'settings untouched on the server')
+  assert.ok(mem.orders.has(mine.id), 'its own order uploads')
+  const local = orderStore.getStoredOrders()
+  assert.ok(local.length >= 1 && local.every((o) => o.id === mine.id), 'nobody else’s order (names, phones, addresses) stays on a customer phone')
+})
+
+await test('staff screens flag a web order priced below the real menu (tampered browser)', () => {
+  const p = firstSpud()
+  const honest = { ...line(p, 2) }
+  const cheap = { ...line(p, 2), base: 1 }
+  const order = (l, subtotal) => ({
+    id: 'x', shortId: 'JS-W-1', source: 'WEBSITE', fulfilment: 'pickup', lines: [l],
+    payment: { subtotal, deliveryFee: 0, serviceFee: 49, tip: 0, discount: 0, total: subtotal + 49 },
+  })
+  assert.equal(orderStore.getPriceCheck(order(honest, p.price * 2)).ok, true)
+  const bad = orderStore.getPriceCheck(order(cheap, 2))
+  assert.equal(bad.ok, false)
+  assert.equal(bad.expected, p.price * 2)
+  assert.match(bad.message, /menu/i)
+  assert.equal(orderStore.getPriceCheck({ ...order(cheap, 2), source: 'TILL' }).ok, true, 'till prices (incl. overrides) are the till’s business')
+})
+
+await test('a blocked number is refused on a customer phone that only holds hashes', async () => {
+  assert.equal(authStore.loginWithPin('736150').ok, true)
+  blacklist.blacklistPhone('07700 900555', 'Prank orders', 'Manager')
+  await cloud.syncNow()
+  assert.ok(mem.kv.has('just_spuds::priv::blacklist'), 'full list: staff only')
+  const hashes = mem.kv.get(DOC('blacklist.hashes')).value.data
+  assert.ok(hashes.length >= 1 && !JSON.stringify(hashes).includes('900555'), 'public copy has no phone numbers')
+  localStorage.removeItem('just_spuds_blacklist_v1') // as on a customer phone
+  assert.equal(blacklist.isPhoneBlacklisted('+44 7700 900555').blacklisted, true)
+})
+
+await test('"Start trading fresh" clears pre-launch orders, shifts and audit entries on every device', async () => {
+  assert.equal(authStore.loginWithPin('736150').ok, true)
+  await cloud.syncNow({ fullOrders: true })
+  assert.ok(orderStore.getStoredOrders().length > 0)
+  const res = await cloud.startFresh('Manager')
+  assert.equal(res.ok, true, res.message)
+  const at = cloud.getEpochAt()
+  assert.equal(orderStore.getStoredOrders().length, 0)
+  assert.ok(!tillStore.getPastZReports().some((s) => s.openedAt < at), 'old Z-reports gone')
+  assert.ok(audit.getAuditLogs().every((l) => l.timestamp >= at))
+  await cloud.syncNow({ fullOrders: true })
+  assert.equal(orderStore.getStoredOrders().length, 0, 'old orders are not downloaded again')
+  // a new sale after the reset syncs normally
+  const p = firstSpud()
+  const fresh = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Cashier')
+  await cloud.syncNow()
+  assert.ok(mem.orders.has(fresh.id))
+  // another device resets again: this device follows
+  const epoch2 = { id: 'ep-other', at: later(), by: 'Owner' }
+  serverPut({ key: DOC('system.epoch'), value: { data: epoch2, at: epoch2.at, by: 'dev-other' }, updatedAt: epoch2.at })
+  assert.equal(cloud.getEpoch().id, 'ep-other')
+  assert.equal(orderStore.getStoredOrders().length, 0)
+})
+
+cloud.stopCloudSync()
 
 // ---------------------------------------------------------------------------
 await vite.close()

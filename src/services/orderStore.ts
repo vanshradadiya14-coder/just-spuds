@@ -5,17 +5,13 @@
  * live status state transitions, cancellation with refund logic, and admin sound alerts.
  */
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
-import { SITE } from '../data/site'
 import { recordDriverDeliveryCompletion } from './driverStore'
-import {
-  syncOrderToSupabase,
-  fetchSupabaseOrders,
-  initSupabaseOrderSubscription,
-  sourceFromShortId,
-} from './supabaseOrderSync'
+import { sourceFromShortId } from './supabaseOrderSync'
+import { ordersVat, type VatBand } from './vat'
+import { isStaffDevice, markDocChanged, markOrdersChanged, registerDoc, registerOrders } from './cloudSync'
 import { logAuditEvent } from './auditStore'
 import { getSharedAudioContext } from './printerBridge'
-import { deductStockForOrderLines, restoreStockForOrderLines } from './menuStore'
+import { deductStockForOrderLines, getBusinessDetails, getProducts, restoreStockForOrderLines } from './menuStore'
 import { recordOnlineOrderInShift, recordTillRefund } from './tillStore'
 
 export type OrderSource = 'WEBSITE' | 'TILL' | 'PHONE' | 'STAFF'
@@ -163,6 +159,10 @@ export interface Order {
   review?: OrderReview
   manualOverrides?: OrderManualOverride[]
   adminNotes?: OrderAdminNote[]
+  /** Last local change — used to keep the newer copy when devices disagree. */
+  updatedAt?: string
+  /** Created by "Simulate rush" for training: never counted in takings or reports. */
+  isTest?: boolean
   timeline: {
     status: OrderStatus
     timestamp: string
@@ -174,6 +174,7 @@ export interface Order {
 const STORAGE_KEY = 'just_spuds_orders_v1'
 const ACTIVE_ORDER_ID_KEY = 'just_spuds_active_order_id'
 const STOCK_KEY = 'just_spuds_menu_stock_v1'
+const PAUSE_STORAGE_KEY_EARLY = 'just_spuds_kitchen_pause_v1'
 
 // Production orders initialize empty so only real placed orders appear in portals
 const INITIAL_ORDERS: Order[] = []
@@ -228,27 +229,21 @@ function inferLegacySource(o: Order): OrderSource {
 export function saveOrders(orders: Order[]): void {
   if (typeof window === 'undefined') return
   try {
-    const prev = getStoredOrders()
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders))
-    notifyListeners(orders)
-    channel?.postMessage({ type: 'ORDERS_UPDATED', orders })
-
-    // Background sync changed/added order to Supabase
-    const changed = orders.find((ord) => {
-      const old = prev.find((p) => p.id === ord.id)
-      return (
-        !old ||
-        old.status !== ord.status ||
-        old.timeline.length !== ord.timeline.length ||
-        old.driver?.id !== ord.driver?.id ||
-        old.deliveryDetails?.assignedDriverId !== ord.deliveryDetails?.assignedDriverId
-      )
+    const prev = new Map(getStoredOrders().map((o) => [o.id, o]))
+    const now = new Date().toISOString()
+    const changedIds: string[] = []
+    const stamped = orders.map((ord) => {
+      const old = prev.get(ord.id)
+      // Compare without the timestamp itself, so re-saving an unchanged order is a no-op.
+      if (old && JSON.stringify({ ...old, updatedAt: undefined }) === JSON.stringify({ ...ord, updatedAt: undefined })) return ord
+      changedIds.push(ord.id)
+      return { ...ord, updatedAt: now }
     })
-    if (changed) {
-      syncOrderToSupabase(changed)
-    } else if (orders[0]) {
-      syncOrderToSupabase(orders[0])
-    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stamped))
+    notifyListeners(stamped)
+    channel?.postMessage({ type: 'ORDERS_UPDATED', orders: stamped })
+    // Queued in an outbox that survives reloads; uploaded now, or when the network returns.
+    markOrdersChanged(changedIds)
   } catch (err) {
     console.error('Failed to save orders to localStorage', err)
   }
@@ -258,57 +253,80 @@ function notifyListeners(orders: Order[]): void {
   listeners.forEach((fn) => fn(orders))
 }
 
-// Initial sync with Supabase and real-time subscription
+/** Writes orders that came from another device without queueing them for upload again. */
+function writeRemoteOrders(next: Order[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    notifyListeners(next)
+    channel?.postMessage({ type: 'ORDERS_UPDATED', orders: next })
+  } catch {
+    // ignore quota
+  }
+}
+
 if (typeof window !== 'undefined') {
-  fetchSupabaseOrders().then((remoteOrders) => {
-    if (remoteOrders && remoteOrders.length > 0) {
-      const local = getStoredOrders()
-      const map = new Map<string, Order>()
-      local.forEach((o) => map.set(o.id, o))
-      remoteOrders.forEach((o) => map.set(o.id, o))
-      const merged = Array.from(map.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      )
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
-        notifyListeners(merged)
-      } catch {
-        // ignore quota
-      }
-    }
+  registerOrders({
+    get: (id) => getStoredOrders().find((o) => o.id === id),
+    apply: (incoming) => {
+      const current = getStoredOrders()
+      const byId = new Map(current.map((o) => [o.id, o]))
+      let changed = false
+      incoming.forEach((remote) => {
+        const local = byId.get(remote.id)
+        // Keep whichever copy was changed last.
+        if (!local || !local.updatedAt || !remote.updatedAt || remote.updatedAt >= local.updatedAt) {
+          if (!local || JSON.stringify(local) !== JSON.stringify(remote)) {
+            byId.set(remote.id, remote)
+            changed = true
+          }
+        }
+        // A web order reaching the till while its shift is open is part of that shift.
+        if (!local && remote.source === 'WEBSITE' && !remote.isTest && remote.status !== 'cancelled') {
+          recordOnlineOrderInShift(remote.id, remote.payment.total)
+        }
+      })
+      if (!changed) return
+      const merged = [...byId.values()].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      writeRemoteOrders(merged)
+    },
+    customerIds: () => {
+      const active = getActiveCustomerOrderId()
+      return Array.from(new Set([...(active ? [active] : []), ...getCustomerPlacedOrderIds()]))
+    },
+    // Before this, every customer's browser downloaded every order in the shop —
+    // names, phone numbers and addresses. A customer device now keeps only its own.
+    pruneToCustomer: (ids) => {
+      if (isStaffDevice()) return
+      const current = getStoredOrders()
+      const mine = current.filter((o) => ids.includes(o.id) || ids.includes(o.shortId))
+      if (mine.length !== current.length) writeRemoteOrders(mine)
+    },
+    wipeBefore: (iso) => {
+      const current = getStoredOrders()
+      const kept = current.filter((o) => o.createdAt >= iso)
+      if (kept.length !== current.length) writeRemoteOrders(kept)
+    },
   })
 
-  initSupabaseOrderSubscription(
-    (remoteOrder) => {
-      const current = getStoredOrders()
-      const idx = current.findIndex((o) => o.id === remoteOrder.id)
-      let updated: Order[]
-      if (idx >= 0) {
-        updated = [...current]
-        updated[idx] = remoteOrder
-      } else {
-        updated = [remoteOrder, ...current]
-      }
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-        notifyListeners(updated)
-        channel?.postMessage({ type: 'ORDERS_UPDATED', orders: updated })
-      } catch {
-        // ignore
-      }
+  registerDoc({
+    name: 'kitchen.pause',
+    storageKey: PAUSE_STORAGE_KEY_EARLY,
+    notify: () => {
+      const state = getKitchenPauseState()
+      pauseListeners.forEach((fn) => fn(state))
+      channel?.postMessage({ type: 'KITCHEN_PAUSE_UPDATED', pause: state })
     },
-    (deletedId) => {
-      const current = getStoredOrders()
-      const updated = current.filter((o) => o.id !== deletedId)
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-        notifyListeners(updated)
-        channel?.postMessage({ type: 'ORDERS_UPDATED', orders: updated })
-      } catch {
-        // ignore
-      }
-    }
-  )
+  })
+
+  registerDoc({
+    name: 'menu.stockOverrides',
+    storageKey: STOCK_KEY,
+    notify: () => {
+      const current = getMenuStockOverrides()
+      stockListeners.forEach((fn) => fn(current))
+      channel?.postMessage({ type: 'STOCK_UPDATED', stock: current })
+    },
+  })
 }
 
 export function subscribeOrders(fn: OrderListener): () => void {
@@ -490,6 +508,8 @@ export function createNewOrder(params: {
   scheduledFor?: string
   scheduleDate?: string
   scheduleTime?: string
+  /** Training order: no stock, no takings, no customer tracking. */
+  isTest?: boolean
 }): Order {
   const pauseCheck = isOrderAllowedDuringPause({
     isScheduled: params.isScheduled,
@@ -545,6 +565,7 @@ export function createNewOrder(params: {
     scheduleTime: params.scheduleTime,
     kitchenNotes: params.kitchenNotes,
     driver: undefined,
+    ...(params.isTest ? { isTest: true } : {}),
     timeline: [
       {
         status: 'placed',
@@ -557,17 +578,23 @@ export function createNewOrder(params: {
     ],
   }
 
-  const current = getStoredOrders()
-  const updated = [newOrder, ...current]
-  saveOrders(updated)
+  if (params.isTest) {
+    saveOrders([newOrder, ...getStoredOrders()])
+    return newOrder
+  }
+
+  // Remember it as this customer's order before it is queued for upload, so the
+  // live-update subscription for this browser includes it from the start.
   setActiveCustomerOrderId(newOrder.id)
+  saveOrders([newOrder, ...getStoredOrders()])
 
   // Deduct inventory atomically across all retail channels
   deductStockForOrderLines(params.lines, shortId, 'Online Web Customer')
 
-  // Web sales taken while the till is open belong on that shift's Z-report,
-  // otherwise the end-of-day figures only ever show counter takings.
-  recordOnlineOrderInShift(params.total)
+  // Web sales belong on the open till shift's Z-report. On a customer's phone
+  // there is no shift, so the till also records it when the order arrives
+  // (see registerOrders below) — the shift de-duplicates by order id.
+  recordOnlineOrderInShift(newOrder.id, params.total)
 
   // Staff screens ring for this order themselves (see services/orderAlerts.ts)
   // — the customer's browser must not play the kitchen alarm.
@@ -743,7 +770,7 @@ export function cancelOrder(orderId: string, reason: string): { ok: boolean; ord
   }
 
   if (order.status === 'out_for_delivery') {
-    return { ok: false, message: 'Driver is already on the road. Please call the store directly on ' + SITE.phone }
+    return { ok: false, message: 'Driver is already on the road. Please call the store directly on ' + getBusinessDetails().phone }
   }
 
   // When staff/admin cancels an order, money is automatically 100% refunded to customer's payment method
@@ -863,8 +890,10 @@ export interface ZReportData {
   digitalPayTotal: number
   cashTotal: number
   tipsTotal: number
+  /** Total VAT contained in the takings, from each product's rate (field name kept for old reports). */
   vatStandardAmount: number
   netSalesExVat: number
+  vatBands?: VatBand[]
   deliveryRevenue: number
   pickupRevenue: number
 }
@@ -947,7 +976,11 @@ export function averagePrepMinutes(orders: Order[]): number | null {
   return Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
 }
 
-export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRange = 'today'): BusinessAnalytics {
+/** Real trading only: training orders from "Simulate rush" never reach a figure. */
+export const realOrders = (orders: Order[]) => orders.filter((o) => !o.isTest)
+
+export function getDetailedBusinessAnalytics(allOrders: Order[], timeframe: TimeRange = 'today'): BusinessAnalytics {
+  const orders = realOrders(allOrders)
   const now = new Date()
   const nowDayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const yesterdayStart = nowDayStart - 24 * 60 * 60 * 1000
@@ -1145,7 +1178,8 @@ export function getDetailedBusinessAnalytics(orders: Order[], timeframe: TimeRan
   }
 }
 
-export function generateZReport(orders: Order[], dateStr?: string): ZReportData {
+export function generateZReport(allOrders: Order[], dateStr?: string): ZReportData {
+  const orders = realOrders(allOrders)
   const now = new Date()
   const targetDateStr = dateStr || now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const reportNumber = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-01`
@@ -1171,8 +1205,9 @@ export function generateZReport(orders: Order[], dateStr?: string): ZReportData 
   const deliveryRevenue = deliveryOrders.reduce((sum, o) => sum + o.payment.total, 0)
   const pickupRevenue = pickupOrders.reduce((sum, o) => sum + o.payment.total, 0)
 
-  // UK Standard Rate VAT 20% portion
-  const vatStandardAmount = Math.round((grandTotal / 1.20) * 0.20)
+  // VAT from each product's own rate (tips excluded) — see services/vat.ts.
+  const vat = ordersVat(completed)
+  const vatStandardAmount = vat.vat
   const netSalesExVat = grandTotal - vatStandardAmount
 
   return {
@@ -1195,6 +1230,7 @@ export function generateZReport(orders: Order[], dateStr?: string): ZReportData 
     tipsTotal,
     vatStandardAmount,
     netSalesExVat,
+    vatBands: vat.bands,
     deliveryRevenue,
     pickupRevenue,
   }
@@ -1380,7 +1416,7 @@ export const PAUSE_REASON_PRESETS = [
   },
 ] as const
 
-const PAUSE_STORAGE_KEY = 'just_spuds_kitchen_pause_v1'
+const PAUSE_STORAGE_KEY = PAUSE_STORAGE_KEY_EARLY
 
 const DEFAULT_PAUSE_STATE: KitchenPauseState = {
   isPaused: false,
@@ -1417,6 +1453,7 @@ export function setKitchenPause(state: KitchenPauseState): void {
   if (typeof window === 'undefined') return
   try {
     localStorage.setItem(PAUSE_STORAGE_KEY, JSON.stringify(state))
+    markDocChanged('kitchen.pause')
     pauseListeners.forEach((fn) => fn(state))
     channel?.postMessage({ type: 'KITCHEN_PAUSE_UPDATED', pause: state })
     if (state.isPaused) {
@@ -1521,6 +1558,7 @@ export function toggleItemStock(productId: string, inStock: boolean): void {
     const current = getMenuStockOverrides()
     current[productId] = inStock
     localStorage.setItem(STOCK_KEY, JSON.stringify(current))
+    markDocChanged('menu.stockOverrides')
     channel?.postMessage({ type: 'STOCK_UPDATED', stock: current })
     stockListeners.forEach((fn) => fn(current))
   } catch {
@@ -1567,6 +1605,7 @@ export function injectSimulatedRushOrders(): Order[] {
 
   const sub1 = subtotalOf(lines1)
   const sim1 = createNewOrder({
+    isTest: true,
     fulfilment: 'delivery',
     customer: {
       name: 'TEST ORDER — Oliver Thorne',
@@ -1590,6 +1629,7 @@ export function injectSimulatedRushOrders(): Order[] {
 
   const sub2 = subtotalOf(lines2)
   const sim2 = createNewOrder({
+    isTest: true,
     fulfilment: 'pickup',
     customer: {
       name: 'TEST ORDER — Sophie Bennett',
@@ -1607,8 +1647,6 @@ export function injectSimulatedRushOrders(): Order[] {
     lines: lines2,
   })
 
-  // They were placed from a staff screen, not by this browser's customer.
-  forgetCustomerOrderIds([sim1.id, sim2.id])
   return [sim1, sim2]
 }
 
@@ -2647,3 +2685,38 @@ export function refundOrder(
 }
 
 
+
+export interface PriceCheck {
+  ok: boolean
+  /** What the lines cost at this device's menu prices (pence). */
+  expected: number
+  /** What the order says the lines cost (pence). */
+  charged: number
+  message?: string
+}
+
+/**
+ * Web checkout runs in the customer's browser, so a technically-minded customer
+ * could edit their copy of the menu and submit a cheap order. Staff devices
+ * hold the shop's real menu: re-price the lines here and flag an order that
+ * comes in below it. Till / phone orders are priced by staff (and may carry a
+ * manager's override), so only web orders are checked.
+ */
+export function getPriceCheck(order: Pick<Order, 'source' | 'lines' | 'payment'>): PriceCheck {
+  const charged = order.payment.subtotal
+  if (order.source !== 'WEBSITE') return { ok: true, expected: charged, charged }
+  const products = new Map(getProducts().map((p) => [p.id, p]))
+  let expected = 0
+  for (const l of order.lines) {
+    const product = products.get(l.productId)
+    const { priceOverridePence: _o, priceOverrideReason: _r, ...rest } = l
+    expected += lineUnitPrice(product ? { ...rest, base: product.price } : rest) * l.qty
+  }
+  if (charged + 1 >= expected) return { ok: true, expected, charged }
+  return {
+    ok: false,
+    expected,
+    charged,
+    message: `Priced below the menu: order says £${(charged / 100).toFixed(2)} for the food, the menu says £${(expected / 100).toFixed(2)}. Check before handing it over.`,
+  }
+}

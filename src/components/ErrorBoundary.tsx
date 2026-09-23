@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { getBusinessDetails } from '../services/menuStore'
 import { SITE } from '../data/site'
 
 interface Props {
@@ -65,7 +66,7 @@ export default class ErrorBoundary extends Component<Props, State> {
               </button>
 
               <a
-                href={`tel:${SITE.phone}`}
+                href={getBusinessDetails().phoneHref}
                 className="w-full sm:w-auto rounded-full border border-ink/15 bg-white px-6 py-3 font-body text-xs font-bold text-ink hover:bg-paper transition"
               >
                 📞 Call Shop ({SITE.town})

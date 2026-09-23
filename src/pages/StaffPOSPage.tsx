@@ -60,6 +60,8 @@ import {
   type OnlineOrderAlert,
 } from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
+import SyncStatusPill from '../components/SyncStatusPill'
+import { computeVat, isVatRegistered } from '../services/vat'
 import {
   broadcastCFDState,
   resetCFDState,
@@ -290,6 +292,36 @@ export default function StaffPOSPage() {
 
   const isAuthorized = hasRole(user, SHOP_FLOOR_ROLES)
 
+  // Square / Toast behaviour: an idle register locks itself so the next person
+  // has to use their own PIN. The shift and any open ticket are kept. Never
+  // mid-payment — a card reader may still be waiting for the customer.
+  const lastActivityRef = useRef(Date.now())
+  const paymentInProgress = isCashConfirmModalOpen || isCardTerminalModalOpen || isSplitModalOpen
+  useEffect(() => {
+    const touch = () => {
+      lastActivityRef.current = Date.now()
+    }
+    window.addEventListener('pointerdown', touch)
+    window.addEventListener('keydown', touch)
+    return () => {
+      window.removeEventListener('pointerdown', touch)
+      window.removeEventListener('keydown', touch)
+    }
+  }, [])
+  useEffect(() => {
+    const minutes = tillSettings.autoLockMinutes
+    if (!isAuthorized || !minutes) return
+    lastActivityRef.current = Date.now()
+    const timer = setInterval(() => {
+      if (paymentInProgress) return
+      if (Date.now() - lastActivityRef.current >= minutes * 60_000) {
+        logout()
+        setPinError(`Till locked after ${minutes} min without use — enter your PIN to carry on. Your ticket is still here.`)
+      }
+    }, 10_000)
+    return () => clearInterval(timer)
+  }, [isAuthorized, tillSettings.autoLockMinutes, paymentInProgress])
+
   // Nothing left in the queue → the queue modal has nothing to show; close it.
   useEffect(() => {
     if (activeAlerts.length === 0) setIsOnlineOrdersModalOpen(false)
@@ -325,7 +357,11 @@ export default function StaffPOSPage() {
 
   // Tips are not VATable and sit on top of the discounted goods total.
   const totalDuePence = Math.max(0, subtotalPence - discountPence) + tipPence
-  const vatIncludedPence = Math.round(((totalDuePence - tipPence) / 1.2) * 0.2)
+  const vatIncludedPence = useMemo(
+    () => computeVat({ lines: cartLines, discount: discountPence, eatIn: orderType === 'eat_in' }).vat,
+    [cartLines, discountPence, orderType, products],
+  )
+  const showVat = isVatRegistered()
 
   // Fast Numpad Cash Tender Calculation
   const tenderedCashPence = tenderNumpadValue
@@ -1215,7 +1251,7 @@ export default function StaffPOSPage() {
           <form onSubmit={handlePinSubmit} className="space-y-4">
             <input
               type="password"
-              maxLength={4}
+              maxLength={8}
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
               placeholder="••••"
@@ -1230,7 +1266,7 @@ export default function StaffPOSPage() {
                   type="button"
                   onClick={() => {
                     playPOSTouchTone('numpad')
-                    setPinInput((prev) => (prev.length < 4 ? prev + num : prev))
+                    setPinInput((prev) => (prev.length < 8 ? prev + num : prev))
                   }}
                   className="rounded-xl border border-white/10 bg-white/5 py-3.5 font-mono text-xl font-bold text-white hover:bg-white/15 transition active:scale-95"
                 >
@@ -1251,7 +1287,7 @@ export default function StaffPOSPage() {
                 type="button"
                 onClick={() => {
                   playPOSTouchTone('numpad')
-                  setPinInput((prev) => (prev.length < 4 ? prev + '0' : prev))
+                  setPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))
                 }}
                 className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-xl font-bold text-white hover:bg-white/15"
               >
@@ -1484,13 +1520,17 @@ export default function StaffPOSPage() {
         </div>
 
         <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none [&>*]:shrink-0 py-1">
-          <span
-            className={`${isOnline ? 'hidden xl:inline-flex text-emerald-300' : 'inline-flex bg-rose-950/60 border border-rose-500/40 text-rose-300'} items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-bold`}
-            title={isOnline ? 'Cloud sync live' : 'Offline — sales are saved on this till and sync when the connection returns'}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-rose-400 animate-pulse'}`} />
-            {isOnline ? 'Online' : 'OFFLINE'}
-          </span>
+          {isOnline ? (
+            <SyncStatusPill compact />
+          ) : (
+            <span
+              className="inline-flex bg-rose-950/60 border border-rose-500/40 text-rose-300 items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-bold"
+              title="Offline — sales are saved on this till and upload when the connection returns"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
+              OFFLINE
+            </span>
+          )}
 
           <button
             type="button"
@@ -2234,10 +2274,12 @@ export default function StaffPOSPage() {
                 <span className="font-mono">+{gbp(tipPence)} <button type="button" onClick={() => setTipPence(0)} className="ml-1 text-white/40 hover:text-white" aria-label="Remove tip">✕</button></span>
               </div>
             )}
-            <div className="flex justify-between text-white/40 text-[10px]">
-              <span>VAT @ 20% (Included)</span>
-              <span className="font-mono">{gbp(vatIncludedPence)}</span>
-            </div>
+            {showVat && (
+              <div className="flex justify-between text-white/40 text-[10px]">
+                <span>VAT included{orderType === 'eat_in' ? ' (eat in)' : ''}</span>
+                <span className="font-mono">{gbp(vatIncludedPence)}</span>
+              </div>
+            )}
             <div className="flex justify-between items-baseline pt-1 border-t border-white/15">
               <span className="font-black text-sm text-white uppercase tracking-wider">Total Due</span>
               <span className="font-mono text-2xl font-black text-amber-400">
@@ -3410,7 +3452,13 @@ export default function StaffPOSPage() {
           actor={user?.name || 'Staff Cashier'}
           autoPrinted={tillSettings.autoPrintTillReceipt}
           onPrint={(o) => setReceiptOrder(o)}
-          onNewSale={() => setSaleComplete(null)}
+          onNewSale={() => {
+            setSaleComplete(null)
+            if (tillSettings.lockAfterSale) {
+              logout()
+              setPinError('Sale complete — next person, enter your PIN.')
+            }
+          }}
         />
       )}
 
@@ -4114,7 +4162,7 @@ export default function StaffPOSPage() {
               <p className="text-xs text-amber-300 font-bold">Enter Supervisor or Manager PIN:</p>
               <input
                 type="password"
-                maxLength={4}
+                maxLength={8}
                 value={managerPinInput}
                 onChange={(e) => setManagerPinInput(e.target.value)}
                 placeholder="••••"
@@ -4137,7 +4185,7 @@ export default function StaffPOSPage() {
                   type="button"
                   onClick={() => {
                     playPOSTouchTone('numpad')
-                    setManagerPinInput((prev) => (prev.length < 4 ? prev + num : prev))
+                    setManagerPinInput((prev) => (prev.length < 8 ? prev + num : prev))
                   }}
                   className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
                 >
@@ -4159,7 +4207,7 @@ export default function StaffPOSPage() {
                 type="button"
                 onClick={() => {
                   playPOSTouchTone('numpad')
-                  setManagerPinInput((prev) => (prev.length < 4 ? prev + '0' : prev))
+                  setManagerPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))
                 }}
                 className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
               >

@@ -6,6 +6,7 @@
  * Timecards are kept in localStorage and mirrored across tabs.
  */
 import { logAuditEvent } from './auditStore'
+import { markRecordChanged, registerEpochHandler, registerRecords } from './cloudSync'
 import type { AuthUser } from './authStore'
 
 export interface TimeclockBreak {
@@ -21,6 +22,8 @@ export interface TimeclockEntry {
   clockIn: string
   clockOut?: string
   breaks: TimeclockBreak[]
+  /** Last change — punches can come from the till and the admin console. */
+  updatedAt?: string
 }
 
 const STORAGE_KEY = 'just_spuds_timeclock_v1'
@@ -48,8 +51,12 @@ function load() {
   }
 }
 
-function persist() {
+function persist(changedId?: string) {
   if (typeof window === 'undefined') return
+  if (changedId) {
+    entries = entries.map((e) => (e.id === changedId ? { ...e, updatedAt: new Date().toISOString() } : e))
+    markRecordChanged('timeclock', changedId)
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, 2000)))
   channel?.postMessage({ type: 'TIMECLOCK_UPDATED' })
   notify()
@@ -94,7 +101,7 @@ export function clockIn(user: AuthUser): TimeclockEntry {
     breaks: [],
   }
   entries = [entry, ...entries]
-  persist()
+  persist(entry.id)
   logAuditEvent(user.name, 'timeclock.clock_in', user.name, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
   return { ...entry }
 }
@@ -107,7 +114,7 @@ export function clockOut(staffId: string, actor?: string): TimeclockEntry | unde
   const breaks = entry.breaks.map((b) => (b.end ? b : { ...b, end: now }))
   const updated = { ...entry, clockOut: now, breaks }
   entries = entries.map((e, i) => (i === idx ? updated : e))
-  persist()
+  persist(updated.id)
   logAuditEvent(actor || entry.staffName, 'timeclock.clock_out', entry.staffName, `${formatDuration(workedMs(updated))} worked`)
   return { ...updated }
 }
@@ -117,7 +124,7 @@ export function startBreak(staffId: string): TimeclockEntry | undefined {
   if (idx < 0 || entries[idx].breaks.some((b) => !b.end)) return undefined
   const updated = { ...entries[idx], breaks: [...entries[idx].breaks, { start: new Date().toISOString() }] }
   entries = entries.map((e, i) => (i === idx ? updated : e))
-  persist()
+  persist(updated.id)
   logAuditEvent(updated.staffName, 'timeclock.break_start', updated.staffName)
   return { ...updated }
 }
@@ -128,7 +135,7 @@ export function endBreak(staffId: string): TimeclockEntry | undefined {
   const now = new Date().toISOString()
   const updated = { ...entries[idx], breaks: entries[idx].breaks.map((b) => (b.end ? b : { ...b, end: now })) }
   entries = entries.map((e, i) => (i === idx ? updated : e))
-  persist()
+  persist(updated.id)
   logAuditEvent(updated.staffName, 'timeclock.break_end', updated.staffName)
   return { ...updated }
 }
@@ -155,4 +162,34 @@ export function formatDuration(ms: number): string {
 export function getTimecardsSince(since: Date): TimeclockEntry[] {
   const t = since.getTime()
   return getTimeclockEntries().filter((e) => new Date(e.clockIn).getTime() >= t)
+}
+
+if (typeof window !== 'undefined') {
+  registerRecords({
+    collection: 'timeclock',
+    limit: 400,
+    get: (id) => entries.find((e) => e.id === id),
+    apply: (items) => {
+      const byId = new Map(entries.map((e) => [e.id, e]))
+      let changed = false
+      ;(items as TimeclockEntry[]).forEach((e) => {
+        if (!e || !e.id) return
+        const prev = byId.get(e.id)
+        if (!prev || (e.updatedAt || '') > (prev.updatedAt || '')) {
+          byId.set(e.id, e)
+          changed = true
+        }
+      })
+      if (!changed) return
+      entries = [...byId.values()].sort((a, b) => b.clockIn.localeCompare(a.clockIn))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, 2000)))
+      channel?.postMessage({ type: 'TIMECLOCK_UPDATED' })
+      notify()
+    },
+  })
+  registerEpochHandler((at) => {
+    entries = entries.filter((e) => e.clockIn >= at)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
+    notify()
+  })
 }

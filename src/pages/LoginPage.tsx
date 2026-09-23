@@ -144,11 +144,11 @@ export default function LoginPage() {
         {(tab === 'staff' || tab === 'admin') && (
           <form onSubmit={handlePinSubmit} className="space-y-4">
             <label className="block text-center font-body text-xs font-bold text-slate-600">
-              {tab === 'admin' ? 'Enter your 4-digit supervisor / manager PIN' : 'Enter your 4-digit staff PIN'}
+              {tab === 'admin' ? 'Enter your supervisor / manager PIN' : 'Enter your staff PIN'}
             </label>
             <input
               type="password"
-              maxLength={4}
+              maxLength={8}
               value={pin}
               onChange={(e) => setPin(e.target.value)}
               placeholder="••••"
@@ -162,7 +162,7 @@ export default function LoginPage() {
                 <button
                   key={num}
                   type="button"
-                  onClick={() => setPin((prev) => (prev.length < 4 ? prev + num : prev))}
+                  onClick={() => setPin((prev) => (prev.length < 8 ? prev + num : prev))}
                   className="rounded-xl border border-ink/10 bg-white py-3 font-mono text-lg font-bold text-ink hover:bg-paper active:scale-95 shadow-xs"
                 >
                   {num}
@@ -177,7 +177,7 @@ export default function LoginPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setPin((prev) => (prev.length < 4 ? prev + '0' : prev))}
+                onClick={() => setPin((prev) => (prev.length < 8 ? prev + '0' : prev))}
                 className="rounded-xl border border-ink/10 bg-white py-3 font-mono text-lg font-bold text-ink hover:bg-paper"
               >
                 0

@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import type { TillShift } from '../services/tillStore'
 import { gbp } from '../utils/format'
 import { SITE } from '../data/site'
+import { getBusinessDetails } from '../services/menuStore'
 
 interface ZReportReceiptProps {
   shift: TillShift
@@ -10,6 +11,7 @@ interface ZReportReceiptProps {
 }
 
 export default function ZReportReceipt({ shift, onClose, isModal = true }: ZReportReceiptProps) {
+  const business = getBusinessDetails()
   const reportRef = useRef<HTMLDivElement>(null)
 
   const handlePrint = () => {
@@ -37,8 +39,10 @@ export default function ZReportReceipt({ shift, onClose, isModal = true }: ZRepo
       <div className="text-center pb-3 border-b-2 border-black">
         <h2 className="text-lg font-black uppercase tracking-wider">{SITE.name}</h2>
         <p className="text-[11px] font-bold uppercase tracking-wide">END OF DAY &bull; Z-REPORT</p>
-        <p className="text-[10px] text-gray-700">{SITE.address.line1}, {SITE.address.town}</p>
-        <p className="text-[10px] font-bold">VAT Reg: GB 492 8192 10 &bull; Tel: {SITE.phone}</p>
+        <p className="text-[10px] text-gray-700">{business.address}</p>
+        <p className="text-[10px] font-bold">
+          {business.vatNumber ? <>VAT Reg: {business.vatNumber} &bull; </> : null}Tel: {business.phone}
+        </p>
       </div>
 
       {/* SHIFT & AUDIT METADATA */}

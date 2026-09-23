@@ -15,13 +15,14 @@ import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import {
   createNewOrder,
   getKitchenPauseState,
+  getMenuStockOverrides,
   isOrderAllowedDuringPause,
   type Order,
   type PaymentMethod,
   type CustomerInfo,
 } from './orderStore'
 import { isPhoneBlacklisted } from './blacklistStore'
-import { getConfiguredHours, getProducts, getPromoCodes } from './menuStore'
+import { getBusinessDetails, getConfiguredHours, getProducts, getPromoCodes, isProductSoldOut } from './menuStore'
 import { getDeliverySettings } from './deliverySettingsStore'
 import { getStoreStatus } from '../data/site'
 import { validateDeliveryPostcode } from '../data/deliveryZones'
@@ -130,7 +131,7 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
   if (blk.blacklisted) {
     return {
       ok: false,
-      reason: blk.reason || 'This phone number requires in-person ordering at our Market Square counter. Please call 01296 423456.',
+      reason: blk.reason || `This phone number requires in-person ordering at our Market Square counter. Please call ${getBusinessDetails().phone}.`,
     }
   }
 
@@ -158,6 +159,7 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
 
   // Central Inventory & Channel Availability check (prevent overselling online)
   const products = getProducts()
+  const overrides = getMenuStockOverrides()
   for (const line of payload.lines) {
     const prod = products.find((p) => p.id === line.productId || p.name === line.name)
     if (prod) {
@@ -166,7 +168,7 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
       }
       const requiredQty = line.qty || 1
       const currentStock = typeof prod.stockQuantity === 'number' ? prod.stockQuantity : 45
-      if (!prod.available || currentStock < requiredQty) {
+      if (isProductSoldOut(prod, overrides) || currentStock < requiredQty) {
         return {
           ok: false,
           reason: `Sorry, "${prod.name}" is currently out of stock or insufficient quantity (Available: ${currentStock}). Please update your cart.`,

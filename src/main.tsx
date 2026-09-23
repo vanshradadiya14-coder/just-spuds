@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { startCloudSync } from './services/cloudSync'
 import './index.css'
 
 // Automatically clear any lingering legacy demo sessions or demo orders from client storage
@@ -36,6 +37,15 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+// Cross-device sync (orders, menu, stock, settings, staff…). The Supabase client
+// is its own chunk, fetched right after the first render.
+import('./services/sync/supabaseBackend')
+  .then(({ createSupabaseBackend }) => startCloudSync({ backend: createSupabaseBackend() }))
+  .catch((err) => {
+    console.warn('[sync] could not start', err)
+    void startCloudSync({ backend: null })
+  })
 
 // Firebase Analytics initialises as a side effect of loading the module. Pull it
 // in once the page is idle so it never competes with first paint.

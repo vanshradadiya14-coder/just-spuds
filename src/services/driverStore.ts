@@ -5,6 +5,9 @@
  * driver metrics (earnings, completed orders, ratings), and cross-tab synchronization.
  */
 
+import { markDocChanged, registerDoc } from './cloudSync'
+import { checkSaltedPin, saltedPinHash } from './staffRoster'
+
 export interface DriverProfile {
   id: string
   name: string
@@ -15,7 +18,12 @@ export interface DriverProfile {
   vehicleReg: string
   status: 'ACTIVE' | 'SUSPENDED' | 'DISABLED'
   isOnline: boolean
-  pin: string
+  /** Legacy plaintext PIN — migrated to pinHash on first read and removed. */
+  pin?: string
+  /** `salt$hash` of the driver's sign-in PIN. */
+  pinHash?: string
+  /** Still on the starter PIN shipped with the app (public). */
+  defaultPin?: boolean
   rating: number
   deliveriesCompletedCount: number
   todayEarningsPence: number
@@ -100,29 +108,57 @@ const driverListeners = new Set<DriverListener>()
 function notifyDriverListeners(): void {
   const all = getDrivers()
   driverListeners.forEach((fn) => fn(all))
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('storage'))
-  }
+}
+
+const STARTER_DRIVER_PINS = ['7777', '7778', '7779']
+
+/** Replaces any plaintext PIN with a salted hash. */
+function migratePins(list: DriverProfile[]): { list: DriverProfile[]; changed: boolean } {
+  let changed = false
+  const next = list.map((d) => {
+    if (!d.pin) return d
+    changed = true
+    const { pin, ...rest } = d
+    return { ...rest, pinHash: rest.pinHash || saltedPinHash(pin), defaultPin: rest.pinHash ? rest.defaultPin : STARTER_DRIVER_PINS.includes(pin) }
+  })
+  return { list: next, changed }
 }
 
 export function getDrivers(): DriverProfile[] {
-  if (typeof window === 'undefined') return SEED_DRIVERS
+  if (typeof window === 'undefined') return migratePins(SEED_DRIVERS).list
   try {
     const raw = localStorage.getItem(DRIVERS_STORAGE_KEY)
-    if (!raw) {
-      localStorage.setItem(DRIVERS_STORAGE_KEY, JSON.stringify(SEED_DRIVERS))
-      return SEED_DRIVERS
-    }
-    return JSON.parse(raw)
+    const parsed: DriverProfile[] = raw ? JSON.parse(raw) : SEED_DRIVERS
+    const { list, changed } = migratePins(parsed)
+    if (!raw || changed) localStorage.setItem(DRIVERS_STORAGE_KEY, JSON.stringify(list))
+    return list
   } catch {
-    return SEED_DRIVERS
+    return migratePins(SEED_DRIVERS).list
   }
+}
+
+/** The active driver whose PIN this is. */
+export function findDriverByPin(pin: string): DriverProfile | undefined {
+  const clean = pin.trim()
+  if (!clean) return undefined
+  return getDrivers().find((d) => d.status === 'ACTIVE' && checkSaltedPin(d.pinHash, clean))
+}
+
+/** Any driver (active or not) already using this PIN, other than `exceptId`. */
+export function isDriverPinTaken(pin: string, exceptId?: string): boolean {
+  const clean = pin.trim()
+  return getDrivers().some((d) => d.id !== exceptId && checkSaltedPin(d.pinHash, clean))
+}
+
+export function setDriverPin(driverId: string, pin: string): DriverProfile | undefined {
+  return updateDriverProfile({ id: driverId, pinHash: saltedPinHash(pin), defaultPin: false })
 }
 
 export function saveDrivers(drivers: DriverProfile[]): void {
   if (typeof window === 'undefined') return
   try {
     localStorage.setItem(DRIVERS_STORAGE_KEY, JSON.stringify(drivers))
+    markDocChanged('drivers')
     notifyDriverListeners()
     channel?.postMessage({ type: 'DRIVERS_UPDATED', drivers })
   } catch (err) {
@@ -158,10 +194,15 @@ export function updateDriverProfile(driver: Partial<DriverProfile> & { id: strin
   return updatedDriver
 }
 
-export function createDriver(driverData: Omit<DriverProfile, 'id' | 'createdAt' | 'deliveriesCompletedCount' | 'todayEarningsPence' | 'rating'>): DriverProfile {
+export function createDriver(
+  driverData: Omit<DriverProfile, 'id' | 'createdAt' | 'deliveriesCompletedCount' | 'todayEarningsPence' | 'rating' | 'pinHash'> & { pin: string },
+): DriverProfile {
   const drivers = getDrivers()
+  const { pin, ...profile } = driverData
   const newDriver: DriverProfile = {
-    ...driverData,
+    ...profile,
+    pinHash: saltedPinHash(pin),
+    defaultPin: false,
     id: `usr-driver-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
     rating: 5.0,
     deliveriesCompletedCount: 0,
@@ -214,4 +255,16 @@ export function subscribeDrivers(fn: DriverListener): () => void {
     channel?.removeEventListener('message', handleMessage)
     window.removeEventListener('storage', handleStorage)
   }
+}
+
+if (typeof window !== 'undefined') {
+  // Drivers sign in on their own phones, so the roster (PINs hashed) is shared with every device.
+  registerDoc({
+    name: 'drivers',
+    storageKey: DRIVERS_STORAGE_KEY,
+    notify: () => {
+      notifyDriverListeners()
+      channel?.postMessage({ type: 'DRIVERS_UPDATED', drivers: getDrivers() })
+    },
+  })
 }

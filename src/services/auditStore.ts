@@ -3,8 +3,11 @@
  * --------------------------------
  * Tracks all operational overrides, payment changes, price adjustments,
  * driver re-assignments, customer blacklists, and manual orders.
- * Cross-tab synchronized via BroadcastChannel and stored in localStorage.
+ * Cross-tab synchronized via BroadcastChannel and stored in localStorage; staff
+ * devices share it through cloudSync so the owner sees every till's voids,
+ * refunds and no-sales from anywhere.
  */
+import { getDeviceId, markRecordChanged, registerEpochHandler, registerRecords } from './cloudSync'
 
 export interface AuditLogItem {
   id: string
@@ -20,43 +23,21 @@ export interface AuditLogItem {
 const STORAGE_KEY = 'just_spuds_audit_logs_v1'
 const BC_NAME = 'just_spuds_audit_channel'
 
-const DEFAULT_SEED_LOGS: AuditLogItem[] = [
-  {
-    id: 'aud-seed-1',
-    time: '15 mins ago',
-    timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    actor: 'Sunny (Store Owner)',
-    action: 'payment.policy_update',
-    target: 'Storefront Payments',
-    details: 'In-store & driver device payment system activated',
-    ip: '192.168.1.1',
-  },
-  {
-    id: 'aud-seed-2',
-    time: '45 mins ago',
-    timestamp: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-    actor: 'Elena (Manager)',
-    action: 'kds.stock_verify',
-    target: 'King Edward Potatoes',
-    details: 'Oven capacity check passed',
-    ip: '192.168.1.12',
-  },
-]
-
 function getStored(): AuditLogItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_SEED_LOGS
+    if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_SEED_LOGS
+    // Fake "seed" entries shipped in early builds are not events that happened.
+    return Array.isArray(parsed) ? parsed.filter((l: AuditLogItem) => !String(l.id).startsWith('aud-seed-')) : []
   } catch {
-    return DEFAULT_SEED_LOGS
+    return []
   }
 }
 
 function saveStored(list: AuditLogItem[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 200))) // keep last 200 logs
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 500))) // keep last 500 logs
     if (typeof BroadcastChannel !== 'undefined') {
       const bc = new BroadcastChannel(BC_NAME)
       bc.postMessage({ type: 'AUDIT_UPDATED', list })
@@ -76,7 +57,8 @@ export function logAuditEvent(
   action: string,
   target: string,
   details?: string,
-  ip = '192.168.1.10'
+  /** Which device it happened on (was a made-up IP address). */
+  ip = typeof window === 'undefined' ? 'server' : getDeviceId()
 ): AuditLogItem {
   const current = getStored()
   const now = new Date()
@@ -92,6 +74,7 @@ export function logAuditEvent(
   }
   const updated = [item, ...current]
   saveStored(updated)
+  markRecordChanged('audit', item.id)
   return item
 }
 
@@ -117,4 +100,23 @@ export function subscribeAuditLogs(onChange: (logs: AuditLogItem[]) => void): ()
     window.removeEventListener('storage', onStorage)
     if (bc) bc.close()
   }
+}
+
+if (typeof window !== 'undefined') {
+  registerRecords({
+    collection: 'audit',
+    limit: 400,
+    get: (id) => {
+      const item = getStored().find((l) => l.id === id)
+      return item ? { ...item, updatedAt: item.timestamp } : undefined
+    },
+    apply: (items) => {
+      const current = getStored()
+      const have = new Set(current.map((l) => l.id))
+      const fresh = (items as AuditLogItem[]).filter((l) => l && l.id && !have.has(l.id))
+      if (fresh.length === 0) return
+      saveStored([...fresh, ...current].sort((a, b) => b.timestamp.localeCompare(a.timestamp)))
+    },
+  })
+  registerEpochHandler((at) => saveStored(getStored().filter((l) => l.timestamp >= at)))
 }

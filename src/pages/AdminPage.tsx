@@ -11,6 +11,7 @@ import {
   cancelOrder,
   advanceOrderStatus,
   getMenuStockOverrides,
+  subscribeStock,
   toggleItemStock,
   getKitchenPauseState,
   resumeKitchenOrders,
@@ -44,6 +45,7 @@ import {
   getStoreSettings,
   saveStoreSettings,
   getCategories,
+  getConfiguredHours,
   resetMenuToDefaults,
   batchAdjustCategoryPrices,
   subscribeMenu,
@@ -56,7 +58,7 @@ import {
   loginWithPin,
   logout,
   hasRole,
-  DEMO_USERS,
+  isPinTaken,
   MANAGEMENT_ROLES,
   type AuthUser,
 } from '../services/authStore'
@@ -64,6 +66,7 @@ import {
   getDrivers,
   createDriver,
   updateDriverProfile,
+  setDriverPin,
   subscribeDrivers,
   type DriverProfile,
 } from '../services/driverStore'
@@ -79,6 +82,12 @@ import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
 import TillShiftHistory from './admin/components/TillShiftHistory'
 import StaffTimecards from './admin/components/StaffTimecards'
+import StaffAccounts from './admin/components/StaffAccounts'
+import GoLivePanel from './admin/components/GoLivePanel'
+import SyncStatusPill from '../components/SyncStatusPill'
+import { usingDefaultPins } from '../services/staffRoster'
+import { orderVat, ordersVat } from '../services/vat'
+import { validateNewPin } from '../services/staffRoster'
 import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
 import { dismissOrderAlert, subscribeOrderAlerts, type OnlineOrderAlert } from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
@@ -91,7 +100,7 @@ import {
   type BlacklistEntry,
 } from '../services/blacklistStore'
 
-type AdminTab = 'overview' | 'reports' | 'inventory' | 'orders' | 'products' | 'toppings' | 'promos' | 'crm' | 'delivery' | 'drivers' | 'staff' | 'audit'
+type AdminTab = 'golive' | 'overview' | 'reports' | 'inventory' | 'orders' | 'products' | 'toppings' | 'promos' | 'crm' | 'delivery' | 'drivers' | 'staff' | 'audit'
 
 export default function AdminPage() {
   const [user, setUser] = useState<AuthUser | null>(() => getCurrentUser())
@@ -116,7 +125,7 @@ export default function AdminPage() {
   const [newBlacklistPhoneInput, setNewBlacklistPhoneInput] = useState('')
   const [newBlacklistReasonInput, setNewBlacklistReasonInput] = useState('')
 
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview')
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => (usingDefaultPins().length > 0 ? 'golive' : 'overview'))
   const [timeframe, setTimeframe] = useState<TimeRange>('today')
   const [stockOverrides, setStockOverrides] = useState<Record<string, boolean>>(() => getMenuStockOverrides())
 
@@ -146,7 +155,8 @@ export default function AdminPage() {
   const [driverFormEmail, setDriverFormEmail] = useState('')
   const [driverFormVehicle, setDriverFormVehicle] = useState<DriverProfile['vehicleType']>('Electric Moped')
   const [driverFormReg, setDriverFormReg] = useState('')
-  const [driverFormPin, setDriverFormPin] = useState('7780')
+  const [driverFormPin, setDriverFormPin] = useState('')
+  const [driverFormError, setDriverFormError] = useState<string | null>(null)
 
   // New Topping / Sauce Form state
   const [newToppingName, setNewToppingName] = useState('')
@@ -190,7 +200,7 @@ export default function AdminPage() {
     })
     const stopAlertWatcher = startOnlineOrderAlertWatcher()
     const unsubAlerts = subscribeOrderAlerts(setNewOrderAlerts)
-    setStockOverrides(getMenuStockOverrides())
+    const unsubStock = subscribeStock(setStockOverrides)
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
 
     return () => {
@@ -204,6 +214,7 @@ export default function AdminPage() {
       unsubMenu()
       stopAlertWatcher()
       unsubAlerts()
+      unsubStock()
       clearInterval(timer)
     }
   }, [])
@@ -246,6 +257,7 @@ export default function AdminPage() {
   const timeframeOrders = useMemo(() => {
     const now = Date.now()
     return orders.filter((o) => {
+      if (o.isTest) return false
       const t = new Date(o.createdAt).getTime()
       if (timeframe === 'today') {
         const startOfDay = new Date()
@@ -276,7 +288,8 @@ export default function AdminPage() {
     const cancelledOrders = timeframeOrders.filter((o) => o.status === 'cancelled')
 
     const grossRevenuePence = validOrders.reduce((acc, o) => acc + (o.payment?.total || 0), 0)
-    const vatPence = Math.round((grossRevenuePence / 1.2) * 0.2)
+    // From each product's VAT rate; tips are outside the scope of VAT.
+    const vatPence = ordersVat(validOrders).vat
     const netRevenuePence = grossRevenuePence - vatPence
     const totalDiscountsPence = validOrders.reduce((acc, o) => acc + (o.payment?.discount || 0), 0)
     const totalRefundsPence = cancelledOrders.reduce(
@@ -404,7 +417,7 @@ export default function AdminPage() {
     const rows = timeframeOrders.map((o) => {
       const src = o.source
       const totalGbp = ((o.payment?.total || 0) / 100).toFixed(2)
-      const vatGbp = (Math.round(((o.payment?.total || 0) / 1.2) * 0.2) / 100).toFixed(2)
+      const vatGbp = (orderVat(o).vat / 100).toFixed(2)
       const discGbp = ((o.payment?.discount || 0) / 100).toFixed(2)
       const itemsSummary = o.lines.map((l) => `${l.qty}x ${l.name}`).join('; ')
 
@@ -428,7 +441,7 @@ export default function AdminPage() {
       `"Generated: ${new Date().toLocaleString()}"`,
       `"Gross Sales: £${(reportMetrics.grossRevenuePence / 100).toFixed(2)}"`,
       `"Net Sales (ex VAT): £${(reportMetrics.netRevenuePence / 100).toFixed(2)}"`,
-      `"VAT @ 20%: £${(reportMetrics.vatPence / 100).toFixed(2)}"`,
+      `"VAT (product rates): £${(reportMetrics.vatPence / 100).toFixed(2)}"`,
       `"Total Discounts: £${(reportMetrics.totalDiscountsPence / 100).toFixed(2)}"`,
       `"Total Refunds: £${(reportMetrics.totalRefundsPence / 100).toFixed(2)}"`,
       '',
@@ -612,7 +625,8 @@ export default function AdminPage() {
     setDriverFormPhone('')
     setDriverFormVehicle('Electric Moped')
     setDriverFormReg('')
-    setDriverFormPin(String(Math.floor(7780 + Math.random() * 100)))
+    setDriverFormPin('')
+    setDriverFormError(null)
     setIsDriverModalOpen(true)
   }
 
@@ -623,13 +637,23 @@ export default function AdminPage() {
     setDriverFormPhone(driver.phone)
     setDriverFormVehicle(driver.vehicleType)
     setDriverFormReg(driver.vehicleReg)
-    setDriverFormPin(driver.pin)
+    setDriverFormPin('')
+    setDriverFormError(null)
     setIsDriverModalOpen(true)
   }
 
   const handleSaveDriverSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!driverFormName.trim() || !driverFormPhone.trim()) return
+    const pin = driverFormPin.trim()
+    // PINs are hashed; a blank field on edit keeps the current one.
+    if (pin || !editingDriver) {
+      const check = validateNewPin(pin, editingDriver?.id, (p) => isPinTaken(p, editingDriver?.id))
+      if (!check.ok) {
+        setDriverFormError(check.message)
+        return
+      }
+    }
 
     if (editingDriver) {
       updateDriverProfile({
@@ -639,8 +663,8 @@ export default function AdminPage() {
         phone: driverFormPhone.trim(),
         vehicleType: driverFormVehicle,
         vehicleReg: driverFormReg.trim().toUpperCase(),
-        pin: driverFormPin.trim(),
       })
+      if (pin) setDriverPin(editingDriver.id, pin)
     } else {
       createDriver({
         name: driverFormName.trim(),
@@ -651,7 +675,7 @@ export default function AdminPage() {
         vehicleReg: driverFormReg.trim().toUpperCase() || 'AY24 SPD',
         status: 'ACTIVE',
         isOnline: false,
-        pin: driverFormPin.trim(),
+        pin,
       })
     }
     setDrivers(getDrivers())
@@ -784,7 +808,7 @@ export default function AdminPage() {
           <form onSubmit={handleAdminPinSubmit} className="space-y-4">
             <input
               type="password"
-              maxLength={4}
+              maxLength={8}
               value={adminPin}
               onChange={(e) => setAdminPin(e.target.value)}
               placeholder="••••"
@@ -797,7 +821,7 @@ export default function AdminPage() {
                 <button
                   key={num}
                   type="button"
-                  onClick={() => setAdminPin((prev) => (prev.length < 4 ? prev + num : prev))}
+                  onClick={() => setAdminPin((prev) => (prev.length < 8 ? prev + num : prev))}
                   className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15 active:scale-95"
                 >
                   {num}
@@ -812,7 +836,7 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setAdminPin((prev) => (prev.length < 4 ? prev + '0' : prev))}
+                onClick={() => setAdminPin((prev) => (prev.length < 8 ? prev + '0' : prev))}
                 className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
               >
                 0
@@ -879,6 +903,8 @@ export default function AdminPage() {
               🕒 {currentTime.toLocaleTimeString()}
             </div>
 
+            <SyncStatusPill />
+
             {/* Test & Simulation Actions */}
             <button
               type="button"
@@ -909,10 +935,24 @@ export default function AdminPage() {
                 <span>▶️ Resume Live Orders</span>
               </button>
             ) : (
-              <span className="inline-flex items-center gap-1 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-400">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                Store Open ({storeSettings.openTime} – {storeSettings.closeTime})
-              </span>
+              (() => {
+                // Today's configured hours (Store Ops), not the legacy single open/close pair.
+                const h = getConfiguredHours(currentTime)
+                const fmt = (d: number) => `${String(Math.floor(d)).padStart(2, '0')}:${String(Math.round((d % 1) * 60)).padStart(2, '0')}`
+                const now = currentTime.getHours() + currentTime.getMinutes() / 60
+                const open = !h.isClosed && now >= h.openHour && now < h.closeHour
+                return (
+                  <span
+                    className={cx(
+                      'inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold',
+                      open ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-white/15 bg-white/5 text-white/60',
+                    )}
+                  >
+                    <span className={cx('h-2 w-2 rounded-full', open ? 'bg-emerald-400 animate-pulse' : 'bg-white/40')} />
+                    {h.isClosed ? 'Closed today' : `${open ? 'Open' : 'Closed'} · today ${fmt(h.openHour)}–${fmt(h.closeHour)}`}
+                  </span>
+                )
+              })()
             )}
 
             {/* Online Ordering Launch Toggle */}
@@ -1043,6 +1083,18 @@ export default function AdminPage() {
         {/* PRIMARY NAVIGATION TABS */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('golive')}
+              className={cx(
+                'rounded-xl px-4 py-2 font-body text-xs font-bold transition flex items-center gap-1.5',
+                activeTab === 'golive' ? 'bg-amber-400 text-ink font-black shadow-glow' : 'text-white/70 hover:text-white bg-white/5'
+              )}
+            >
+              <span>🚀</span>
+              <span>Go-Live</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setActiveTab('overview')}
@@ -1238,6 +1290,10 @@ export default function AdminPage() {
             </div>
           )}
         </div>
+
+        {activeTab === 'golive' && (
+          <GoLivePanel user={user} onGoTo={(tab) => setActiveTab(tab)} onSimulateRush={handleSimulateRush} />
+        )}
 
         {/* ============================================================== */}
         {/* TAB 1: EXECUTIVE OVERVIEW                                      */}
@@ -1441,7 +1497,7 @@ export default function AdminPage() {
                   </h2>
                 </div>
                 <p className="font-body text-xs text-white/60 mt-1">
-                  Reconciled revenue across Website, Physical Till, Phone, and Counter. VAT @ 20%, payment tenders, and product profitability.
+                  Reconciled revenue across Website, Physical Till, Phone, and Counter. VAT from each product’s rate, payment tenders, and product profitability.
                 </p>
               </div>
 
@@ -1472,7 +1528,7 @@ export default function AdminPage() {
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
-                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">VAT @ 20% (HMRC)</div>
+                <div className="font-body text-[11px] font-bold uppercase tracking-wider text-white/50">VAT (product rates)</div>
                 <div className="font-mono text-2xl font-black text-teal-400 mt-1">{gbp(reportMetrics.vatPence)}</div>
                 <div className="font-body text-[10px] text-white/40 mt-0.5">Standard UK Rate</div>
               </div>
@@ -3046,8 +3102,8 @@ export default function AdminPage() {
                           <p className="text-[11px] text-white/50">{drv.email}</p>
                         </td>
 
-                        <td className="p-4 font-mono font-bold text-amber-300">
-                          {drv.pin}
+                        <td className="p-4 font-body text-[11px] font-bold">
+                          {drv.defaultPin ? <span className="text-red-300">Starter PIN ⚠</span> : <span className="text-emerald-300">Own PIN ✓</span>}
                         </td>
 
                         <td className="p-4">
@@ -3108,29 +3164,7 @@ export default function AdminPage() {
         {activeTab === 'staff' && (
           <div className="space-y-6">
           <StaffTimecards actor={user?.name || 'Manager'} />
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <div>
-                <h2 className="display text-xl text-white font-bold">Staff Roster &amp; Access Controls</h2>
-                <p className="font-body text-xs text-white/60">Manage kitchen line cooks, drivers, and manager accounts.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {Object.values(DEMO_USERS).map((u) => (
-                <div key={u.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-white text-sm">{u.name}</span>
-                    <span className="rounded bg-amber-400/20 px-2 py-0.5 text-[9px] font-black uppercase text-amber-300">
-                      {u.role}
-                    </span>
-                  </div>
-                  <p className="text-xs text-white/60">{u.email}</p>
-                  <p className="text-[11px] text-white/40">{u.phone}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+          <StaffAccounts user={user} />
           </div>
         )}
 
@@ -3230,18 +3264,29 @@ export default function AdminPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] uppercase font-bold text-white/60 mb-1">Terminal PIN</label>
+                  <label className="block text-[11px] uppercase font-bold text-white/60 mb-1">
+                    {editingDriver ? 'New PIN (blank = keep)' : 'Sign-in PIN'}
+                  </label>
                   <input
-                    type="text"
-                    required
-                    maxLength={4}
-                    placeholder="7780"
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="new-password"
+                    required={!editingDriver}
+                    maxLength={8}
+                    placeholder="4–8 digits"
                     value={driverFormPin}
-                    onChange={(e) => setDriverFormPin(e.target.value)}
+                    onChange={(e) => {
+                      setDriverFormPin(e.target.value.replace(/\D/g, ''))
+                      setDriverFormError(null)
+                    }}
                     className="w-full rounded-xl border border-white/20 bg-white/10 px-3.5 py-2.5 text-xs font-mono font-bold text-amber-300 text-center placeholder:text-white/40 focus:border-amber-400 focus:outline-none"
                   />
                 </div>
               </div>
+
+              {driverFormError && (
+                <p className="rounded-xl border border-red-500/40 bg-red-950/40 p-2.5 text-xs font-bold text-red-200">{driverFormError}</p>
+              )}
 
               <div>
                 <label className="block text-[11px] uppercase font-bold text-white/60 mb-1">Email Address</label>

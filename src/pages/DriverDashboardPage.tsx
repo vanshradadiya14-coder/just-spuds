@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { getBusinessDetails } from '../services/menuStore'
 import {
   subscribeOrders,
   claimDeliveryOrder,
@@ -304,12 +305,12 @@ export default function DriverDashboardPage() {
           <form onSubmit={handlePinSubmit} className="space-y-4">
             <div>
               <label className="block font-body text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-                4-Digit Driver PIN
+                Driver PIN
               </label>
               <input
                 type="password"
                 inputMode="numeric"
-                maxLength={4}
+                maxLength={8}
                 autoFocus
                 placeholder="• • • •"
                 value={pinInput}
@@ -820,7 +821,7 @@ export default function DriverDashboardPage() {
                             📞 Call Customer ({activeDelivery.customer.phone || '07700 900123'})
                           </a>
                           <a
-                            href={`tel:${SITE.phone}`}
+                            href={getBusinessDetails().phoneHref}
                             className="rounded-xl bg-slate-800 border border-slate-700 px-3 py-2.5 text-center text-xs font-bold text-slate-400 hover:bg-slate-700"
                           >
                             🏪 Call Store

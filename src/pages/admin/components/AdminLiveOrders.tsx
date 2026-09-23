@@ -136,6 +136,7 @@ export default function AdminLiveOrders({
                 >
                   <td className="p-4">
                     <p className="font-mono font-bold text-white text-sm">#{ord.shortId}</p>
+                    {ord.isTest && <span className="inline-block rounded bg-fuchsia-500/80 px-1.5 text-[9px] font-black uppercase text-white">Test</span>}
                     <p className="text-[11px] text-white/50 mt-0.5">
                       {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>

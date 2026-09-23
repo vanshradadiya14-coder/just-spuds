@@ -12,6 +12,7 @@
 import { kickCashDrawer, setTouchSoundsEnabled } from './printerBridge'
 import { setAlertSoundsEnabled } from './alertSoundBus'
 import { logAuditEvent } from './auditStore'
+import { markRecordChanged, registerEpochHandler, registerRecords } from './cloudSync'
 
 export interface CashDenominations {
   note50: number // £50
@@ -73,9 +74,13 @@ export interface TillShift {
   refundsTotal: number // pence
   inStoreOrdersCount: number
   onlineOrdersCount: number
+  /** Web orders already counted, so an order seen twice (placed here, then synced back) counts once. */
+  onlineOrderIds?: string[]
   movements: CashMovement[]
   closingDenominations?: CashDenominations
   notes?: string
+  /** Last change — the admin console keeps the newest copy of each shift. */
+  updatedAt?: string
 }
 
 export interface TillSettings {
@@ -88,12 +93,18 @@ export interface TillSettings {
   touchSounds: boolean
   /** Ask for a gratuity before a card payment (off by default — UK takeaway). */
   tipPrompt: boolean
+  /** Lock the till after this many idle minutes (0 = never). The shift and open ticket are kept. */
+  autoLockMinutes: number
+  /** Lock the till after every completed sale, so each cashier signs their own sales. */
+  lockAfterSale: boolean
 }
 
 const STORAGE_ACTIVE_SHIFT = 'just_spuds_till_active_shift_v1'
 const STORAGE_PAST_SHIFTS = 'just_spuds_till_past_shifts_v1'
 const STORAGE_TILL_SETTINGS = 'just_spuds_till_settings_v1'
 const STORAGE_LAST_TILL_ORDER = 'just_spuds_till_last_order_v1'
+/** Shifts run on other devices (the till), kept for reporting only — never rung up on here. */
+const STORAGE_REMOTE_SHIFTS = 'just_spuds_till_remote_shifts_v1'
 
 export function getLastCompletedTillOrder(): any | null {
   if (typeof window === 'undefined') return null
@@ -121,6 +132,8 @@ const DEFAULT_SETTINGS: TillSettings = {
   blindShiftClose: false,
   touchSounds: true,
   tipPrompt: false,
+  autoLockMinutes: 5,
+  lockAfterSale: false,
 }
 
 let activeShift: TillShift | null = null
@@ -170,7 +183,9 @@ function applySoundSettings() {
 function saveActiveShift() {
   if (typeof window === 'undefined') return
   if (activeShift) {
+    activeShift.updatedAt = new Date().toISOString()
     localStorage.setItem(STORAGE_ACTIVE_SHIFT, JSON.stringify(activeShift))
+    markRecordChanged('shifts', activeShift.id)
   } else {
     localStorage.removeItem(STORAGE_ACTIVE_SHIFT)
   }
@@ -181,6 +196,22 @@ function saveActiveShift() {
 function savePastShifts() {
   if (typeof window === 'undefined') return
   localStorage.setItem(STORAGE_PAST_SHIFTS, JSON.stringify(pastShifts))
+  if (pastShifts[0]) markRecordChanged('shifts', pastShifts[0].id)
+}
+
+function readRemoteShifts(): TillShift[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(STORAGE_REMOTE_SHIFTS)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+/** Shifts open right now on other devices (live X-read for the admin console). */
+export function getRemoteOpenShifts(): TillShift[] {
+  return readRemoteShifts().filter((s) => s.status === 'open')
 }
 
 function notifyShift() {
@@ -198,8 +229,14 @@ export function getCurrentShift(): TillShift | null {
   return activeShift ? { ...activeShift } : null
 }
 
+/** Closed shifts from this device and every other till, newest first. */
 export function getPastZReports(): TillShift[] {
-  return [...pastShifts]
+  const byId = new Map<string, TillShift>()
+  readRemoteShifts()
+    .filter((s) => s.status === 'closed')
+    .forEach((s) => byId.set(s.id, s))
+  pastShifts.forEach((s) => byId.set(s.id, s))
+  return [...byId.values()].sort((a, b) => (b.closedAt || b.openedAt).localeCompare(a.closedAt || a.openedAt))
 }
 
 export function getTillSettings(): TillSettings {
@@ -409,8 +446,11 @@ export function recordTillRefund(params: { orderId: string; amountPence: number;
 /**
  * Record an online order that arrived during the shift
  */
-export function recordOnlineOrderInShift(totalPence: number) {
+export function recordOnlineOrderInShift(orderId: string, totalPence: number) {
   if (!activeShift || activeShift.status !== 'open') return
+  const seen = activeShift.onlineOrderIds || []
+  if (seen.includes(orderId)) return
+  activeShift.onlineOrderIds = [...seen, orderId]
   activeShift.onlineOrdersTotal += totalPence
   activeShift.onlineOrdersCount += 1
   saveActiveShift()
@@ -515,6 +555,7 @@ export function closeTillShift(
   }
 
   // Save to past shifts
+  closedShift.updatedAt = new Date().toISOString()
   pastShifts = [closedShift, ...pastShifts]
   savePastShifts()
 
@@ -533,4 +574,42 @@ export function closeTillShift(
   )
 
   return { closedShift, discrepancy }
+}
+
+if (typeof window !== 'undefined') {
+  registerRecords({
+    collection: 'shifts',
+    limit: 120,
+    get: (id) => (activeShift?.id === id ? activeShift : pastShifts.find((s) => s.id === id)),
+    apply: (items) => {
+      const ownIds = new Set([...(activeShift ? [activeShift.id] : []), ...pastShifts.map((s) => s.id)])
+      const remote = new Map(readRemoteShifts().map((s) => [s.id, s]))
+      let changed = false
+      ;(items as TillShift[]).forEach((s) => {
+        if (!s || !s.id || ownIds.has(s.id)) return
+        const prev = remote.get(s.id)
+        if (!prev || (s.updatedAt || '') >= (prev.updatedAt || '')) {
+          remote.set(s.id, s)
+          changed = true
+        }
+      })
+      if (!changed) return
+      localStorage.setItem(STORAGE_REMOTE_SHIFTS, JSON.stringify([...remote.values()].slice(-200)))
+      channel?.postMessage({ type: 'SHIFT_UPDATED' })
+      notifyShift()
+    },
+  })
+
+  // "Start trading fresh": pre-launch shifts disappear from every device.
+  registerEpochHandler((at) => {
+    pastShifts = pastShifts.filter((s) => s.openedAt >= at)
+    localStorage.setItem(STORAGE_PAST_SHIFTS, JSON.stringify(pastShifts))
+    localStorage.setItem(STORAGE_REMOTE_SHIFTS, JSON.stringify(readRemoteShifts().filter((s) => s.openedAt >= at)))
+    if (activeShift && activeShift.openedAt < at) {
+      activeShift = null
+      localStorage.removeItem(STORAGE_ACTIVE_SHIFT)
+    }
+    channel?.postMessage({ type: 'SHIFT_UPDATED' })
+    notifyShift()
+  })
 }

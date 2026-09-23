@@ -5,7 +5,7 @@ import {
   updateOrderStatus,
   sendOrderToDrivers,
   cancelOrder,
-  getMenuStockOverrides,
+  subscribeStock,
   toggleItemStock,
   getKitchenPauseState,
   setKitchenPause,
@@ -38,11 +38,13 @@ import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
 import { getTillSettings, subscribeTillSettings, updateTillSettings, type TillSettings } from '../services/tillStore'
 import { type Product } from '../data/menu'
 import TicketCard from './staff/TicketCard'
+import AllDayBar from './staff/AllDayBar'
 import ThermalReceipt from '../components/ThermalReceipt'
 import ManualOrderFixModal from '../components/ManualOrderFixModal'
 import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import NewOrderAlertModal from '../components/staff/NewOrderAlertModal'
 import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
+import SyncStatusPill from '../components/SyncStatusPill'
 import { cx, gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 type StaffTab = 'active' | 'new' | 'baking' | 'dispatched' | 'completed' | 'stock'
@@ -116,12 +118,13 @@ export default function StaffKDSPage() {
     const unsubAlerts = subscribeOrderAlerts(setAlerts)
     const unsubSound = subscribeAlertSoundState(setSoundState)
     const unsubTill = subscribeTillSettings(setTillSettings)
-    setStockOverrides(getMenuStockOverrides())
+    const unsubStock = subscribeStock(setStockOverrides)
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => {
       unsubAuth()
       unsubOrders()
       unsubPause()
+      unsubStock()
       stopWatcher()
       unsubAlerts()
       unsubSound()
@@ -278,13 +281,13 @@ export default function StaffKDSPage() {
           </div>
           <h1 className="display text-2xl text-white font-bold">Kitchen Display Terminal</h1>
           <p className="font-body text-xs text-white/60 mt-1 mb-6">
-            Enter your 4-digit Kitchen PIN to access live order tickets.
+            Enter your staff PIN to open the kitchen screen.
           </p>
 
           <form onSubmit={handlePinSubmit} className="space-y-4">
             <input
               type="password"
-              maxLength={4}
+              maxLength={8}
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
               placeholder="••••"
@@ -298,7 +301,7 @@ export default function StaffKDSPage() {
                 <button
                   key={num}
                   type="button"
-                  onClick={() => setPinInput((prev) => (prev.length < 4 ? prev + num : prev))}
+                  onClick={() => setPinInput((prev) => (prev.length < 8 ? prev + num : prev))}
                   className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15 transition active:scale-95"
                 >
                   {num}
@@ -313,7 +316,7 @@ export default function StaffKDSPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setPinInput((prev) => (prev.length < 4 ? prev + '0' : prev))}
+                onClick={() => setPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))}
                 className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
               >
                 0
@@ -391,6 +394,8 @@ export default function StaffKDSPage() {
             <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-amber-300">
               🕒 {currentTime.toLocaleTimeString()}
             </div>
+
+            <SyncStatusPill />
 
             {hasRole(user, MANAGEMENT_ROLES) && (
               <Link
@@ -580,6 +585,8 @@ export default function StaffKDSPage() {
               </button>
             </div>
           </div>
+
+          {activeTab !== 'stock' && <AllDayBar orders={orders} />}
 
           {activeTab === 'stock' ? (
             /* TAB: STOCK AVAILABILITY */

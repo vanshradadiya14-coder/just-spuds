@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { findUserByPin, type AuthUser } from '../../services/authStore'
+import { checkPin, type AuthUser } from '../../services/authStore'
 import {
   clockIn,
   clockOut,
@@ -43,11 +43,15 @@ export default function TimeclockModal({ onClose, user }: TimeclockModalProps) {
 
   const identify = (e: React.FormEvent) => {
     e.preventDefault()
-    const found = findUserByPin(pin)
-    if (!found) {
-      setError('PIN not recognised.')
+    // Counts towards the PIN lockout like every other prompt — the time clock must
+    // not be a way to try PINs without limit.
+    const res = checkPin(pin)
+    setPin('')
+    if (!res.ok) {
+      setError(res.message)
       return
     }
+    const found = res.user
     setWho(found)
     setEntry(getActiveTimeclockEntry(found.id))
     setError(null)
@@ -72,7 +76,7 @@ export default function TimeclockModal({ onClose, user }: TimeclockModalProps) {
             <input
               type="password"
               inputMode="numeric"
-              maxLength={4}
+              maxLength={8}
               autoFocus
               value={pin}
               onChange={(e) => setPin(e.target.value)}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../utils/format'
-import { getStatusChangeBlocker, type Order } from '../../services/orderStore'
+import { getPriceCheck, getStatusChangeBlocker, type Order } from '../../services/orderStore'
 import { parseKitchenNotes } from '../../utils/kitchenNotes'
 
 export default function TicketCard({
@@ -39,6 +39,7 @@ export default function TicketCard({
 
   const source = ord.source
   const notes = parseKitchenNotes(ord.kitchenNotes)
+  const priceCheck = getPriceCheck(ord)
 
   return (
     <div
@@ -123,6 +124,12 @@ export default function TicketCard({
               {isDelivery ? '🛵 Delivery' : '🛍️ Pick Up'}
             </span>
 
+            {ord.isTest && (
+              <span className="rounded-full bg-fuchsia-500 px-2.5 py-0.5 font-body text-[10px] font-black uppercase tracking-wider text-white" title="Training order from Simulate rush — not counted anywhere">
+                🧪 Test
+              </span>
+            )}
+
             {ord.isScheduled && (
               <span className="rounded-full bg-purple-500/90 text-white px-2.5 py-0.5 font-body text-[10px] font-black uppercase tracking-wider shadow-sm flex items-center gap-1">
                 <span>📅</span>
@@ -152,6 +159,12 @@ export default function TicketCard({
             <p className="mt-1 text-[11px] text-emerald-400 font-bold">
               ✓ 100% Refund of {gbp(ord.cancellation.refundAmount)} automatically issued.
             </p>
+          </div>
+        )}
+
+        {!priceCheck.ok && !isCancelled && (
+          <div role="alert" className="rounded-xl border-2 border-red-500 bg-red-950/60 p-2.5 font-body text-[11px] font-bold text-red-100">
+            💷 {priceCheck.message}
           </div>
         )}
 
@@ -375,6 +388,16 @@ export default function TicketCard({
 
             {(ord.status === 'out_for_delivery' || ord.status === 'ready_for_pickup') && (
               <div className="space-y-1">
+                {ord.status === 'ready_for_pickup' && (
+                  <button
+                    type="button"
+                    onClick={() => handleStatusChange(ord.id, 'baking')}
+                    className="w-full rounded-lg border border-white/10 bg-white/5 py-1.5 font-body text-[11px] font-bold text-white/60 hover:bg-white/10 hover:text-white"
+                    title="Bumped by mistake? Put it back in the oven column"
+                  >
+                    ↩ Back to oven
+                  </button>
+                )}
                 {isDelivery && (
                   <p className="text-[11px] text-white/70 text-center font-body mb-1">
                     🛵 In transit with <strong>{ord.deliveryDetails?.assignedDriverName || ord.driver?.name}</strong>

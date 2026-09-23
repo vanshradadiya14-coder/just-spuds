@@ -4,7 +4,14 @@
  * Protects against fake / prank orders (especially with pay-on-delivery & in-store payments).
  * Allows managers to flag abusive phone numbers with reason notes.
  * Cross-tab synchronized via BroadcastChannel and persistent in localStorage.
+ *
+ * Shared across devices in two forms: the full list (numbers, names, reasons)
+ * for staff devices only, and a list of hashed numbers that every customer's
+ * browser checks at checkout — so a blocked number is refused on any phone
+ * without handing anyone's phone number to every visitor.
  */
+import { markDocChanged, registerDoc } from './cloudSync'
+import { sha256Hex } from '../utils/sha256'
 
 export interface BlacklistEntry {
   id: string
@@ -16,10 +23,26 @@ export interface BlacklistEntry {
 }
 
 const STORAGE_KEY = 'just_spuds_blacklist_v1'
+const HASHES_KEY = 'just_spuds_blacklist_hashes_v1'
 const BC_NAME = 'just_spuds_blacklist_channel'
 
-function normalizePhone(raw: string): string {
-  return raw.replace(/[\s\-()]/g, '').trim()
+/** "+44 7700 900123", "07700-900123" and "0044 7700900123" are the same number. */
+export function normalizePhone(raw: string): string {
+  let n = raw.replace(/[\s\-().]/g, '').trim()
+  if (n.startsWith('+44')) n = `0${n.slice(3)}`
+  else if (n.startsWith('0044')) n = `0${n.slice(4)}`
+  return n
+}
+
+const phoneHash = (norm: string) => sha256Hex(`just-spuds-blacklist:${norm}`)
+
+function getHashes(): string[] {
+  try {
+    const raw = localStorage.getItem(HASHES_KEY)
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
 }
 
 function getStored(): BlacklistEntry[] {
@@ -35,6 +58,9 @@ function getStored(): BlacklistEntry[] {
 function saveStored(list: BlacklistEntry[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+    localStorage.setItem(HASHES_KEY, JSON.stringify(list.map((e) => phoneHash(normalizePhone(e.phone)))))
+    markDocChanged('blacklist')
+    markDocChanged('blacklist.hashes')
     if (typeof BroadcastChannel !== 'undefined') {
       const bc = new BroadcastChannel(BC_NAME)
       bc.postMessage({ type: 'BLACKLIST_UPDATED', list })
@@ -52,14 +78,11 @@ export function getBlacklistEntries(): BlacklistEntry[] {
 export function isPhoneBlacklisted(phone: string): { blacklisted: boolean; entry?: BlacklistEntry; reason?: string } {
   const norm = normalizePhone(phone)
   if (!norm) return { blacklisted: false }
+  const reason = `This phone number is flagged for phone/counter verification. Please call the shop or visit our Market Square counter.`
   const found = getStored().find((e) => normalizePhone(e.phone) === norm)
-  if (found) {
-    return {
-      blacklisted: true,
-      entry: found,
-      reason: `This phone number is flagged for phone/counter verification. Please call our store at 01296 423456 or visit our Market Square counter.`,
-    }
-  }
+  if (found) return { blacklisted: true, entry: found, reason }
+  // Customer devices only have the hashed list.
+  if (getHashes().includes(phoneHash(norm))) return { blacklisted: true, reason }
   return { blacklisted: false }
 }
 
@@ -112,4 +135,15 @@ export function subscribeBlacklist(onChange: (entries: BlacklistEntry[]) => void
     window.removeEventListener('storage', onStorage)
     if (bc) bc.close()
   }
+}
+
+if (typeof window !== 'undefined') {
+  const notifyTabs = () => {
+    if (typeof BroadcastChannel === 'undefined') return
+    const bc = new BroadcastChannel(BC_NAME)
+    bc.postMessage({ type: 'BLACKLIST_UPDATED', list: getStored() })
+    bc.close()
+  }
+  registerDoc({ name: 'blacklist', storageKey: STORAGE_KEY, private: true, notify: notifyTabs })
+  registerDoc({ name: 'blacklist.hashes', storageKey: HASHES_KEY, notify: notifyTabs })
 }

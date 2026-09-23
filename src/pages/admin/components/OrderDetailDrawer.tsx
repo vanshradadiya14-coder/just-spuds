@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { getStatusChangeBlocker, type Order } from '../../../services/orderStore'
+import { getPriceCheck, getStatusChangeBlocker, type Order } from '../../../services/orderStore'
 import { lineUnitPrice } from '../../../hooks/useCart'
 import { cx, gbp } from '../../../utils/format'
 import { nextStepLabel, sourceBadge, statusTone } from './orderLabels'
@@ -86,6 +86,12 @@ export default function OrderDetailDrawer({ order, onClose, onAdvance, onPrint, 
               <button type="button" onClick={() => onPrint(order)} className="rounded-xl border border-white/20 bg-white/5 px-4 py-3 text-xs font-bold text-amber-300 hover:bg-white/15">
                 🖨️ Ticket
               </button>
+            </div>
+          )}
+
+          {!getPriceCheck(order).ok && (
+            <div role="alert" className="rounded-2xl border-2 border-red-500 bg-red-950/60 p-3 text-xs font-bold text-red-100">
+              💷 {getPriceCheck(order).message}
             </div>
           )}
 

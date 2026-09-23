@@ -3,6 +3,8 @@ import type { Order } from '../services/orderStore'
 import { lineUnitPrice } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { SITE } from '../data/site'
+import { getBusinessDetails } from '../services/menuStore'
+import { orderVat } from '../services/vat'
 
 interface ThermalReceiptProps {
   order: Order
@@ -19,6 +21,7 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
 
   const isDelivery = order.fulfilment === 'delivery'
   const isPaid = order.payment.status === 'paid'
+  const business = getBusinessDetails()
 
   const content = (
     <div
@@ -28,11 +31,11 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
     >
       {/* STORE HEADER */}
       <div className="text-center pb-3 border-b border-black">
-        <h2 className="text-xl font-black uppercase tracking-wider">{SITE.name}</h2>
+        <h2 className="text-xl font-black uppercase tracking-wider">{business.name}</h2>
         <p className="text-[11px] font-bold uppercase">{SITE.tagline}</p>
-        <p className="text-[11px] mt-1">{SITE.address.line1}, {SITE.address.town}</p>
-        <p className="text-[11px] font-bold">{SITE.address.postcode} &bull; Tel: {SITE.phone}</p>
-        <p className="text-[10px] text-gray-600 mt-0.5">VAT Reg: GB 492 8192 10</p>
+        <p className="text-[11px] mt-1">{business.address}</p>
+        <p className="text-[11px] font-bold">Tel: {business.phone}</p>
+        {business.vatNumber && <p className="text-[10px] text-gray-600 mt-0.5">VAT Reg: {business.vatNumber}</p>}
       </div>
 
       {/* ORDER NUMBER & TYPE */}
@@ -197,6 +200,17 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
           <span>TOTAL</span>
           <span>{gbp(order.payment.total)}</span>
         </div>
+
+        {business.vatNumber && (
+          <div className="pt-1 text-[10px] text-gray-700 space-y-0.5">
+            {orderVat(order).bands.map((b) => (
+              <div key={b.rate} className="flex justify-between">
+                <span>VAT {b.rate}% on {gbp(b.gross)}</span>
+                <span>{gbp(b.vat)}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="pt-2 text-[11px] font-bold">
           {isPaid ? (

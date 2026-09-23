@@ -3,8 +3,35 @@
 ```bash
 npm install
 npm run dev        # http://localhost:5174
-npm test           # exercises the real store modules (stock, roles, till shift, checkout)
+npm test           # exercises the real store modules (stock, roles, till, checkout, sync, VAT)
+node scripts/probe-sync-readonly.mjs   # read-only check that the live Supabase queries are valid
 ```
+
+## Going live — the short version
+
+Open **`/admin` → 🚀 Go-Live** on the owner's laptop. It checks everything live
+and links to each fix:
+
+1. **All devices in sync** — green once the laptop has talked to Supabase.
+2. **Change every starter PIN** (Staff PINs and Driver PINs). The starter PINs
+   ship with the source code, which is public — until they are changed anyone
+   who reads it could sign in. New PINs are 4–8 digits; use 6 for managers.
+3. **Business details** — shop phone, address and (only if VAT-registered) the
+   VAT number. Receipts, the website footer and "call the shop" links use them.
+4. Set **opening hours** (Store Ops) and check **menu prices, VAT rates and
+   stock counts** (Product Studio). Cold takeaway food is usually 0% VAT — ask
+   the accountant, then set it per product.
+5. On each till: ⚙️ → connect the USB printer, test the drawer. Optionally add
+   `public/sounds/new-order.mp3` for your own alarm sound.
+6. **Send 2 test orders** and practise Accept / Decline on the kitchen screen.
+   Test orders are marked TEST and never counted anywhere.
+7. **Launch day, before opening the till:** press **Start trading fresh**. Every
+   device drops pre-launch orders, shifts, timecards and audit entries (menu,
+   stock, staff and settings are kept). Then **switch online ordering on**.
+
+Every staff device needs one sign-in with a staff PIN to become a "staff
+device" — after that it receives all orders even while its PIN screen is locked
+(the kitchen tablet keeps ringing).
 
 That's it. **No asset step is required** — see below.
 
@@ -47,13 +74,18 @@ Real routes, not anchors on one long page:
 Full-screen, no customer chrome. Sign in at `/login` with a PIN; each role
 lands on its own portal and the shop-floor gates accept every shop-floor role.
 
-| Route     | Who                                      | Demo PINs                    |
-|-----------|------------------------------------------|------------------------------|
-| `/pos`    | Till — cashiers and up                   | `1111` cashier               |
-| `/staff`  | Kitchen display — kitchen staff and up   | `1234` kitchen               |
-| `/admin`  | Reports, stock, menu, staff, audit       | `3333` supervisor, `5555` manager, `2468` owner, `8888` admin |
-| `/driver` | Courier hub                              | `7777`                       |
-| `/cfd`    | Customer-facing display for the till     | —                            |
+| Route     | Who                                      |
+|-----------|------------------------------------------|
+| `/pos`    | Till — cashiers and up                   |
+| `/staff`  | Kitchen display — kitchen staff and up   |
+| `/admin`  | Reports, stock, menu, staff, audit — supervisors and up |
+| `/driver` | Courier hub                              |
+| `/cfd`    | Customer-facing display for the till     |
+
+Staff and PINs are managed in **Admin › Staff Accounts** (drivers in
+**Drivers & Fleet**). PINs are stored only as salted hashes and are never shown.
+The starter accounts' PINs are in `src/services/staffRoster.ts`; change them all
+before trading (see *Going live*).
 
 Manager-only actions on the till (refunds, no-sale, settings, price override,
 voiding a sent item) prompt for a supervisor-or-above PIN. Till settings (auto
@@ -63,7 +95,11 @@ float, USB printer) live behind ⚙️ on the till and sync to every open till t
 **PIN policy.** Staff sign in by PIN only — there is no email/password staff
 login, no on-screen PIN hints and no tap-to-sign-in profiles. Five wrong PINs
 lock every PIN prompt on that device for 30 s, doubling to a 5-minute cap.
-"Manual fix" (changing an order's payment or total) is a manager-only tool.
+Changing someone's PIN (or disabling them) signs them out on every device. A
+browser that has never reached the server refuses the published starter PINs.
+The till locks itself after 5 idle minutes (⚙️ to change; optional "lock after
+every sale"). "Manual fix" (changing an order's payment or total) is a
+manager-only tool.
 
 **Screens.** Everything works from a phone up to a kitchen monitor. Below
 1024px the till turns into a tablet layout: categories become a swipeable
@@ -133,6 +169,39 @@ Deliveroo tablet or a Subway KDS behaves.
   accepts — after that it's a phone call.
 - **Admin › Live Orders**: click any row for the full order (ticket, customer,
   payment, timeline, notes) with one-tap next-step / print / cancel.
+
+### One shop, many devices (`services/cloudSync.ts`)
+
+Every store is local-first — instant, and it keeps working offline — and a sync
+engine keeps the devices in step through Supabase, using tables that already
+exist (no migration needed):
+
+| What | Where | How |
+|------|-------|-----|
+| Orders | `orders` | Outbox that survives reloads; retried until the server has them. Newest copy wins. Customer phones only ever hold their own orders. |
+| Menu, prices, sold-out flags, hours, online switch, kitchen pause, promos, drivers, staff roster, blacklist hashes | `delivery_settings` (used as a key/value store) | Whole documents, last write wins. Only staff devices publish. |
+| Stock counts | `menu_stock` | One row per product, changed by deltas so two tills selling at once both count. |
+| Till shifts (Z-reports), timecards, audit log | `delivery_settings` rows | Staff devices only; the owner sees every till's Z-reports and voids from anywhere. |
+
+Staff screens get changes instantly (realtime) and poll every 20 s as a
+backstop; customer browsers poll. Every staff header shows a **Synced /
+Offline · N waiting** pill — tap it to sync now.
+
+**Security — next step after launch.** The site still talks to Supabase with the
+public anon key, and the tables allow the anon role to read and write, so a
+technically-minded visitor could read orders or edit data through the API.
+Sync hides other people's data from customer browsers and checks prices on
+staff screens, but the real fix is server-side: give staff devices a Supabase
+Auth login and tighten the Row Level Security policies so the anon role can
+only place orders and read the public menu. Worth doing in the first weeks.
+
+### VAT
+
+VAT comes from each product's own rate (Product Studio), not a flat 20%: cold
+takeaway food can be 0%, anything eaten in is standard-rated, discounts are
+spread across the goods they apply to, delivery/service charges are standard,
+and tips are outside VAT. The till, receipts and customer display show VAT only
+when a VAT number is set.
 
 ### Stock and channels
 

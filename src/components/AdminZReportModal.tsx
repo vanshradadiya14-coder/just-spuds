@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { getBusinessDetails } from '../services/menuStore'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gbp } from '../utils/format'
 import { SITE } from '../data/site'
@@ -64,7 +65,10 @@ export default function AdminZReportModal({ isOpen, onClose, report }: AdminZRep
             <div className="text-center border-b border-dashed border-slate-400 pb-3">
               <h3 className="font-black text-sm uppercase tracking-wider">{SITE.name}</h3>
               <p className="text-[10px] text-slate-600">Market Square, Aylesbury HP20 1EY</p>
-              <p className="text-[10px] text-slate-600">Tel: {SITE.phone} &bull; VAT # GB 394 8812 09</p>
+              <p className="text-[10px] text-slate-600">
+                Tel: {getBusinessDetails().phone}
+                {getBusinessDetails().vatNumber ? <> &bull; VAT # {getBusinessDetails().vatNumber}</> : null}
+              </p>
               <p className="mt-1 font-bold text-xs uppercase bg-slate-900 text-white px-2 py-0.5 rounded inline-block">
                 OFFICIAL Z-CLOSE REPORT
               </p>
@@ -141,11 +145,17 @@ export default function AdminZReportModal({ isOpen, onClose, report }: AdminZRep
             {/* UK VAT / Tax Breakdown */}
             <div className="space-y-1 text-[10px] text-slate-600">
               <div className="flex justify-between font-bold text-slate-800">
-                <span>VAT Breakdown (UK 20%):</span>
-                <span>Included</span>
+                <span>VAT (from product rates):</span>
+                <span>{getBusinessDetails().vatNumber ? 'Included' : 'Not VAT-registered'}</span>
               </div>
+              {(report.vatBands || []).map((b) => (
+                <div key={b.rate} className="flex justify-between">
+                  <span>{b.rate}% on {gbp(b.gross)}:</span>
+                  <span>{gbp(b.vat)}</span>
+                </div>
+              ))}
               <div className="flex justify-between">
-                <span>Standard Rate (20% Hot Food):</span>
+                <span>Total VAT:</span>
                 <span>{gbp(report.vatStandardAmount)}</span>
               </div>
               <div className="flex justify-between">

@@ -1,28 +1,52 @@
 import Reveal from './Reveal'
 import { REVIEWS, SITE } from '../data/site'
+import { getBusinessDetails } from '../services/menuStore'
 
+/**
+ * Publishing made-up reviews or a made-up rating is a banned practice under
+ * the UK's Digital Markets, Competition and Consumers Act 2024. The sample
+ * reviews in data/site.ts were written for the design, so only entries marked
+ * `verified: true` (copied from a real Google review) and a verified rating
+ * are shown. Until then the section asks customers for their review instead.
+ */
 export default function ReviewsSection() {
+  const reviews = REVIEWS.filter((r) => (r as { verified?: boolean }).verified === true)
+  const ratingVerified = (SITE.stats as { ratingVerified?: boolean }).ratingVerified === true
+  const reviewUrl = getBusinessDetails().social.googleReviews
   return (
     <section className="relative overflow-hidden bg-stock py-24 sm:py-32">
       <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
         <Reveal>
           <div className="flex flex-col items-center text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-50 px-4 py-1.5 font-body text-[11px] font-bold uppercase tracking-wider text-amber-700">
-              <span className="text-amber-500">★★★★★</span>
-              <span>{SITE.stats.rating} Local Rating ({SITE.stats.reviewCount} Reviews)</span>
-            </div>
+            {ratingVerified && (
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-50 px-4 py-1.5 font-body text-[11px] font-bold uppercase tracking-wider text-amber-700">
+                <span className="text-amber-500">★★★★★</span>
+                <span>{SITE.stats.rating} on Google ({SITE.stats.reviewCount} reviews)</span>
+              </div>
+            )}
             <h2 className="mt-4 display display-tight text-4xl text-ink sm:text-6xl">
-              Loved by <span className="italic text-amber-600">Aylesbury</span>
+              {reviews.length ? <>Loved by <span className="italic text-amber-600">Aylesbury</span></> : <>Tried us? <span className="italic text-amber-600">Tell Aylesbury.</span></>}
             </h2>
             <p className="mt-4 max-w-lg font-body text-[14px] leading-relaxed text-steel">
-              From market stall shoppers to lunch-break regulars, here is what people are saying
-              about our freshly baked jacket potatoes and sandwiches.
+              {reviews.length
+                ? 'From market stall shoppers to lunch-break regulars, here is what people are saying about our freshly baked jacket potatoes and sandwiches.'
+                : 'We are a small, local kitchen and every honest review helps. Tell other people what you had and what you thought.'}
             </p>
+            {!reviews.length && reviewUrl && (
+              <a
+                href={reviewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-6 inline-flex items-center gap-2 rounded-full bg-ink px-6 py-3 font-body text-xs font-black uppercase tracking-wider text-white hover:bg-amber-600"
+              >
+                ★ Leave a Google review
+              </a>
+            )}
           </div>
         </Reveal>
 
         <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {REVIEWS.map((r, i) => (
+          {reviews.map((r, i) => (
             <Reveal key={r.id} delay={i * 0.08}>
               <div className="glass-card flex h-full flex-col justify-between rounded-3xl p-6 shadow-sm transition-all duration-500 hover:-translate-y-1 hover:shadow-warm">
                 <div>
@@ -68,8 +92,17 @@ export default function ReviewsSection() {
                 <p className="font-body text-[11px] uppercase tracking-wider text-white/60">Spuds Baked in Aylesbury</p>
               </div>
               <div className="space-y-1">
-                <p className="display text-4xl sm:text-5xl text-white font-bold">{SITE.stats.rating} / 5.0</p>
-                <p className="font-body text-[11px] uppercase tracking-wider text-white/60">Average Customer Score</p>
+                {ratingVerified ? (
+                  <>
+                    <p className="display text-4xl sm:text-5xl text-white font-bold">{SITE.stats.rating} / 5.0</p>
+                    <p className="font-body text-[11px] uppercase tracking-wider text-white/60">Average Google rating</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="display text-4xl sm:text-5xl text-white font-bold">20–30 min</p>
+                    <p className="font-body text-[11px] uppercase tracking-wider text-white/60">Fresh batches from the oven</p>
+                  </>
+                )}
               </div>
               <div className="space-y-1">
                 <p className="display text-4xl sm:text-5xl text-amber-400 font-bold">100%</p>

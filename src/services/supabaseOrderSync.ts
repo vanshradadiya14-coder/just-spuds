@@ -1,10 +1,10 @@
 /**
- * SUPABASE REALTIME ORDER SYNC ADAPTER
- * -------------------------------------
- * Syncs orders bidirectionally with Supabase PostgreSQL.
+ * Order ⇄ Supabase row mapping.
+ *
+ * The transport (fetch, upsert, realtime, offline retry) lives in
+ * services/cloudSync.ts and services/sync/supabaseBackend.ts.
  * Supports multi-store tenancy via VITE_STORE_ID (defaults to 'just_spuds').
  */
-import { supabase, isSupabaseConfigured } from './supabase'
 import type { Order, OrderSource } from './orderStore'
 
 const STORE_ID = import.meta.env.VITE_STORE_ID || 'just_spuds'
@@ -43,7 +43,28 @@ export function sourceFromShortId(shortId: string): OrderSource {
   return 'WEBSITE'
 }
 
+/**
+ * Order fields with no column of their own. They ride inside the free-form
+ * `delivery_details` JSON under `_x`; before this they were silently dropped
+ * whenever an order went through Supabase (void reasons, manager overrides and
+ * scheduled slots vanished on every other device).
+ */
+interface PackedExtras {
+  isTest?: boolean
+  adminNotes?: Order['adminNotes']
+  manualOverrides?: Order['manualOverrides']
+  scheduleDate?: string
+  scheduleTime?: string
+}
+
 export function orderToRow(order: Order): SupabaseOrderRow {
+  const extras: PackedExtras = {}
+  if (order.isTest) extras.isTest = true
+  if (order.adminNotes?.length) extras.adminNotes = order.adminNotes
+  if (order.manualOverrides?.length) extras.manualOverrides = order.manualOverrides
+  if (order.scheduleDate) extras.scheduleDate = order.scheduleDate
+  if (order.scheduleTime) extras.scheduleTime = order.scheduleTime
+  const details = Object.keys(extras).length > 0 ? { ...(order.deliveryDetails || {}), _x: extras } : order.deliveryDetails
   return {
     id: order.id,
     short_id: order.shortId,
@@ -59,21 +80,29 @@ export function orderToRow(order: Order): SupabaseOrderRow {
     scheduled_for: order.scheduledFor,
     kitchen_notes: order.kitchenNotes,
     driver: order.driver,
-    delivery_details: order.deliveryDetails,
+    delivery_details: details,
     cancellation: order.cancellation,
     review: order.review,
     timeline: order.timeline,
     created_at: order.createdAt || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    updated_at: order.updatedAt || new Date().toISOString(),
   }
 }
 
 export function rowToOrder(row: SupabaseOrderRow): Order {
+  const details = row.delivery_details && typeof row.delivery_details === 'object' ? row.delivery_details : undefined
+  const extras: PackedExtras = (details?._x as PackedExtras) || {}
+  let deliveryDetails = details
+  if (details && '_x' in details) {
+    const { _x: _packed, ...rest } = details
+    deliveryDetails = Object.keys(rest).length > 0 ? rest : undefined
+  }
   return {
     id: row.id,
     shortId: row.short_id,
     source: sourceFromShortId(row.short_id),
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
     status: row.status as Order['status'],
     fulfilment: row.fulfilment as Order['fulfilment'],
     customer: row.customer,
@@ -85,95 +114,14 @@ export function rowToOrder(row: SupabaseOrderRow): Order {
     scheduledFor: row.scheduled_for ?? undefined,
     kitchenNotes: row.kitchen_notes ?? undefined,
     driver: row.driver,
-    deliveryDetails: row.delivery_details,
+    deliveryDetails,
     cancellation: row.cancellation,
     review: row.review,
     timeline: row.timeline || [],
-  }
-}
-
-/**
- * Fetch all orders for this store from Supabase.
- */
-export async function fetchSupabaseOrders(): Promise<Order[] | null> {
-  if (!isSupabaseConfigured || !supabase) return null
-  try {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('store_id', STORE_ID)
-      .order('created_at', { ascending: false })
-      .limit(100)
-
-    if (error) {
-      console.warn('Supabase fetch orders error:', error.message)
-      return null
-    }
-
-    if (!data) return []
-    return (data as SupabaseOrderRow[]).map(rowToOrder)
-  } catch (err) {
-    console.warn('Could not fetch orders from Supabase:', err)
-    return null
-  }
-}
-
-/**
- * Push an individual order (create or update) to Supabase.
- */
-export async function syncOrderToSupabase(order: Order): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) return
-  try {
-    const row = orderToRow(order)
-    const { error } = await supabase
-      .from('orders')
-      .upsert(row, { onConflict: 'id' })
-
-    if (error) {
-      console.warn('Supabase upsert order error:', error.message)
-    }
-  } catch (err) {
-    console.warn('Failed to push order to Supabase:', err)
-  }
-}
-
-/**
- * Initialize real-time WebSocket listener for orders.
- * Whenever an order is inserted or updated in Supabase, callback is fired.
- */
-export function initSupabaseOrderSubscription(
-  onOrderUpserted: (order: Order) => void,
-  onOrderDeleted?: (orderId: string) => void
-): (() => void) | null {
-  if (!isSupabaseConfigured || !supabase) return null
-  const client = supabase
-
-  const channel = client
-    .channel(`orders_realtime_${STORE_ID}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'orders',
-        filter: `store_id=eq.${STORE_ID}`,
-      },
-      (payload) => {
-        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          const order = rowToOrder(payload.new as SupabaseOrderRow)
-          onOrderUpserted(order)
-        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
-          onOrderDeleted?.(payload.old.id)
-        }
-      }
-    )
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        // Connected to Supabase real-time
-      }
-    })
-
-  return () => {
-    client.removeChannel(channel)
+    ...(extras.isTest ? { isTest: true } : {}),
+    ...(extras.adminNotes ? { adminNotes: extras.adminNotes } : {}),
+    ...(extras.manualOverrides ? { manualOverrides: extras.manualOverrides } : {}),
+    ...(extras.scheduleDate ? { scheduleDate: extras.scheduleDate } : {}),
+    ...(extras.scheduleTime ? { scheduleTime: extras.scheduleTime } : {}),
   }
 }

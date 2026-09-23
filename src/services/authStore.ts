@@ -5,6 +5,10 @@
  * and persistent auth state across tabs.
  */
 
+import { getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe } from './cloudSync'
+import { matchStaffPin, pinFingerprint, subscribeRoster, getRoster, type StaffMember } from './staffRoster'
+import { findDriverByPin, getDrivers, isDriverPinTaken, subscribeDrivers } from './driverStore'
+
 // Firebase is only needed for Google sign-in, so it is loaded on demand rather
 // than shipped in the main bundle that every visitor downloads for the homepage.
 const loadFirebase = () => import('./firebase')
@@ -35,86 +39,11 @@ export interface AuthUser {
   storeName?: string
   extraPermissions?: string[]
   deniedPermissions?: string[]
+  /** Fingerprint of the PIN this session was opened with — a PIN change ends the session. */
+  pinFp?: string
 }
 
 const AUTH_STORAGE_KEY = 'just_spuds_auth_user_v1'
-
-// Authorized Store Staff Profiles for Role-Based Access Control
-export const STAFF_ROSTER: Record<string, AuthUser> = {
-  owner: {
-    id: 'usr-owner-1',
-    name: 'Sunny (Store Owner)',
-    email: 'sunny@justspuds.uk',
-    phone: '07700 900103',
-    role: 'STORE_MANAGER',
-    status: 'ACTIVE',
-    storeId: 'store-aylesbury-1',
-    storeName: 'Market Square Aylesbury',
-  },
-  manager: {
-    id: 'usr-mgr-1',
-    name: 'Elena Rostova (Store Manager)',
-    email: 'manager@justspuds.uk',
-    phone: '07700 900102',
-    role: 'STORE_MANAGER',
-    status: 'ACTIVE',
-    storeId: 'store-aylesbury-1',
-    storeName: 'Market Square Aylesbury',
-  },
-  supervisor: {
-    id: 'usr-sup-1',
-    name: 'Marcus Bell (Shift Supervisor)',
-    email: 'marcus@justspuds.uk',
-    phone: '07700 900105',
-    role: 'SUPERVISOR',
-    status: 'ACTIVE',
-    storeId: 'store-aylesbury-1',
-    storeName: 'Market Square Aylesbury',
-  },
-  cashier: {
-    id: 'usr-cashier-1',
-    name: 'Chloe Smith (Till Cashier)',
-    email: 'chloe@justspuds.uk',
-    phone: '07700 900106',
-    role: 'CASHIER',
-    status: 'ACTIVE',
-    storeId: 'store-aylesbury-1',
-    storeName: 'Market Square Aylesbury',
-  },
-  staff: {
-    id: 'usr-staff-1',
-    name: 'Jack Davies (Kitchen Chef)',
-    email: 'kitchen@justspuds.uk',
-    phone: '07700 900101',
-    role: 'KITCHEN_STAFF',
-    status: 'ACTIVE',
-    storeId: 'store-aylesbury-1',
-    storeName: 'Market Square Aylesbury',
-  },
-  admin: {
-    id: 'usr-admin-1',
-    name: 'Vansh (System Admin)',
-    email: 'admin@justspuds.uk',
-    phone: '07700 900100',
-    role: 'SUPER_ADMIN',
-    status: 'ACTIVE',
-    storeId: 'store-aylesbury-1',
-    storeName: 'Market Square Aylesbury',
-  },
-}
-
-export const DEMO_USERS = STAFF_ROSTER
-
-// Staff PIN credentials
-const PIN_MAP: Record<string, AuthUser> = {
-  '2468': STAFF_ROSTER.owner,
-  '5555': STAFF_ROSTER.manager,
-  '3333': STAFF_ROSTER.supervisor,
-  '1111': STAFF_ROSTER.cashier,
-  '1234': STAFF_ROSTER.staff,
-  '8888': STAFF_ROSTER.admin,
-  '0000': STAFF_ROSTER.owner,
-}
 
 /**
  * Role groups. Every portal gate should use one of these instead of spelling out
@@ -207,13 +136,9 @@ function clearPinFailures() {
 }
 
 export function verifyManagerPin(pin: string): { ok: boolean; managerName?: string; role?: Role; message?: string } {
-  const remaining = getPinLockRemainingMs()
-  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
-  const user = PIN_MAP[pin.trim()]
-  if (user && isManagerOrAdmin(user.role)) {
-    clearPinFailures()
-    return { ok: true, managerName: user.name, role: user.role }
-  }
+  const res = checkPin(pin)
+  if (!res.ok) return { ok: false, message: res.message }
+  if (isManagerOrAdmin(res.user.role)) return { ok: true, managerName: res.user.name, role: res.user.role }
   recordPinFailure()
   return { ok: false, message: 'That PIN is not a supervisor or manager PIN.' }
 }
@@ -237,6 +162,7 @@ export function setCurrentUser(user: AuthUser | null): void {
   try {
     if (user) {
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user))
+      if (INTERNAL_ROLES.includes(user.role)) markStaffDevice()
     } else {
       localStorage.removeItem(AUTH_STORAGE_KEY)
     }
@@ -263,68 +189,92 @@ export function subscribeAuth(fn: AuthListener): () => void {
   }
 }
 
+const STORE_FIELDS = { storeId: 'store-aylesbury-1', storeName: 'Market Square Aylesbury' }
+
+function memberToUser(m: StaffMember): AuthUser {
+  return {
+    id: m.id,
+    name: m.name,
+    email: m.email || '',
+    phone: m.phone,
+    role: m.role,
+    status: m.status === 'ACTIVE' ? 'ACTIVE' : 'DISABLED',
+    pinFp: pinFingerprint(m),
+    ...STORE_FIELDS,
+  }
+}
+
+type PinCheck = { ok: true; user: AuthUser } | { ok: false; message: string }
+
+/**
+ * The one place a PIN is checked: lockout, staff roster, then drivers.
+ * Every wrong PIN counts towards the lockout, whichever screen it was typed on.
+ */
+export function checkPin(pin: string): PinCheck {
+  const remaining = getPinLockRemainingMs()
+  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
+  const clean = pin.trim()
+
+  const staff = matchStaffPin(clean)
+  if (staff && 'blocked' in staff) return { ok: false, message: staff.blocked }
+  if (staff && staff.member.status === 'ACTIVE') {
+    clearPinFailures()
+    return { ok: true, user: memberToUser(staff.member) }
+  }
+
+  const driver = findDriverByPin(clean)
+  if (driver) {
+    // Same rule as staff: a starter PIN only counts once the server confirmed there is no real list.
+    const trusted = !driver.defaultPin || !isCloudSyncConfigured() || getDocSyncState('drivers') !== 'unknown'
+    if (!trusted) return { ok: false, message: 'Checking the driver list with the server — try again in a few seconds.' }
+    clearPinFailures()
+    return {
+      ok: true,
+      user: {
+        id: driver.id,
+        name: driver.name,
+        email: driver.email,
+        phone: driver.phone,
+        role: 'DRIVER',
+        status: 'ACTIVE',
+        pinFp: (driver.pinHash || '').slice(-12),
+        ...STORE_FIELDS,
+      },
+    }
+  }
+
+  recordPinFailure()
+  return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
+}
+
 /**
  * Resolves a PIN to a staff/courier account without starting a session — the
  * time clock and manager overrides need to identify someone who is not the
- * cashier currently signed in.
+ * cashier currently signed in. No lockout accounting; use checkPin for prompts.
  */
 export function findUserByPin(pin: string): AuthUser | undefined {
-  const cleanPin = pin.trim()
-  const match = PIN_MAP[cleanPin]
-  if (match) return match
-
-  // Dynamic Driver PIN verification from driver store
-  try {
-    const rawDrivers = localStorage.getItem('just_spuds_drivers_v1')
-    if (rawDrivers) {
-      const drivers = JSON.parse(rawDrivers)
-      const driverMatch = drivers.find((d: { pin: string; status: string }) => d.pin === cleanPin && d.status === 'ACTIVE')
-      if (driverMatch) {
-        return {
-          id: driverMatch.id,
-          name: driverMatch.name,
-          email: driverMatch.email,
-          phone: driverMatch.phone,
-          role: 'DRIVER',
-          status: driverMatch.status,
-          storeId: 'store-aylesbury-1',
-          storeName: 'Market Square Aylesbury',
-        }
-      }
-    }
-  } catch {
-    // Fallthrough to seed check
-  }
-
-  // Fallback seed driver PIN check
-  if (cleanPin === '7777') {
-    return {
-      id: 'usr-driver-1',
-      name: 'Liam Walker',
-      email: 'liam.walker@justspuds.uk',
-      phone: '07700 900201',
-      role: 'DRIVER',
-      status: 'ACTIVE',
-      storeId: 'store-aylesbury-1',
-      storeName: 'Market Square Aylesbury',
-    }
-  }
+  const staff = matchStaffPin(pin)
+  if (staff && 'member' in staff && staff.member.status === 'ACTIVE') return memberToUser(staff.member)
+  const driver = findDriverByPin(pin)
+  if (driver) return { id: driver.id, name: driver.name, email: driver.email, phone: driver.phone, role: 'DRIVER', status: 'ACTIVE', ...STORE_FIELDS }
   return undefined
 }
 
+/** Is this PIN used by anyone (staff or driver) other than `exceptId`? */
+export function isPinTaken(pin: string, exceptId?: string): boolean {
+  const staff = matchStaffPin(pin)
+  if (staff && 'member' in staff && staff.member.id !== exceptId) return true
+  return isDriverPinTaken(pin, exceptId)
+}
+
 export function loginWithPin(pin: string, allowedRoles?: Role[]): { ok: boolean; user?: AuthUser; message: string } {
-  const remaining = getPinLockRemainingMs()
-  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
-  const user = findUserByPin(pin)
-  if (!user) {
-    recordPinFailure()
-    return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
-  }
+  const res = checkPin(pin)
+  if (!res.ok) return { ok: false, message: res.message }
+  const user = res.user
   if (allowedRoles && !hasRole(user, allowedRoles)) {
     recordPinFailure()
     return { ok: false, message: 'That PIN does not have access to this area.' }
   }
-  clearPinFailures()
   setCurrentUser(user)
   return {
     ok: true,
@@ -385,4 +335,35 @@ export function hasRole(user: AuthUser | null, allowedRoles: Role[]): boolean {
   if (user.status !== 'ACTIVE') return false
   if (user.role === 'SUPER_ADMIN') return true
   return allowedRoles.includes(user.role)
+}
+
+/**
+ * A session opened with a PIN ends when that PIN changes, the account is
+ * disabled or removed — on this device and every other one, as the roster syncs.
+ * Sessions from before PIN fingerprints existed are ended once, so nobody stays
+ * signed in on a published starter PIN.
+ */
+function validateSession() {
+  const user = getCurrentUser()
+  if (!user || user.role === 'CUSTOMER') return
+  if (user.role === 'DRIVER') {
+    const driver = getDrivers().find((d) => d.id === user.id)
+    if (!driver || driver.status !== 'ACTIVE' || (driver.pinHash || '').slice(-12) !== user.pinFp) setCurrentUser(null)
+    return
+  }
+  const member = getRoster().find((m) => m.id === user.id)
+  if (!member || member.status !== 'ACTIVE' || pinFingerprint(member) !== user.pinFp) setCurrentUser(null)
+}
+
+if (typeof window !== 'undefined') {
+  setAccessProbe(() => {
+    const user = getCurrentUser()
+    const active = !!user && user.status === 'ACTIVE'
+    return {
+      staff: active && INTERNAL_ROLES.includes(user!.role),
+      management: active && (user!.role === 'SUPER_ADMIN' || MANAGEMENT_ROLES.includes(user!.role)),
+    }
+  })
+  subscribeRoster(() => validateSession())
+  subscribeDrivers(() => validateSession())
 }

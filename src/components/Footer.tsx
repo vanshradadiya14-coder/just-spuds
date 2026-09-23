@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Wordmark } from './Brand'
 import { SITE, MAPS_SEARCH_URL } from '../data/site'
+import { getBusinessDetails } from '../services/menuStore'
 
 // Staff/admin portals are deliberately not linked from the public storefront —
 // they're reached directly at /staff and /admin, gated by the PIN screen there.
@@ -12,13 +13,14 @@ const NAV = [
   { to: '/find-us', label: 'Find Us' },
 ]
 
-const SOCIALS = [
-  { key: 'facebook', label: 'Facebook', href: SITE.social.facebook },
-  { key: 'instagram', label: 'Instagram', href: SITE.social.instagram },
-  { key: 'google', label: 'Google', href: SITE.social.google },
-] as const
-
 export default function Footer() {
+  const business = getBusinessDetails()
+  // Only real profile pages — a link to instagram.com's homepage helps nobody.
+  const socials = [
+    { key: 'facebook', label: 'Facebook', href: business.social.facebook },
+    { key: 'instagram', label: 'Instagram', href: business.social.instagram },
+    { key: 'google', label: 'Google reviews', href: business.social.googleReviews },
+  ].filter((s): s is { key: string; label: string; href: string } => Boolean(s.href))
   return (
     <footer className="on-dark bg-ink py-16 text-white">
       <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
@@ -39,9 +41,10 @@ export default function Footer() {
           <div>
             <p className="label text-white/35">Find us</p>
             <address className="mt-4 not-italic font-body text-[13px] leading-relaxed text-white/65">
-              {SITE.address.line1}<br />
-              {SITE.address.line2}<br />
-              {SITE.address.town} {SITE.address.postcode}
+              {business.addressLines.map((l) => (
+                <span key={l} className="block">{l}</span>
+              ))}
+              <a href={business.phoneHref} className="mt-1 block hover:text-white">{business.phone}</a>
             </address>
             <a href={MAPS_SEARCH_URL} target="_blank" rel="noopener noreferrer"
               className="mt-3 inline-block font-body text-[11px] font-bold uppercase tracking-[0.14em] text-white/80 underline-offset-4 hover:underline">
@@ -50,9 +53,10 @@ export default function Footer() {
           </div>
 
           <div>
-            <p className="label text-white/35">Follow</p>
+            <p className="label text-white/35">{socials.length ? 'Follow' : 'Opening hours'}</p>
+            {socials.length === 0 && <p className="mt-4 font-body text-[13px] text-white/65">{SITE.openingHours.display}</p>}
             <ul className="mt-4 space-y-2.5">
-              {SOCIALS.map((s) => (
+              {socials.map((s) => (
                 <li key={s.key}>
                   <a
                     href={s.href}

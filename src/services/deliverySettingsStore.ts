@@ -5,6 +5,8 @@
  * Synchronizes across Checkout, Cart Drawer, Driver Terminal, and Admin Dashboard.
  */
 
+import { markDocChanged, registerDoc } from './cloudSync'
+
 export interface StoreDeliverySettings {
   /** Delivery fee charged to customers in pence (Default: 400 = £4.00) */
   deliveryFeePence: number
@@ -79,6 +81,8 @@ export function saveDeliverySettings(newSettings: Partial<StoreDeliverySettings>
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+      // The online-ordering switch lives here: it must reach every customer's browser.
+      markDocChanged('delivery.settings')
       listeners.forEach((fn) => fn(updated))
       channel?.postMessage({ type: 'DELIVERY_SETTINGS_UPDATED', settings: updated })
     } catch (err) {
@@ -113,4 +117,16 @@ export function subscribeDeliverySettings(fn: Listener): () => void {
     channel?.removeEventListener('message', handleMessage)
     window.removeEventListener('storage', handleStorage)
   }
+}
+
+if (typeof window !== 'undefined') {
+  registerDoc({
+    name: 'delivery.settings',
+    storageKey: STORAGE_KEY,
+    notify: () => {
+      const settings = getDeliverySettings()
+      listeners.forEach((fn) => fn(settings))
+      channel?.postMessage({ type: 'DELIVERY_SETTINGS_UPDATED', settings })
+    },
+  })
 }

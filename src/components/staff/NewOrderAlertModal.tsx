@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { type Order } from '../../services/orderStore'
+import { getPriceCheck, type Order } from '../../services/orderStore'
 import { type AlertSoundState, type OnlineOrderAlert } from '../../services/alertSoundBus'
 import { lineUnitPrice } from '../../hooks/useCart'
 import { cx, gbp } from '../../utils/format'
@@ -152,6 +152,15 @@ export default function NewOrderAlertModal({
               </p>
             </div>
           </div>
+
+          {(() => {
+            const check = getPriceCheck(order)
+            return check.ok ? null : (
+              <div role="alert" className="rounded-xl border-2 border-red-500 bg-red-950/70 p-3 text-xs font-bold text-red-100">
+                💷 {check.message}
+              </div>
+            )
+          })()}
 
           {parseKitchenNotes(order.kitchenNotes).note && (
             <div className="rounded-xl border-2 border-amber-400 bg-amber-400 p-3 text-xs font-black uppercase text-ink">

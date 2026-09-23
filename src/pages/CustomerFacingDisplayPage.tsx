@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { computeVat, isVatRegistered } from '../services/vat'
 import { Link } from 'react-router-dom'
 import { subscribeCFDState, type CFDTicketState, EMPTY_CFD_STATE } from '../services/cfdBus'
 import { lineUnitPrice } from '../hooks/useCart'
@@ -218,10 +219,14 @@ export default function CustomerFacingDisplayPage() {
                   <span className="font-mono">-{gbp(state.discountPence)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-white/40 text-[11px]">
-                <span>UK VAT @ 20% Included</span>
-                <span className="font-mono">{gbp(Math.round((state.totalDuePence / 1.2) * 0.2))}</span>
-              </div>
+              {isVatRegistered() && (
+                <div className="flex justify-between text-white/40 text-[11px]">
+                  <span>VAT included</span>
+                  <span className="font-mono">
+                    {gbp(computeVat({ lines: state.lines, discount: state.discountPence, eatIn: state.orderType === 'eat_in' }).vat)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between items-baseline pt-2 border-t border-white/15">
                 <span className="display text-lg font-black uppercase text-white">TOTAL DUE</span>
                 <span className="font-mono text-3xl sm:text-4xl font-black text-amber-400">

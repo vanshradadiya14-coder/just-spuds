@@ -20,7 +20,7 @@ interface TillSettingsModalProps {
   actor: string
 }
 
-type ToggleKey = Exclude<keyof TillSettings, 'defaultFloatPence'>
+type ToggleKey = Exclude<keyof TillSettings, 'defaultFloatPence' | 'autoLockMinutes'>
 
 const TOGGLES: { key: ToggleKey; label: string; hint: string }[] = [
   { key: 'autoPrintTillReceipt', label: 'Receipt after every till sale', hint: 'Opens the thermal receipt as soon as a sale is tendered.' },
@@ -30,7 +30,10 @@ const TOGGLES: { key: ToggleKey; label: string; hint: string }[] = [
   { key: 'touchSounds', label: 'Button tap sounds', hint: 'Short click on every till button.' },
   { key: 'blindShiftClose', label: 'Blind cash count at close', hint: 'Hides the expected cash figure until the drawer has been counted.' },
   { key: 'tipPrompt', label: 'Ask for a tip on card payments', hint: 'Shows None / 50p / £1 / £2 before the card reader is armed.' },
+  { key: 'lockAfterSale', label: 'Lock after every sale', hint: 'Each cashier enters their PIN for their own sale — clean per-person takings.' },
 ]
+
+const LOCK_OPTIONS = [0, 1, 2, 5, 10, 15]
 
 export default function TillSettingsModal({ onClose, actor }: TillSettingsModalProps) {
   const [settings, setSettings] = useState<TillSettings>(() => getTillSettings())
@@ -124,6 +127,25 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
           </span>
           <span className="text-white/60">→</span>
         </button>
+
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2">
+          <span className="block text-xs font-bold text-white">Lock the till when idle</span>
+          <span className="block text-[10px] text-white/50">Returns to the PIN screen; the shift and any open ticket are kept for the next person.</span>
+          <div className="flex flex-wrap gap-1.5">
+            {LOCK_OPTIONS.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => updateTillSettings({ autoLockMinutes: m }, actor)}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                  settings.autoLockMinutes === m ? 'bg-amber-400 text-ink' : 'border border-white/15 bg-black/40 text-white/70 hover:bg-white/10'
+                }`}
+              >
+                {m === 0 ? 'Never' : `${m} min`}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <label className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
           <span>

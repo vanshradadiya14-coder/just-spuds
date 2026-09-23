@@ -18,6 +18,7 @@ import {
 } from '../data/menu'
 import { DEFAULT_STORE_HOURS, SITE, parseTimeToDecimalHours, type StoreHoursConfig } from '../data/site'
 import { logAuditEvent } from './auditStore'
+import { markDocChanged, queueStockDelta, queueStockSet, registerDoc, registerStock } from './cloudSync'
 import type { CartLine } from '../hooks/useCart'
 
 export interface PromoCode {
@@ -55,6 +56,10 @@ export interface StoreSettings {
   zone1FreeThresholdPence: number
   zone2FeePence: number
   zone2FreeThresholdPence: number
+  /** Printed on receipts and the Z-report. Leave blank if the shop is not VAT-registered. */
+  vatNumber?: string
+  /** Real profile URLs; a link is hidden until it is set. */
+  social?: { instagram?: string; facebook?: string; googleReviews?: string }
 }
 
 const PRODUCTS_STORAGE_KEY = 'just_spuds_dynamic_products_v1'
@@ -98,7 +103,7 @@ const DEFAULT_WEEKLY_HOURS: Record<string, DailyHours> = Object.fromEntries(
 const DEFAULT_SETTINGS: StoreSettings = {
   storeName: SITE.name,
   phone: SITE.phone,
-  address: 'Market Square, Aylesbury HP20 1EY',
+  address: `${SITE.address.line1}, ${SITE.address.line2}, ${SITE.address.town} ${SITE.address.postcode}`,
   openTime: '11:00',
   closeTime: '22:00',
   weeklyHours: DEFAULT_WEEKLY_HOURS,
@@ -235,6 +240,7 @@ export function deductStockForOrderLines(lines: CartLine[], orderId: string, act
       const newStock = Math.max(0, currentStock - totalQty)
       changed = true
       deductedItems.push(`${prod.name} (-${totalQty} -> ${newStock})`)
+      queueStockDelta(prod.id, -totalQty)
 
       return {
         ...prod,
@@ -282,6 +288,7 @@ export function restoreStockForOrderLines(
       const newStock = currentStock + totalQty
       changed = true
       restoredItems.push(`${prod.name} (+${totalQty} -> ${newStock})`)
+      queueStockDelta(prod.id, totalQty)
 
       // Only re-enable if the product was disabled *because* it ran out. A manual
       // 86 by a manager (available=false with stock still on hand) must survive.
@@ -335,6 +342,9 @@ export function adjustProductStock(
 
     localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    queueStockSet(productId, qty)
+    // Availability is part of the published menu, so a restock re-enables it everywhere.
+    if (updated[index].available !== current[index].available) markDocChanged('menu.products')
     logAuditEvent(
       actor,
       'stock.manual_adjustment',
@@ -362,6 +372,10 @@ export function saveProduct(product: Product): void {
     }
     localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.products')
+    // The menu document carries no stock, so a new product or an edited count goes separately.
+    const previousQty = index >= 0 ? current[index].stockQuantity : undefined
+    if (typeof product.stockQuantity === 'number' && product.stockQuantity !== previousQty) queueStockSet(product.id, product.stockQuantity)
   } catch (err) {
     console.error('Failed to save product', err)
   }
@@ -374,6 +388,7 @@ export function deleteProduct(productId: string): void {
     const updated = current.filter((p) => p.id !== productId)
     localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.products')
   } catch (err) {
     console.error('Failed to delete product', err)
   }
@@ -394,6 +409,7 @@ export function batchAdjustCategoryPrices(category: string, deltaPence: number):
     })
     localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.products')
     return count
   } catch (err) {
     console.error('Failed to batch adjust prices', err)
@@ -432,6 +448,7 @@ export function saveExtra(extra: Option): void {
     }
     localStorage.setItem(EXTRAS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.extras')
   } catch (err) {
     console.error('Failed to save extra topping', err)
   }
@@ -444,6 +461,7 @@ export function deleteExtra(extraId: string): void {
     const updated = current.filter((e) => e.id !== extraId)
     localStorage.setItem(EXTRAS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.extras')
   } catch (err) {
     console.error('Failed to delete extra topping', err)
   }
@@ -502,6 +520,7 @@ export function saveSauce(sauce: Option): void {
     }
     localStorage.setItem(SAUCES_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.sauces')
   } catch (err) {
     console.error('Failed to save sauce', err)
   }
@@ -514,6 +533,7 @@ export function deleteSauce(sauceId: string): void {
     const updated = current.filter((s) => s.id !== sauceId)
     localStorage.setItem(SAUCES_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.sauces')
   } catch (err) {
     console.error('Failed to delete sauce', err)
   }
@@ -550,6 +570,7 @@ export function savePromoCode(promo: PromoCode): void {
     }
     localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.promos')
   } catch (err) {
     console.error('Failed to save promo code', err)
   }
@@ -562,6 +583,7 @@ export function deletePromoCode(code: string): void {
     const updated = current.filter((p) => p.code.toUpperCase() !== code.toUpperCase())
     localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
+    markDocChanged('menu.promos')
   } catch (err) {
     console.error('Failed to delete promo code', err)
   }
@@ -619,6 +641,7 @@ export function saveStoreSettings(settings: StoreSettings): void {
   try {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
     notifyListeners()
+    markDocChanged('store.settings')
   } catch (err) {
     console.error('Failed to save store settings', err)
   }
@@ -636,6 +659,8 @@ export function resetMenuToDefaults(): void {
     localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(DEFAULT_PROMOS))
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS))
     notifyListeners()
+    ;['menu.products', 'menu.extras', 'menu.sauces', 'menu.promos', 'store.settings'].forEach(markDocChanged)
+    DEFAULT_PRODUCTS.forEach((p) => queueStockSet(p.id, normalizeProduct(p).stockQuantity ?? 45))
   } catch (err) {
     console.error('Failed to reset menu', err)
   }
@@ -672,5 +697,95 @@ export function subscribeMenu(fn: MenuListener): () => void {
     menuListeners.delete(fn)
     menuChannel?.removeEventListener('message', handleMessage)
     window.removeEventListener('storage', handleStorage)
+  }
+}
+
+// -------------------------------------------------------------
+// CROSS-DEVICE SYNC (see services/cloudSync.ts)
+// -------------------------------------------------------------
+if (typeof window !== 'undefined') {
+  // Stock counts sync separately (per product, by delta) so a sale on the till and
+  // a web order at the same moment both count; the menu document never carries them.
+  registerDoc({
+    name: 'menu.products',
+    storageKey: PRODUCTS_STORAGE_KEY,
+    toRemote: (local) =>
+      (Array.isArray(local) ? (local as Product[]) : []).map((p) => {
+        const { stockQuantity: _stock, ...rest } = p
+        return rest
+      }),
+    fromRemote: (remote, local) => {
+      const localStock = new Map((Array.isArray(local) ? (local as Product[]) : []).map((p) => [p.id, p.stockQuantity]))
+      return (Array.isArray(remote) ? (remote as Product[]) : []).map((p) =>
+        localStock.get(p.id) !== undefined ? { ...p, stockQuantity: localStock.get(p.id) } : p,
+      )
+    },
+    notify: notifyListeners,
+  })
+  registerDoc({ name: 'menu.extras', storageKey: EXTRAS_STORAGE_KEY, notify: notifyListeners })
+  registerDoc({ name: 'menu.sauces', storageKey: SAUCES_STORAGE_KEY, notify: notifyListeners })
+  registerDoc({ name: 'menu.promos', storageKey: PROMOS_STORAGE_KEY, notify: notifyListeners })
+  registerDoc({ name: 'store.settings', storageKey: SETTINGS_STORAGE_KEY, notify: notifyListeners })
+
+  registerStock({
+    levels: () => getProducts().map((p) => ({ id: p.id, qty: p.stockQuantity ?? 0 })),
+    apply: (rows) => {
+      const current = getProducts()
+      const byId = new Map(rows.map((r) => [r.id, r.qty]))
+      let changed = false
+      const updated = current.map((prod) => {
+        if (!byId.has(prod.id)) return prod
+        const qty = Math.max(0, byId.get(prod.id) as number)
+        const oldQty = prod.stockQuantity ?? 0
+        if (qty === oldQty) return prod
+        changed = true
+        // Same availability rule as a local restock: back on sale only if running
+        // out was why it came off. A manager's 86 survives.
+        return { ...prod, stockQuantity: qty, available: qty > 0 ? prod.available || oldQty <= 0 : prod.available }
+      })
+      if (changed) {
+        localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
+        notifyListeners()
+      }
+    },
+  })
+}
+
+// -------------------------------------------------------------
+// BUSINESS DETAILS (receipts, contact links, footer)
+// -------------------------------------------------------------
+export interface BusinessDetails {
+  name: string
+  phone: string
+  /** tel: link form of the phone number. */
+  phoneHref: string
+  address: string
+  addressLines: string[]
+  vatNumber?: string
+  social: { instagram?: string; facebook?: string; googleReviews?: string }
+}
+
+/** An address saved by early builds that never matched the shop's real one. */
+const LEGACY_DEFAULT_ADDRESS = 'Market Square, Aylesbury HP20 1EY'
+const isRealUrl = (u?: string) => !!u && /^https?:\/\/[^/]+\/.+/.test(u.trim())
+
+/** One source for the shop's name, phone, address and VAT number. */
+export function getBusinessDetails(): BusinessDetails {
+  const s = getStoreSettings()
+  const phone = (s.phone || '').trim() && s.phone !== '01296 000000' ? s.phone.trim() : SITE.phone
+  const address = s.address && s.address.trim() && s.address !== LEGACY_DEFAULT_ADDRESS ? s.address.trim() : DEFAULT_SETTINGS.address
+  const social = s.social || {}
+  return {
+    name: (s.storeName || SITE.name).trim(),
+    phone,
+    phoneHref: `tel:${phone.replace(/[^\d+]/g, '')}`,
+    address,
+    addressLines: address.split(',').map((l) => l.trim()).filter(Boolean),
+    vatNumber: s.vatNumber?.trim() || undefined,
+    social: {
+      instagram: isRealUrl(social.instagram) ? social.instagram!.trim() : undefined,
+      facebook: isRealUrl(social.facebook) ? social.facebook!.trim() : undefined,
+      googleReviews: isRealUrl(social.googleReviews) ? social.googleReviews!.trim() : undefined,
+    },
   }
 }
