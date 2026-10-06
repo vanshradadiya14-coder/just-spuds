@@ -50,18 +50,18 @@ export default function MobileAppDock() {
               <button
                 type="button"
                 onClick={open}
-                className="w-full flex items-center justify-between rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 px-4 py-3 text-slate-950 shadow-[0_10px_25px_-5px_rgba(245,158,11,0.45)] border border-amber-300 active:scale-[0.98] transition-transform"
+                className="w-full flex items-center justify-between rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 px-4 py-3 text-ink shadow-[0_10px_25px_-5px_rgba(217,119,6,0.4)] border border-amber-300/80 active:scale-[0.98] transition-transform"
                 aria-label="View basket"
               >
                 <div className="flex items-center gap-2.5">
-                  <span className="grid h-6 w-6 place-items-center rounded-full bg-slate-950 text-[11px] font-black text-amber-300 shadow-sm">
+                  <span className="grid h-6 w-6 place-items-center rounded-full bg-ink text-[11px] font-black text-amber-300 shadow-xs">
                     {count}
                   </span>
                   <span className="font-body text-xs font-black uppercase tracking-wider">
                     View Basket
                   </span>
                   {!isOnlineOrderingEnabled && (
-                    <span className="rounded-full bg-slate-950/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-900">
+                    <span className="rounded-full bg-ink/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-ink">
                       Launch Mode
                     </span>
                   )}
@@ -82,7 +82,7 @@ export default function MobileAppDock() {
 
         {/* Native App Bottom Tab Bar */}
         <nav
-          className="border-t border-slate-200/80 bg-white/95 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] backdrop-blur-xl"
+          className="border-t border-amber-900/10 bg-[#FAF7F2]/95 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(20,18,16,0.06)] backdrop-blur-xl"
           aria-label="Mobile Navigation"
         >
           <div className="grid grid-cols-5 items-center">
@@ -91,14 +91,14 @@ export default function MobileAppDock() {
               to="/"
               className={cx(
                 'flex flex-col items-center justify-center py-1 transition-all active:scale-90',
-                isHome ? 'text-amber-600 font-bold' : 'text-slate-400 hover:text-slate-600'
+                isHome ? 'text-amber-800 font-bold' : 'text-[#7C7267] hover:text-[#27221E]'
               )}
             >
               <div className="relative flex items-center justify-center h-6 w-6 mb-0.5">
                 <HomeIcon className={cx('h-5 w-5 transition-colors', isHome ? 'stroke-[2.2]' : 'stroke-[1.7]')} />
               </div>
               <span className="font-body text-[10px] tracking-tight uppercase font-bold">Home</span>
-              {isHome && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-500" />}
+              {isHome && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-600" />}
             </Link>
 
             {/* 2. MENU */}
@@ -106,29 +106,29 @@ export default function MobileAppDock() {
               to="/menu"
               className={cx(
                 'flex flex-col items-center justify-center py-1 transition-all active:scale-90',
-                isMenu ? 'text-amber-600 font-bold' : 'text-slate-400 hover:text-slate-600'
+                isMenu ? 'text-amber-800 font-bold' : 'text-[#7C7267] hover:text-[#27221E]'
               )}
             >
               <div className="relative flex items-center justify-center h-6 w-6 mb-0.5">
                 <MenuIcon className={cx('h-5 w-5 transition-colors', isMenu ? 'stroke-[2.2]' : 'stroke-[1.7]')} />
               </div>
               <span className="font-body text-[10px] tracking-tight uppercase font-bold">Menu</span>
-              {isMenu && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-500" />}
+              {isMenu && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-600" />}
             </Link>
 
-            {/* 3. CUSTOM SPUD LAB */}
+            {/* 3. CRAFT SPUD */}
             <Link
               to="/build"
               className={cx(
                 'flex flex-col items-center justify-center py-1 transition-all active:scale-90',
-                isBuild ? 'text-amber-600 font-bold' : 'text-slate-400 hover:text-slate-600'
+                isBuild ? 'text-amber-800 font-bold' : 'text-[#7C7267] hover:text-[#27221E]'
               )}
             >
               <div className="relative flex items-center justify-center h-6 w-6 mb-0.5">
                 <BuildIcon className={cx('h-5 w-5 transition-colors', isBuild ? 'stroke-[2.2]' : 'stroke-[1.7]')} />
               </div>
-              <span className="font-body text-[10px] tracking-tight uppercase font-bold">Build Lab</span>
-              {isBuild && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-500" />}
+              <span className="font-body text-[10px] tracking-tight uppercase font-bold">Build Spud</span>
+              {isBuild && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-600" />}
             </Link>
 
             {/* 4. FIND US & HOURS */}
@@ -136,27 +136,27 @@ export default function MobileAppDock() {
               to="/find-us"
               className={cx(
                 'flex flex-col items-center justify-center py-1 transition-all active:scale-90',
-                isFindUs ? 'text-amber-600 font-bold' : 'text-slate-400 hover:text-slate-600'
+                isFindUs ? 'text-amber-800 font-bold' : 'text-[#7C7267] hover:text-[#27221E]'
               )}
             >
               <div className="relative flex items-center justify-center h-6 w-6 mb-0.5">
                 <ShopIcon className={cx('h-5 w-5 transition-colors', isFindUs ? 'stroke-[2.2]' : 'stroke-[1.7]')} />
               </div>
               <span className="font-body text-[10px] tracking-tight uppercase font-bold">Store</span>
-              {isFindUs && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-500" />}
+              {isFindUs && <span className="mt-0.5 h-1 w-1 rounded-full bg-amber-600" />}
             </Link>
 
             {/* 5. BAG / BASKET */}
             <button
               type="button"
               onClick={open}
-              className="relative flex flex-col items-center justify-center py-1 text-slate-400 hover:text-slate-600 transition-all active:scale-90"
+              className="relative flex flex-col items-center justify-center py-1 text-[#7C7267] hover:text-[#27221E] transition-all active:scale-90"
               aria-label="Open Cart"
             >
               <div className="relative flex items-center justify-center h-6 w-6 mb-0.5">
                 <BagDockIcon className="h-5 w-5 stroke-[1.7]" />
                 {count > 0 && (
-                  <span className="absolute -top-1 -right-1.5 grid h-4 min-w-4 px-1 place-items-center rounded-full bg-amber-500 font-body text-[9px] font-black text-slate-950 shadow-xs">
+                  <span className="absolute -top-1 -right-1.5 grid h-4 min-w-4 px-1 place-items-center rounded-full bg-amber-500 font-body text-[9px] font-black text-ink shadow-xs">
                     {count}
                   </span>
                 )}
@@ -191,7 +191,10 @@ function MenuIcon({ className }: { className?: string }) {
 function BuildIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z" />
+      {/* Warm artisan jacket potato with steam */}
+      <path d="M12 2v3M9 3v2M15 3v2" strokeWidth="1.5" />
+      <path d="M4 14c0-4 3.5-7 8-7s8 3 8 7c0 4-3.5 7-8 7s-8-3-8-7Z" />
+      <path d="M8 14c1.5 1 6.5 1 8 0" strokeWidth="1.5" />
     </svg>
   )
 }

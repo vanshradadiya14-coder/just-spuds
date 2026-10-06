@@ -115,7 +115,7 @@ export default function MenuPage() {
         eyebrow={fulfilment === 'delivery' ? 'Home Delivery' : 'Store Pick Up'}
         title="Order Fresh"
         titleItalic="topped your way"
-        blurb="Build your custom potato & meal from scratch with live macro tracking, or browse our ready-made chef specials. Prepared hot at Market Square, Aylesbury."
+        blurb="Hand-craft your steaming jacket potato just the way you like it, or explore our chef's house specials. Oven-baked fresh daily in Market Square, Aylesbury."
         compactMobile
       />
 
@@ -130,43 +130,43 @@ export default function MenuPage() {
       </div>
 
       <main>
-        {/* TOP INTERACTIVE FEATURE: Custom Spud & Bowl Lab */}
-        <section className="bg-slate-950 text-paper py-3 sm:py-8 px-4 sm:px-8 border-b border-white/10 relative overflow-hidden">
+        {/* TOP INTERACTIVE FEATURE: Custom Spud & Bowl Crafting */}
+        <section className="bg-ink-stock text-paper py-3.5 sm:py-8 px-4 sm:px-8 border-b border-amber-900/20 relative overflow-hidden">
           <div className="mx-auto max-w-[1400px]">
             {/* Mobile Compact View */}
-            <div className="sm:hidden rounded-2xl border border-amber-400/30 bg-white/5 p-3.5 backdrop-blur-md">
+            <div className="sm:hidden rounded-2xl border border-amber-500/30 bg-ink/70 p-3.5 backdrop-blur-md shadow-warm">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-300">
-                    ⚡ Custom Lab
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-300">
+                    🥔 Craft Your Own
                   </span>
-                  <h3 className="mt-1 font-bold text-sm text-white truncate">Build Custom Spud</h3>
-                  <p className="text-[11px] text-slate-400 truncate">Live macro & calorie calculation</p>
+                  <h3 className="mt-1 font-bold text-sm text-paper truncate">Customise Your Spud</h3>
+                  <p className="text-[11px] text-paper/70 truncate">Fluffy King Edward, hot fillings & melted cheese</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsBuilderOpen((prev) => !prev)}
-                  className="shrink-0 rounded-full bg-amber-400 px-3.5 py-1.5 font-body text-[11px] font-black uppercase tracking-wider text-slate-950 shadow-sm active:scale-95 transition hover:bg-amber-300"
+                  className="shrink-0 rounded-full bg-amber-400 px-3.5 py-1.5 font-body text-[11px] font-black uppercase tracking-wider text-ink shadow-sm active:scale-95 transition hover:bg-amber-300"
                 >
-                  {isBuilderOpen ? 'Close ▲' : 'Open Lab ⚡'}
+                  {isBuilderOpen ? 'Close ▲' : 'Craft Spud 🥔'}
                 </button>
               </div>
             </div>
 
             {/* Desktop Full View */}
-            <div className="hidden sm:block rounded-3xl border border-amber-400/30 bg-white/5 p-6 sm:p-8 backdrop-blur-md relative overflow-hidden">
+            <div className="hidden sm:block rounded-3xl border border-amber-500/30 bg-ink/75 p-6 sm:p-8 backdrop-blur-md relative overflow-hidden shadow-warm-lg">
               <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 relative z-10">
                 <div className="max-w-xl">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 px-3.5 py-1 text-amber-300 font-body text-xs font-black uppercase tracking-wider">
-                    <span>⚡ Interactive Spud Lab</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 border border-amber-500/30 px-3.5 py-1 text-amber-300 font-body text-xs font-black uppercase tracking-wider">
+                    <span>🥔 Artisan Spud Kitchen</span>
                     <span>&bull;</span>
-                    <span>Live Macro Tracker</span>
+                    <span>Baked Fresh Hourly</span>
                   </span>
                   <h2 className="mt-3 display text-2xl sm:text-4xl text-paper">
-                    Build Your Custom Spud From Scratch
+                    Craft Your Signature Spud From Scratch
                   </h2>
-                  <p className="mt-2 font-body text-sm text-paper/70 leading-relaxed">
-                    Choose your base (Baked Potato, Sweet Potato, Crusty Baguette, Salad Bowl), add unlimited cheeses &amp; hot fillings, select gourmet sauces, and monitor exact protein &amp; calories live in real-time.
+                  <p className="mt-2 font-body text-sm text-paper/75 leading-relaxed">
+                    Choose your base (King Edward Jacket Potato, Toasted Wrap, Fragrant Rice Box, or Crusty Baguette), melt mature British cheddar, heap on hearty slow-cooked fillings, and top with fresh herbs &amp; house dressings.
                   </p>
                 </div>
 
@@ -174,9 +174,9 @@ export default function MenuPage() {
                   <button
                     type="button"
                     onClick={() => setIsBuilderOpen((prev) => !prev)}
-                    className="flex items-center justify-center gap-2 rounded-full bg-amber-400 px-7 py-3.5 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow transition hover:bg-amber-300 active:scale-95"
+                    className="flex items-center justify-center gap-2 rounded-full bg-amber-400 px-7 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-warm transition hover:bg-amber-300 active:scale-95"
                   >
-                    <span>{isBuilderOpen ? '▲ Close Custom Lab' : '⚡ Open Custom Spud Lab'}</span>
+                    <span>{isBuilderOpen ? '▲ Close Potato Builder' : '🥔 Start Crafting Your Spud'}</span>
                   </button>
                 </div>
               </div>
@@ -190,7 +190,7 @@ export default function MenuPage() {
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: 0.4 }}
-                  className="mt-4 sm:mt-8 border-t border-white/10 pt-4 sm:pt-6 overflow-hidden"
+                  className="mt-4 sm:mt-8 border-t border-amber-900/20 pt-4 sm:pt-6 overflow-hidden"
                 >
                   <Builder embedded />
                 </motion.div>
@@ -316,9 +316,9 @@ export default function MenuPage() {
                             setIsBuilderOpen(true)
                             window.scrollTo({ top: 180, behavior: 'smooth' })
                           }}
-                          className="shrink-0 rounded-full bg-slate-950 px-4 py-2 sm:px-6 sm:py-3 font-body text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-white transition hover:bg-slate-800 shadow-sm"
+                          className="shrink-0 rounded-full bg-ink px-4 py-2 sm:px-6 sm:py-3 font-body text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-paper transition hover:bg-slate-800 shadow-sm"
                         >
-                          ⚡ Open Custom Lab ↑
+                          🥔 Craft Custom Spud ↑
                         </button>
                       </div>
                     </div>

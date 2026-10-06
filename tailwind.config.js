@@ -4,37 +4,42 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Luxury Velvet Obsidian & Deep Truffle base
-        ink:  '#0E1015',
-        gph:  '#16181F',
-        slate:{ DEFAULT: '#232731', 600: '#3A404E', 500: '#5F6B7E', 400: '#8E9BAE' },
-        steel:'#6B7588',
-        mist: '#9EA8B6',
-        line: '#D8DEE6',
-        // Warm artisan porcelain & studio cream
-        paper:'#F4F5F8',
-        snow: '#FFFFFF',
-        cream: '#E9ECF2',
-        // Appetizing culinary golden amber & honey caramel
+        // Warm Roasted Hearth & Deep Truffle base (human, cozy, authentic food brand)
+        ink:   '#141210',
+        gph:   '#1C1916',
+        slate: { DEFAULT: '#27221E', 600: '#3D352F', 500: '#63564C', 400: '#8E7F73' },
+        steel: '#786B60',
+        mist:  '#A6998D',
+        line:  '#E5DCD1',
+        // Warm artisan bakery porcelain & clotted cream
+        paper: '#FAF7F2',
+        snow:  '#FFFFFF',
+        cream: '#F2EAE0',
+        parchment: '#EDE4D8',
+        // Appetizing culinary golden amber, butter honey & hearth warm glow
         amber: {
-          50: '#FFFDF5',
-          100: '#FEF9E6',
-          200: '#FDEBB3',
-          300: '#FCD77A',
-          400: '#FBBF24',
-          500: '#F59E0B',
-          600: '#D97706',
-          700: '#B45309',
-          800: '#92400E',
-          900: '#78350F',
+          50:  '#FFFDF7',
+          100: '#FEF8E7',
+          200: '#FCEEC7',
+          300: '#F9DC96',
+          400: '#F5C249',
+          500: '#E89C19',
+          600: '#C9770B',
+          700: '#A35808',
+          800: '#81420B',
+          900: '#66330D',
         },
         herb: {
-          50: '#F0FDF4',
+          50:  '#F0FDF4',
           100: '#DCFCE7',
           400: '#4ADE80',
           500: '#22C55E',
           600: '#16A34A',
           700: '#15803D',
+        },
+        rust: {
+          500: '#C2410C',
+          600: '#9A3412',
         },
       },
       fontFamily: {
@@ -43,11 +48,13 @@ export default {
       },
       letterSpacing: { ultra: '0.3em', mega: '0.46em' },
       boxShadow: {
-        'warm': '0 14px 34px -10px rgba(180, 83, 9, 0.18)',
-        'glow': '0 0 30px rgba(245, 158, 11, 0.32)',
-        'glow-lg': '0 0 50px rgba(245, 158, 11, 0.45)',
-        'glass': '0 10px 36px 0 rgba(0, 0, 0, 0.12)',
-        'glass-dark': '0 12px 40px 0 rgba(0, 0, 0, 0.45)',
+        'warm': '0 12px 32px -8px rgba(90, 52, 16, 0.14)',
+        'warm-lg': '0 20px 48px -12px rgba(90, 52, 16, 0.22)',
+        'hearth': '0 8px 24px -4px rgba(232, 156, 25, 0.18)',
+        'glow': '0 0 28px rgba(245, 194, 73, 0.35)',
+        'glow-lg': '0 0 50px rgba(245, 194, 73, 0.45)',
+        'glass': '0 10px 36px 0 rgba(40, 25, 10, 0.08)',
+        'glass-dark': '0 14px 40px 0 rgba(0, 0, 0, 0.55)',
       },
       transitionTimingFunction: {
         cine: 'cubic-bezier(0.16, 1, 0.3, 1)',

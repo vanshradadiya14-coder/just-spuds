@@ -37,18 +37,18 @@ export default function BentoGrid() {
           
           {/* Bento 1: Large Feature Card (The Spud Father) */}
           <Reveal className="sm:col-span-2 lg:col-span-7">
-            <div className="group relative h-full min-h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-[#16181D] p-8 shadow-2xl transition-all duration-500 hover:border-amber-400/50 flex flex-col justify-between">
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent z-10" />
+            <div className="group relative h-full min-h-[420px] overflow-hidden rounded-3xl border border-amber-500/25 bg-[#1C1713] p-8 shadow-warm-lg transition-all duration-500 hover:border-amber-400/60 flex flex-col justify-between">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent z-10" />
               <RevealImage
                 src="/assets/food/spuds/spud-father.png"
                 alt="The Spud Father Loaded Potato"
-                className="absolute inset-0 h-full w-full opacity-65 transition-transform duration-700 ease-cine group-hover:scale-105"
+                className="absolute inset-0 h-full w-full opacity-70 transition-transform duration-700 ease-cine group-hover:scale-105"
                 cover
               />
 
               <div className="relative z-20 flex items-start justify-between">
-                <span className="rounded-full bg-amber-500 px-3.5 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-ink shadow-md">
-                  ⭐ Signature Dish
+                <span className="rounded-full bg-amber-400 px-3.5 py-1 font-body text-[10px] font-black uppercase tracking-wider text-ink shadow-md">
+                  ⭐ Signature Favourite
                 </span>
                 <span className="font-body text-xl font-black text-amber-300 tabular-nums">
                   {gbp(695)}
@@ -56,18 +56,18 @@ export default function BentoGrid() {
               </div>
 
               <div className="relative z-20 mt-auto">
-                <p className="font-body text-xs font-bold uppercase tracking-wider text-amber-400">
-                  Heavyweight Classic
+                <p className="font-body text-xs font-bold uppercase tracking-wider text-amber-300">
+                  Heavyweight British Classic
                 </p>
                 <h3 className="mt-1 display text-3xl sm:text-4xl text-white">
                   The Spud Father
                 </h3>
-                <p className="mt-2 font-body text-sm text-white/80 max-w-md line-clamp-2">
-                  Giant British jacket potato loaded with mature cheddar, crunchy fresh coleslaw, and signature golden spud sauce.
+                <p className="mt-2 font-body text-sm text-white/85 max-w-md line-clamp-2">
+                  Giant British jacket potato loaded with mature cheddar, fresh crunchy slaw, and our golden signature house dressing.
                 </p>
                 <Link
                   to="/menu"
-                  className="mt-4 inline-flex items-center gap-1.5 font-body text-xs font-bold uppercase tracking-wider text-amber-400 group-hover:text-amber-300 transition"
+                  className="mt-4 inline-flex items-center gap-2 font-body text-xs font-bold uppercase tracking-wider text-amber-300 group-hover:text-amber-200 transition"
                 >
                   <span>Customise &amp; Order</span>
                   <span>→</span>
@@ -78,23 +78,23 @@ export default function BentoGrid() {
 
           {/* Bento 2: 100% British Potatoes */}
           <Reveal className="sm:col-span-1 lg:col-span-5">
-            <div className="group relative h-full min-h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-[#16181D] p-8 shadow-2xl transition-all duration-500 hover:border-amber-400/50 flex flex-col justify-between">
+            <div className="group relative h-full min-h-[420px] overflow-hidden rounded-3xl border border-amber-500/25 bg-[#1C1713] p-8 shadow-warm-lg transition-all duration-500 hover:border-amber-400/60 flex flex-col justify-between">
               <div className="flex items-center justify-between">
                 <span className="text-3xl">🥔</span>
-                <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 font-body text-[10px] font-bold uppercase text-white/70">
-                  Grade A Produce
+                <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 font-body text-[10px] font-bold uppercase text-amber-300">
+                  100% British Produce
                 </span>
               </div>
 
               <div className="my-6">
-                <span className="font-body text-[11px] font-bold uppercase tracking-wider text-amber-400">
-                  Continuous Small-Batch Baking
+                <span className="font-body text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                  Fresh Small-Batch Baking
                 </span>
                 <h3 className="mt-2 display text-3xl text-white">
                   King Edward &amp; Maris Piper
                 </h3>
-                <p className="mt-3 font-body text-sm leading-relaxed text-white/75">
-                  Selected for their naturally fluffy, steaming center and crisp golden jacket skin. Baked fresh in Market Square every hour.
+                <p className="mt-3 font-body text-sm leading-relaxed text-white/80">
+                  Carefully selected for their naturally steam-fluffy interior and crisp golden skin. Oven-roasted fresh throughout the day in Market Square.
                 </p>
               </div>
 
@@ -104,8 +104,8 @@ export default function BentoGrid() {
                   <p className="font-body text-[10px] uppercase text-white/60">Baking Fresh Daily</p>
                 </div>
                 <div className="flex-1">
-                  <p className="font-body text-lg font-black text-amber-400">0 mins delay</p>
-                  <p className="font-body text-[10px] uppercase text-white/60">Ready to Collect</p>
+                  <p className="font-body text-lg font-black text-amber-400">Piping Hot</p>
+                  <p className="font-body text-[10px] uppercase text-white/60">Fresh from the Oven</p>
                 </div>
               </div>
             </div>
@@ -113,17 +113,17 @@ export default function BentoGrid() {
 
           {/* Bento 3: Artisan Baguettes & Paninis */}
           <Reveal className="sm:col-span-1 lg:col-span-6">
-            <div className="group relative h-full min-h-[340px] overflow-hidden rounded-3xl border border-white/10 bg-[#16181D] p-8 shadow-2xl transition-all duration-500 hover:border-amber-400/50 flex flex-col justify-between">
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent z-10" />
+            <div className="group relative h-full min-h-[340px] overflow-hidden rounded-3xl border border-amber-500/25 bg-[#1C1713] p-8 shadow-warm-lg transition-all duration-500 hover:border-amber-400/60 flex flex-col justify-between">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent z-10" />
               <RevealImage
                 src="/assets/food/panini/panini-feature.png"
                 alt="Toasted Pulled Chicken Panini"
-                className="absolute inset-0 h-full w-full opacity-55 transition-transform duration-700 ease-cine group-hover:scale-105"
+                className="absolute inset-0 h-full w-full opacity-60 transition-transform duration-700 ease-cine group-hover:scale-105"
                 cover
               />
 
               <div className="relative z-20 flex items-center justify-between">
-                <span className="rounded-full bg-amber-500 px-3 py-0.5 font-body text-[10px] font-bold uppercase text-ink">
+                <span className="rounded-full bg-amber-400 px-3 py-0.5 font-body text-[10px] font-black uppercase text-ink">
                   🥪 Hot Toasted
                 </span>
                 <span className="font-body text-sm font-bold text-amber-300">from £4.95</span>
@@ -133,8 +133,8 @@ export default function BentoGrid() {
                 <h3 className="display text-2xl sm:text-3xl text-white">
                   Toasted Paninis &amp; Crusty Baguettes
                 </h3>
-                <p className="mt-2 font-body text-xs text-white/80 line-clamp-2">
-                  Ciabatta with dark diagonal grill marks and molten cheese pulls, or flour-dusted baguettes packed with fresh fillings.
+                <p className="mt-2 font-body text-xs text-white/85 line-clamp-2">
+                  Ciabatta with dark diagonal grill marks and molten mozzarella cheese pulls, or flour-dusted baguettes stuffed with fresh fillings.
                 </p>
               </div>
             </div>
@@ -142,28 +142,28 @@ export default function BentoGrid() {
 
           {/* Bento 4: British Street Food Heritage */}
           <Reveal className="sm:col-span-2 lg:col-span-6">
-            <div className="group relative h-full min-h-[340px] overflow-hidden rounded-3xl border border-white/10 bg-[#16181D] p-8 shadow-2xl transition-all duration-500 hover:border-amber-400/50 flex flex-col justify-between">
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent z-10" />
+            <div className="group relative h-full min-h-[340px] overflow-hidden rounded-3xl border border-amber-500/25 bg-[#1C1713] p-8 shadow-warm-lg transition-all duration-500 hover:border-amber-400/60 flex flex-col justify-between">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent z-10" />
               <RevealImage
                 src="/assets/heritage/aylesbury-market.png"
                 alt="Aylesbury Market Square"
-                className="absolute inset-0 h-full w-full opacity-50 transition-transform duration-700 ease-cine group-hover:scale-105"
+                className="absolute inset-0 h-full w-full opacity-55 transition-transform duration-700 ease-cine group-hover:scale-105"
                 cover
               />
 
               <div className="relative z-20 flex items-center justify-between">
-                <span className="rounded-full bg-white/10 border border-white/20 px-3 py-0.5 font-body text-[10px] font-bold uppercase text-amber-300 backdrop-blur-md">
-                  🥔 British Classic
+                <span className="rounded-full bg-amber-500/20 border border-amber-400/30 px-3 py-0.5 font-body text-[10px] font-bold uppercase text-amber-300 backdrop-blur-md">
+                  🥔 British Heritage
                 </span>
-                <span className="font-body text-xs font-bold text-white/80">Market Square, Aylesbury</span>
+                <span className="font-body text-xs font-bold text-white/85">Market Square, Aylesbury</span>
               </div>
 
               <div className="relative z-20">
                 <h3 className="display text-2xl sm:text-3xl text-white">
                   A Timeless Street Food Tradition
                 </h3>
-                <p className="mt-2 font-body text-xs text-white/80 line-clamp-2">
-                  From Victorian street corners to historic market squares, the British jacket potato has always been the ultimate hot, hearty comfort food.
+                <p className="mt-2 font-body text-xs text-white/85 line-clamp-2">
+                  From Victorian street carts to historic British market squares, the baked jacket potato has always been the ultimate hot, comforting meal.
                 </p>
               </div>
             </div>

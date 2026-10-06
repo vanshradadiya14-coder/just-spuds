@@ -166,21 +166,21 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
       <div className="relative mx-auto max-w-[1400px] px-5 sm:px-8">
         {!embedded && (
           <Reveal>
-            <div className="flex flex-col gap-4 border-b border-white/12 pb-8 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-col gap-4 border-b border-amber-900/20 pb-8 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                  <span>⚡</span>
-                  <span>Custom Meal Lab</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                  <span>🥔</span>
+                  <span>Artisan Kitchen &bull; Hand-Crafted</span>
                 </span>
-                <h2 className="mt-3 display display-tight text-5xl text-white sm:text-7xl">
+                <h2 className="mt-3 display display-tight text-5xl text-paper sm:text-7xl">
                   Build Your Meal
-                  <span className="block italic text-transparent bg-clip-text bg-gradient-to-r from-amber-300 to-amber-500">
+                  <span className="block italic text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-500">
                     topped &amp; tailored your way
                   </span>
                 </h2>
               </div>
-              <p className="max-w-md font-body text-[14px] leading-relaxed text-white/70">
-                Fresh British potatoes, toasted tikka wraps, fragrant rice boxes, crusty baguettes or paninis. Watch live macros &amp; nutrition update in real time.
+              <p className="max-w-md font-body text-[14px] leading-relaxed text-paper/75">
+                Fluffy British King Edward spuds, toasted wraps, fragrant rice boxes, and crusty baguettes. Baked fresh hourly right in Market Square, Aylesbury.
               </p>
             </div>
           </Reveal>
@@ -198,8 +198,8 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
                 className={cx(
                   'inline-flex items-center gap-2 rounded-full px-5 py-2.5 font-body text-[12px] font-bold uppercase tracking-wider transition-all duration-300',
                   active
-                    ? 'bg-amber-400 text-ink shadow-glow scale-105 font-black'
-                    : 'border border-white/15 bg-white/[0.04] text-white/80 hover:bg-white/[0.10] hover:text-white'
+                    ? 'bg-amber-400 text-ink shadow-warm scale-105 font-black'
+                    : 'border border-white/15 bg-white/[0.04] text-paper/80 hover:bg-white/[0.10] hover:text-paper'
                 )}
               >
                 <span>{cat.icon}</span>
@@ -212,8 +212,8 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
         {/* Chef's Signature Quick Presets */}
         {categoryPresets.length > 0 && (
           <div className="mt-8">
-            <p className="font-body text-[11px] font-bold uppercase tracking-wider text-amber-400">
-              ⚡ Quick-Load Chef Presets:
+            <p className="font-body text-[11px] font-bold uppercase tracking-wider text-amber-300">
+              🥔 House Favourite Combinations:
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {categoryPresets.map((preset) => {
@@ -316,8 +316,8 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
             {/* Sweetgreen-Grade Live Nutrition & Macro Dashboard */}
             <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-md shadow-xl">
               <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                <span className="font-body text-[11px] font-bold uppercase tracking-wider text-white/70">
-                  ⚡ Live Nutrition &amp; Macro Engine
+                <span className="font-body text-[11px] font-bold uppercase tracking-wider text-paper/70">
+                  🥔 Nutrition &amp; Calorie Guide
                 </span>
                 <span className="font-body text-[14px] font-black text-amber-400">
                   {liveNutrition.cal} kcal

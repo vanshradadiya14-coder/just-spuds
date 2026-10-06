@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { getAllActiveCustomerOrders, subscribeOrders, type Order } from '../services/orderStore'
-import { cx } from '../utils/format'
 
 export default function ActiveOrderBanner() {
   const { pathname } = useLocation()
@@ -82,53 +81,30 @@ export default function ActiveOrderBanner() {
   }
 
   return (
-    <div className="w-full border-t border-white/10 bg-ink/90 px-4 py-1.5 text-white shadow-sm backdrop-blur-xl transition-all">
-      <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 text-xs">
-        
+    <div className="fixed top-20 right-4 z-40 max-w-sm rounded-2xl border border-amber-400/40 bg-[#161310]/95 p-2.5 text-white shadow-2xl backdrop-blur-xl transition-all sm:right-6 animate-rise">
+      <div className="flex items-center justify-between gap-3 text-xs">
         {/* Left: Active Order Status & Multi-Order Switcher */}
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
           <span className="relative flex h-2 w-2 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
           </span>
 
-          <span className="font-body text-[11px] font-bold tracking-wide text-white/80 flex items-center gap-1.5">
+          <span className="font-body text-[11px] font-bold tracking-wide text-white/90 truncate flex items-center gap-1.5">
             <span>{details.emoji}</span>
-            <span className="uppercase text-white/50">Order #{order.shortId}:</span>
-            <span className="text-amber-400">{details.label}</span>
+            <span className="text-white/60">#{order.shortId}</span>
+            <span className="text-amber-300 font-semibold truncate">{details.label}</span>
           </span>
-
-          {/* Inline Multi-order selector pills (If 2+ active orders exist) */}
-          {activeOrders.length > 1 && (
-            <div className="flex items-center gap-1.5 border-l border-white/10 pl-3">
-              <span className="text-[9px] font-bold text-white/40 uppercase tracking-wider">Switch:</span>
-              {activeOrders.map((ord, i) => (
-                <button
-                  key={ord.id}
-                  type="button"
-                  onClick={() => setSelectedIndex(i)}
-                  className={cx(
-                    'rounded-md px-2 py-0.5 text-[10px] font-bold transition-all',
-                    i === selectedIndex
-                      ? 'bg-white/15 text-white'
-                      : 'text-white/40 hover:text-white hover:bg-white/5'
-                  )}
-                >
-                  #{ord.shortId}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* Right: Compact Track CTA & Close */}
-        <div className="flex items-center gap-3 shrink-0">
+        {/* Right: Track CTA & Close */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <Link
             to={`/track/${order.id}`}
-            className="group flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-amber-300 transition hover:bg-amber-400 hover:text-ink"
+            className="group flex items-center gap-1 rounded-full bg-amber-400 px-2.5 py-1 font-body text-[10px] font-black uppercase tracking-wider text-ink transition hover:bg-amber-300 shadow-sm"
           >
-            <span>Track Order</span>
-            <span className="opacity-70 group-hover:opacity-100 transition-opacity">→</span>
+            <span>Track</span>
+            <span className="transition-transform group-hover:translate-x-0.5">→</span>
           </Link>
 
           <button
@@ -140,7 +116,6 @@ export default function ActiveOrderBanner() {
             ✕
           </button>
         </div>
-
       </div>
     </div>
   )

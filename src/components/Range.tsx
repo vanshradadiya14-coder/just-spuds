@@ -45,31 +45,31 @@ export default function Range() {
       <Backdrop tone="light" spotlight intensity={0.5} />
       <div className="relative mx-auto max-w-[1400px] px-5 sm:px-8">
         <Reveal>
-          <div className="flex flex-col gap-6 border-b border-ink/12 pb-8 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-6 border-b border-amber-900/10 pb-8 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <span className="label text-steel">More than just spuds</span>
+              <span className="label text-amber-800 font-black">Handcrafted Fresh Daily</span>
               <h2 className="mt-3 display display-tight text-5xl text-ink sm:text-[72px]">
                 Freshly made
-                <span className="block italic text-steel">hot &amp; loaded your way</span>
+                <span className="block italic text-amber-700">hot &amp; loaded your way</span>
               </h2>
             </div>
             <Link
               to="/menu"
-              className="ul-draw shrink-0 font-body text-[11px] font-bold uppercase tracking-[0.16em] text-ink"
+              className="ul-draw shrink-0 font-body text-[12px] font-bold uppercase tracking-[0.16em] text-ink hover:text-amber-700 transition"
             >
-              See the full menu
+              See the full menu →
             </Link>
           </div>
         </Reveal>
 
-        <ul className="mt-14 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+        <ul className="mt-14 grid gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {tiles.map((t, i) => (
             <li key={t.cat.id}>
               <Link
                 to={`/menu#${t.cat.id}`}
-                className="group flex flex-col h-full overflow-hidden rounded-3xl border border-ink/8 bg-white p-4 shadow-sm transition-all duration-500 hover:-translate-y-1.5 hover:shadow-warm"
+                className="group flex flex-col h-full overflow-hidden rounded-3xl border border-amber-900/10 bg-white/95 p-4 shadow-sm transition-all duration-500 hover:-translate-y-1.5 hover:shadow-warm-lg hover:border-amber-500/35"
               >
-                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-paper">
+                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-amber-50/50">
                   <RevealImage
                     src={t.lead.image}
                     alt={t.cat.label}
@@ -79,7 +79,7 @@ export default function Range() {
                     cover
                     delay={i * 0.07}
                   />
-                  <span className="absolute bottom-3 right-3 rounded-full bg-ink/80 px-3 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-amber-300 backdrop-blur-md">
+                  <span className="absolute bottom-3 right-3 rounded-full bg-[#1C1713]/90 px-3.5 py-1 font-body text-[11px] font-bold uppercase tracking-wider text-amber-300 backdrop-blur-md shadow-md">
                     from {gbp(t.from)}
                   </span>
                 </div>
@@ -87,20 +87,20 @@ export default function Range() {
                 <div className="mt-4 flex flex-1 flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between">
-                      <h3 className="display text-[22px] text-ink group-hover:text-amber-600 transition-colors">
+                      <h3 className="display text-[22px] text-ink group-hover:text-amber-700 transition-colors">
                         {t.cat.label}
                       </h3>
-                      <span className="font-body text-[10px] font-bold uppercase tracking-wider text-steel">
+                      <span className="font-body text-[10px] font-bold uppercase tracking-wider text-slate-500 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/60">
                         {t.items.length} options
                       </span>
                     </div>
-                    <p className="mt-1.5 font-body text-[12px] leading-relaxed text-slate-600">
+                    <p className="mt-2 font-body text-[13px] leading-relaxed text-slate-700">
                       {t.cat.blurb}
                     </p>
                   </div>
                   
-                  <div className="mt-4 flex items-center gap-1 font-body text-[11px] font-bold uppercase tracking-wider text-ink group-hover:text-amber-600 transition-colors">
-                    <span>View items</span>
+                  <div className="mt-4 flex items-center gap-1.5 font-body text-[11px] font-bold uppercase tracking-wider text-amber-700 group-hover:text-amber-600 transition-colors">
+                    <span>Explore category</span>
                     <span className="transition-transform duration-300 group-hover:translate-x-1">→</span>
                   </div>
                 </div>

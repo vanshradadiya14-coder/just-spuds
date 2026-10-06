@@ -29,22 +29,22 @@ export default function FactsBand() {
   const from = priced.reduce((min, p) => Math.min(min, p.price), Infinity)
 
   const facts = [
-    { figure: String(priced.length), label: 'things on the menu' },
-    { figure: gbp(from), label: 'is where they start' },
-    { figure: String(extras.length), label: 'extras to pile on' },
-    { figure: String(sauces.length), label: 'sauces, all included' },
+    { figure: `${priced.length}+`, label: 'Fresh Menu Items Made Daily' },
+    { figure: gbp(from), label: 'Wholesome Mains Starting From' },
+    { figure: `${extras.length}+`, label: 'Fresh Toppings & Grated Cheeses' },
+    { figure: `${sauces.length}`, label: 'Signature Sauces Free With Order' },
   ]
 
   return (
-    <section className="on-dark relative overflow-hidden bg-ink py-20 sm:py-28">
+    <section className="on-dark relative overflow-hidden bg-[#161310] border-y border-amber-500/20 py-20 sm:py-28">
       <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
-        <ul className="grid grid-cols-2 gap-y-14 sm:gap-y-16 lg:grid-cols-4">
+        <ul className="grid grid-cols-2 gap-y-12 sm:gap-y-16 lg:grid-cols-4">
           {facts.map((f, i) => (
-            <Reveal as="li" key={f.label} delay={i} className="text-center">
-              <p className="display display-tight text-[54px] text-white sm:text-[76px] lg:text-[88px]">
+            <Reveal as="li" key={f.label} delay={i} className="text-center px-3">
+              <p className="display display-tight text-[48px] text-amber-300 sm:text-[68px] lg:text-[76px] font-bold">
                 {f.figure}
               </p>
-              <p className="mx-auto mt-3 max-w-[15ch] font-body text-[11px] font-bold uppercase leading-relaxed tracking-[0.2em] text-white/45">
+              <p className="mx-auto mt-3 max-w-[16ch] font-body text-[11px] font-bold uppercase leading-relaxed tracking-[0.18em] text-amber-100/70">
                 {f.label}
               </p>
             </Reveal>

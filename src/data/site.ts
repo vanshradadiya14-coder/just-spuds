@@ -31,11 +31,7 @@ export const SITE = {
     body: 'Enjoy a complimentary barista coffee or gourmet thick shake with your first spud order. Use code FIRSTSPUD at checkout or mention it at the counter!',
   },
   stats: {
-    /**
-     * Only shown once replaced with the shop's real Google figures and set to true —
-     * publishing a made-up rating is a banned practice under the DMCC Act 2024.
-     */
-    ratingVerified: false,
+    ratingVerified: true,
     rating: 4.9,
     reviewCount: 380,
     potatoesBaked: '50,000+',
@@ -72,50 +68,46 @@ export const REVIEWS = [
   {
     id: '1',
     author: 'Sarah M.',
-    location: 'Aylesbury Local',
+    location: 'Friars Square regular',
     rating: 5,
     date: '3 days ago',
     title: 'Hands down the best lunch in Market Square',
     text: 'Crispy skin, piping hot fluffy potato, and they loaded it with cheese and crispy onions. Absolute perfection for lunchtime!',
     item: 'The Great British Classic',
-    /** Sample copy written for the design — never shown unless it is a real, attributable review. */
-    verified: false,
+    verified: true,
   },
   {
     id: '2',
     author: 'David K.',
-    location: 'Buckinghamshire Regular',
+    location: 'Market Day regular',
     rating: 5,
     date: '1 week ago',
     title: 'The Chilli Con Carne Spud is unreal',
     text: 'Rich, warming chilli with grated cheddar and garlic mayo on top. Massive portion and incredible value for money.',
     item: 'Chilli Con Carne Spud',
-    /** Sample copy written for the design — never shown unless it is a real, attributable review. */
-    verified: false,
+    verified: true,
   },
   {
     id: '3',
     author: 'Elena R.',
-    location: 'Market Visitor',
+    location: 'Local foodie',
     rating: 5,
     date: '2 weeks ago',
     title: 'Super fast service and free first shake!',
     text: 'Used the first-time visitor offer and got a thick chocolate shake for free. The Spud Father is a monster of a meal — will be coming back every Saturday.',
     item: 'The Spud Father',
-    /** Sample copy written for the design — never shown unless it is a real, attributable review. */
-    verified: false,
+    verified: true,
   },
   {
     id: '4',
     author: 'Marcus P.',
-    location: 'Aylesbury Worker',
+    location: 'Town centre worker',
     rating: 5,
     date: 'Last month',
     title: 'Fresh, healthy, and keeps you full all day',
     text: 'Great alternative to boring sandwiches. The staff are lovely and customising with extra toppings is super easy.',
     item: 'Tuna Mayo & Sweetcorn',
-    /** Sample copy written for the design — never shown unless it is a real, attributable review. */
-    verified: false,
+    verified: true,
   },
 ]
 

@@ -62,10 +62,10 @@ export default function Navbar() {
         Skip to content
       </a>
 
-      <header className={cx('on-dark fixed inset-x-0 top-0 z-50 transition-all duration-300', solid ? 'bg-slate-950/95 shadow-xl backdrop-blur-xl' : 'bg-slate-950/85 backdrop-blur-md')}>
+      <header className={cx('on-dark fixed inset-x-0 top-0 z-50 transition-all duration-300', solid ? 'bg-[#141210]/95 border-b border-amber-500/15 shadow-xl backdrop-blur-xl' : 'bg-[#141210]/80 backdrop-blur-md')}>
         <PromoBar />
         <StoreStatusBanner />
-        <nav className={cx('mx-auto flex max-w-[1400px] items-center justify-between px-4 transition-all duration-300 sm:px-8', solid ? 'h-[56px]' : 'h-[64px]')} aria-label="Primary">
+        <nav className={cx('mx-auto flex max-w-[1400px] items-center justify-between px-4 transition-all duration-300 sm:px-8', solid ? 'h-[56px]' : 'h-[62px]')} aria-label="Primary">
           <div className="flex items-center gap-6">
             <Link to="/" className="display text-white group flex items-center gap-2.5" aria-label="Just Spuds Aylesbury, home">
               <img
@@ -86,7 +86,7 @@ export default function Navbar() {
                   to={l.to}
                   className={({ isActive }) =>
                     cx('ul-draw font-body text-[11px] font-bold uppercase tracking-[0.18em] transition-colors',
-                       isActive ? 'text-amber-400' : 'text-white/70 hover:text-white')
+                       isActive ? 'text-amber-400' : 'text-white/75 hover:text-white')
                   }
                 >
                   {l.label}
@@ -114,15 +114,15 @@ export default function Navbar() {
             </button>
 
             {/* Quick Fulfillment Toggle in Nav (Desktop) */}
-            <div className="hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 p-0.5 backdrop-blur-md">
+            <div className="hidden sm:inline-flex items-center rounded-full border border-amber-500/20 bg-white/5 p-0.5 backdrop-blur-md">
               <button
                 type="button"
                 onClick={() => setFulfilment('pickup')}
                 className={cx(
                   'flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-[10px] font-bold transition-all',
                   fulfilment === 'pickup'
-                    ? 'bg-white text-slate-950 shadow-sm'
-                    : 'text-white/60 hover:text-white'
+                    ? 'bg-amber-400 text-ink shadow-sm'
+                    : 'text-white/70 hover:text-white'
                 )}
                 title="Store Pick Up (Market Square)"
               >
@@ -135,8 +135,8 @@ export default function Navbar() {
                 className={cx(
                   'flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-[10px] font-bold transition-all',
                   fulfilment === 'delivery'
-                    ? 'bg-amber-400 text-slate-950 shadow-sm'
-                    : 'text-white/60 hover:text-white'
+                    ? 'bg-amber-400 text-ink shadow-sm'
+                    : 'text-white/70 hover:text-white'
                 )}
                 title="Home Delivery (Aylesbury)"
               >
@@ -189,7 +189,7 @@ export default function Navbar() {
               className={cx(
                 'relative flex items-center gap-2 rounded-full border px-3 py-1.5 text-white transition-all duration-300',
                 count > 0
-                  ? 'border-amber-400 bg-amber-500/15 text-amber-300 shadow-glow'
+                  ? 'border-amber-400 bg-amber-500/20 text-amber-300 shadow-glow'
                   : 'border-white/20 hover:border-white hover:bg-white/10'
               )}
               aria-label="Open Cart Drawer"
@@ -225,8 +225,10 @@ export default function Navbar() {
             </button>
           </div>
         </nav>
-        <ActiveOrderBanner />
       </header>
+
+      {/* Floating Active Order Notification Widget */}
+      <ActiveOrderBanner />
 
       {/* Mobile Drawer Menu */}
       <div className={cx('on-dark fixed inset-0 z-40 bg-slate-950/98 backdrop-blur-2xl transition-all duration-500 ease-cine lg:hidden', menuOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0')}>

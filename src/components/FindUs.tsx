@@ -20,10 +20,10 @@ export default function FindUs({ embedded = false }: { embedded?: boolean } = {}
       <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
         
         {/* Live Kitchen Baking Freshness Band */}
-        <div className="mb-10 rounded-3xl border border-amber-400/40 bg-gradient-to-r from-ink via-slate-900 to-ink p-6 sm:p-8 text-white shadow-xl">
+        <div className="mb-10 rounded-3xl border border-amber-500/30 bg-ink-stock p-6 sm:p-8 text-paper shadow-warm-lg">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
-              <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-400/20 text-2xl">
+              <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-500/20 text-2xl">
                 🔥
               </span>
               <div>
@@ -33,10 +33,10 @@ export default function FindUs({ embedded = false }: { embedded?: boolean } = {}
                     Live Kitchen Status: {SITE.kitchen.statusText}
                   </span>
                 </div>
-                <p className="display text-xl sm:text-2xl text-white font-bold mt-0.5">
+                <p className="display text-xl sm:text-2xl text-paper font-bold mt-0.5">
                   Batch {SITE.kitchen.currentBatch}
                 </p>
-                <p className="font-body text-[12px] text-white/70">
+                <p className="font-body text-[12px] text-paper/70">
                   {SITE.kitchen.freshnessGuarantee}
                 </p>
               </div>
@@ -44,7 +44,7 @@ export default function FindUs({ embedded = false }: { embedded?: boolean } = {}
 
             <Link
               to="/menu"
-              className="rounded-full bg-amber-400 px-6 py-3 font-body text-[11px] font-bold uppercase tracking-wider text-ink shadow-glow transition hover:bg-amber-300 hover:scale-105"
+              className="rounded-full bg-amber-400 px-6 py-3 font-body text-[11px] font-black uppercase tracking-wider text-ink shadow-warm transition hover:bg-amber-300 hover:scale-105"
             >
               Order from this Batch →
             </Link>

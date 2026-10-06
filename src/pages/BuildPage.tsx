@@ -8,19 +8,19 @@ export default function BuildPage() {
   const { fulfilment } = useCart()
 
   useDocumentMeta({
-    title: 'Custom Spud Lab — Build Your Own Jacket Potato',
+    title: 'Craft Your Own Spud — Build Your Fresh Baked Potato',
     description:
-      'Customise your hot baked potato with fresh fillings, grated cheddar, baked beans, crispy bacon, and gourmet sauces with live calorie calculation.',
+      'Customise your hot oven-baked potato with fresh fillings, grated mature cheddar, baked beans, crispy bacon, and artisan dressings.',
   })
 
   return (
     <>
       <PageHeader
-        ghost="LAB"
+        ghost="CRAFT"
         eyebrow={fulfilment === 'delivery' ? '🛵 Home Delivery Active' : '🛍️ Store Pick Up Active'}
-        title="Custom Spud Lab"
+        title="Craft Your Spud"
         titleItalic="topped your way"
-        blurb="Design your hot jacket potato or bowl with unlimited fillings, cheeses, and sauces with real-time calorie and protein tracking."
+        blurb="Design your steaming King Edward jacket potato or bowl with your favourite fillings, melted British cheeses, and house dressings."
       />
       <div className="bg-paper pb-5 pt-3 border-b border-ink/8">
         <div className="mx-auto max-w-3xl px-4">
