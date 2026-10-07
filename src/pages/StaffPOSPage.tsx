@@ -68,6 +68,7 @@ import {
 } from '../services/cfdBus'
 import ThermalReceipt from '../components/ThermalReceipt'
 import ZReportReceipt from '../components/ZReportReceipt'
+import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 
 // Fast Shortcut Keys (Common counter drinks & crisps)
 const FAST_BAR_ITEMS = [
@@ -1221,25 +1222,29 @@ export default function StaffPOSPage() {
   // Authentication PIN Gate
   if (!isAuthorized) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 select-none">
-        <div className="mb-6 flex items-center gap-3">
+      <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-4 select-none overflow-hidden">
+        {/* Dynamic High-Tech Portal Ambient Engine */}
+        <FixedAmbientBackdrop variant="portal" />
+        <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
+
+        <div className="relative z-10 mb-6 flex items-center gap-3">
           <Link
             to="/"
-            className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition"
+            className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition backdrop-blur-md"
           >
             <span>←</span>
             <span>Customer Website</span>
           </Link>
           <Link
             to="/staff"
-            className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition backdrop-blur-md"
           >
             <span>👨‍🍳</span>
             <span>Kitchen KDS</span>
           </Link>
         </div>
 
-        <div className="w-full max-w-sm rounded-3xl border border-amber-400/30 bg-gradient-to-b from-slate-900 to-black p-8 shadow-2xl text-center">
+        <div className="relative z-10 w-full max-w-sm rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-8 shadow-2xl text-center ring-1 ring-amber-400/20">
           <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl shadow-glow text-ink">
             🥔
           </div>
@@ -1340,8 +1345,12 @@ export default function StaffPOSPage() {
     const displayFloat = floatVal.toFixed(2)
 
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-3 sm:p-4 select-none">
-        <div className="w-full max-w-md rounded-3xl border border-amber-400/40 bg-gradient-to-b from-slate-900 to-black p-5 sm:p-6 shadow-2xl text-center space-y-4">
+      <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-3 sm:p-4 select-none overflow-hidden">
+        {/* Dynamic High-Tech Portal Ambient Engine */}
+        <FixedAmbientBackdrop variant="portal" />
+        <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
+
+        <div className="relative z-10 w-full max-w-md rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-5 sm:p-6 shadow-2xl text-center space-y-4 ring-1 ring-amber-400/20">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-400/20 border border-amber-400/40 text-3xl">
             🔒
           </div>
@@ -1500,7 +1509,9 @@ export default function StaffPOSPage() {
   }
 
   return (
-    <div className="h-screen w-screen bg-slate-950 text-slate-100 flex flex-col overflow-hidden select-none font-body">
+    <div className="relative h-screen w-screen bg-portal-dark text-slate-100 flex flex-col overflow-hidden select-none font-body">
+      {/* High-Tech Terminal Ambient Backdrop */}
+      <FixedAmbientBackdrop variant="portal" />
       {/* 1. TOP EPOS COMMAND & STATUS BAR */}
       <header className="h-14 border-b border-white/10 bg-slate-900 px-3 flex items-center justify-between gap-2 shrink-0 z-20">
         <div className="flex items-center gap-2.5 shrink-0">

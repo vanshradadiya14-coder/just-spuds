@@ -16,8 +16,11 @@ export default function FindUs({ embedded = false }: { embedded?: boolean } = {}
   }
 
   return (
-    <section id="find" className={`bg-stock ${embedded ? "pb-20 pt-10" : "pb-24 pt-8 sm:pb-32"}`}>
-      <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
+    <section id="find" className={`relative overflow-hidden bg-stock ${embedded ? "pb-20 pt-10" : "pb-24 pt-8 sm:pb-32"}`}>
+      {/* Radiant Ambient Honey & Hearth Pools */}
+      <div className="pointer-events-none absolute -top-40 right-1/4 h-[550px] w-[550px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-200/15 to-transparent blur-[130px]" />
+      <div className="pointer-events-none absolute bottom-20 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/15 to-transparent blur-[120px]" />
+      <div className="relative z-10 mx-auto max-w-[1400px] px-5 sm:px-8">
         
         {/* Live Kitchen Baking Freshness Band */}
         <div className="mb-10 rounded-3xl border border-amber-500/30 bg-ink-stock p-6 sm:p-8 text-paper shadow-warm-lg">

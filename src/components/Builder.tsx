@@ -162,7 +162,10 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
 
   return (
     <section id="build" className={`on-dark relative overflow-hidden bg-ink-stock ${embedded ? "pb-24 pt-10 sm:pb-32" : "py-20 sm:py-32"}`}>
-      <Backdrop tone="dark" grid={false} spotlight intensity={0.9} />
+      <Backdrop tone="dark" grid={false} spotlight intensity={1.2} particles3D={true} />
+      {/* Radiant Ambient Hearth Pools */}
+      <div className="pointer-events-none absolute -top-40 right-1/4 h-[550px] w-[550px] rounded-full bg-gradient-to-br from-amber-400/20 via-orange-500/10 to-transparent blur-[130px]" />
+      <div className="pointer-events-none absolute bottom-20 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 to-transparent blur-[120px]" />
       <div className="relative mx-auto max-w-[1400px] px-5 sm:px-8">
         {!embedded && (
           <Reveal>

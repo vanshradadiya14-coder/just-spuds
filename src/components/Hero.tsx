@@ -78,7 +78,10 @@ export default function Hero() {
 
   return (
     <section id="top" className="on-dark relative min-h-[100svh] overflow-hidden bg-ink-stock">
-      <Backdrop tone="dark" grid={false} spotlight intensity={1.2} particles3D={false} />
+      <Backdrop tone="dark" grid={false} spotlight intensity={1.35} particles3D={true} />
+      {/* Radiant Ambient Hearth Glow Orbs behind Food Stage & Typography */}
+      <div className="pointer-events-none absolute -top-32 left-1/4 h-[500px] w-[500px] rounded-full bg-gradient-to-br from-amber-400/20 to-amber-600/10 blur-[130px]" />
+      <div className="pointer-events-none absolute bottom-10 right-10 h-[450px] w-[450px] rounded-full bg-gradient-to-tr from-amber-500/25 via-red-500/10 to-transparent blur-[120px]" />
 
       <div className="relative mx-auto grid min-h-[100svh] max-w-[1400px] items-center gap-8 px-5 pb-16 pt-24 sm:pt-32 lg:pt-36 sm:px-8 lg:grid-cols-[1.1fr_1fr] lg:gap-10 lg:pb-16">
         {/* Copy - Positioned First on All Screens for Instant Clarity & Thumb Access */}

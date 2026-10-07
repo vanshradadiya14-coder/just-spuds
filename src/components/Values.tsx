@@ -4,8 +4,10 @@ import { SITE } from '../data/site'
 
 export default function Values() {
   return (
-    <section className="bg-stock py-18 sm:py-24 border-b border-amber-900/10">
-      <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
+    <section className="relative overflow-hidden bg-stock py-18 sm:py-24 border-b border-amber-900/10">
+      {/* Radiant Ambient Honey & Hearth Pools */}
+      <div className="pointer-events-none absolute -top-32 left-1/3 h-[450px] w-[450px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-200/15 to-transparent blur-[120px]" />
+      <div className="relative z-10 mx-auto max-w-[1400px] px-5 sm:px-8">
         <ul className="grid gap-6 sm:grid-cols-3">
           {SITE.pillars.map((p, i) => (
             <Reveal as="li" key={p.id} delay={i} className="group relative rounded-3xl border border-amber-900/10 bg-white/95 p-8 shadow-sm transition-all duration-300 hover:border-amber-400/50 hover:shadow-warm-lg hover:-translate-y-1">

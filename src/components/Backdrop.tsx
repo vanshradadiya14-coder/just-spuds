@@ -13,7 +13,7 @@ import Canvas3D from './Canvas3D'
  *  4. a hairline measure grid for structural proportion.
  */
 export default function Backdrop({
-  tone = 'dark', grid = true, spotlight = true, gl = false, intensity = 1, particles3D = false,
+  tone = 'dark', grid = true, spotlight = true, gl = false, intensity = 1, particles3D = true,
 }: {
   tone?: 'dark' | 'light'
   grid?: boolean
@@ -93,6 +93,22 @@ export default function Backdrop({
       {/* 3D Interactive Spatial Particle Engine (Paused automatically when offscreen) */}
       {particles3D && !reduced && (
         <Canvas3D tone={tone} intensity={intensity} />
+      )}
+
+      {/* Ambient glowing color halos */}
+      {!reduced && (
+        <>
+          <div
+            className={`absolute -top-24 -left-24 h-96 w-96 rounded-full blur-[100px] pointer-events-none ${
+              dark ? 'bg-amber-500/18' : 'bg-amber-300/25'
+            }`}
+          />
+          <div
+            className={`absolute -bottom-24 -right-24 h-96 w-96 rounded-full blur-[100px] pointer-events-none ${
+              dark ? 'bg-amber-600/14' : 'bg-amber-400/20'
+            }`}
+          />
+        </>
       )}
 
       {/* Hardware accelerated CSS mesh: soft ambient lighting */}

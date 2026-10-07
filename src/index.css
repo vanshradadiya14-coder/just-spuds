@@ -33,58 +33,78 @@ body {
 }
 .on-dark :focus-visible { outline-color: #F5C249; }
 
-/* Warm Artisan Bakery Porcelain & Parchment Backdrop with golden butter and honey undertones */
+/* Warm Artisan Bakery Porcelain & Parchment Backdrop with golden butter, honey undertones and organic motif */
 .bg-stock {
-  background-color: #FAF7F2;
+  background-color: #FAF6EF;
   background-image:
-    radial-gradient(ellipse at 25% 10%, rgba(253, 238, 199, 0.55), transparent 60%),
-    radial-gradient(ellipse at 85% 85%, rgba(245, 194, 73, 0.12), transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(242, 234, 224, 0.7), transparent 70%);
+    radial-gradient(ellipse 80% 50% at 20% 0%, rgba(254, 240, 138, 0.45), transparent 60%),
+    radial-gradient(ellipse 60% 60% at 85% 20%, rgba(245, 194, 73, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 70% at 10% 80%, rgba(251, 191, 36, 0.18), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 90% 90%, rgba(232, 156, 25, 0.12), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(255, 253, 247, 0.8), transparent 75%),
+    url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23d97706' fill-opacity='0.038' fill-rule='evenodd'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3Ccircle cx='35' cy='19' r='1.5'/%3E%3Ccircle cx='19' cy='49' r='1.5'/%3E%3Ccircle cx='50' cy='49' r='1'/%3E%3Ccircle cx='5' cy='19' r='1'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 /* Rich Roasted Hearth Stone with radiant golden amber & warm oven ember warmth */
 .bg-ink-stock {
-  background-color: #141210;
+  background-color: #0E0C0A;
   background-image:
-    radial-gradient(ellipse 70% 50% at 50% 0%, rgba(232, 156, 25, 0.16), transparent 70%),
-    radial-gradient(ellipse 60% 60% at 85% 90%, rgba(201, 119, 11, 0.14), transparent 60%),
-    radial-gradient(ellipse 50% 50% at 15% 75%, rgba(194, 65, 12, 0.08), transparent 55%),
-    radial-gradient(ellipse 80% 80% at 50% 50%, rgba(28, 25, 22, 0.5), transparent 80%);
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(245, 158, 11, 0.28), transparent 70%),
+    radial-gradient(ellipse 60% 60% at 90% 85%, rgba(217, 119, 6, 0.22), transparent 60%),
+    radial-gradient(ellipse 55% 55% at 10% 70%, rgba(220, 38, 38, 0.14), transparent 55%),
+    radial-gradient(ellipse 90% 90% at 50% 50%, rgba(20, 18, 15, 0.75), transparent 85%),
+    url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23f59e0b' fill-opacity='0.032' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* Dedicated High-Tech Commercial Portal Background (POS, KDS, Admin, Driver, CFD) */
+.bg-portal-dark {
+  background-color: #090B0E;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -15%, rgba(245, 158, 11, 0.22), transparent 65%),
+    radial-gradient(ellipse 60% 60% at 95% 10%, rgba(16, 185, 129, 0.14), transparent 50%),
+    radial-gradient(ellipse 70% 70% at 5% 90%, rgba(232, 156, 25, 0.16), transparent 60%),
+    radial-gradient(ellipse 80% 80% at 50% 50%, rgba(14, 17, 23, 0.92), transparent 85%),
+    url("data:image/svg+xml,%3Csvg width='32' height='32' viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.025' fill-rule='evenodd'%3E%3Ccircle cx='16' cy='16' r='1'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* Radiant Organic Topo Mesh Overlay for extra artistic flair */
+.artisan-topo-light {
+  background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%23b45309' fill-opacity='0.035' fill-rule='evenodd'/%3E%3C/svg%3E");
 }
 
 /* Glassmorphism cards with warm honey-amber highlights - 120 FPS Optimized */
 .glass-card {
   background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(232, 156, 25, 0.16);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(245, 194, 73, 0.28);
   transform: translateZ(0);
-  box-shadow: 0 10px 30px -10px rgba(90, 52, 16, 0.09);
+  box-shadow: 0 14px 34px -10px rgba(90, 52, 16, 0.12), inset 0 1px 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .glass-card-dark {
-  background: rgba(26, 22, 19, 0.92);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(245, 194, 73, 0.20);
+  background: rgba(22, 19, 16, 0.90);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(245, 194, 73, 0.28);
   transform: translateZ(0);
-  box-shadow: 0 14px 40px 0 rgba(0, 0, 0, 0.45);
+  box-shadow: 0 18px 48px 0 rgba(0, 0, 0, 0.65), inset 0 1px 1px 0 rgba(245, 194, 73, 0.15);
 }
 
 .glass-panel {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(229, 220, 209, 0.8);
-  box-shadow: 0 4px 24px -6px rgba(90, 52, 16, 0.08);
+  border: 1px solid rgba(229, 220, 209, 0.85);
+  box-shadow: 0 6px 28px -6px rgba(90, 52, 16, 0.10);
 }
 
 .glass-modal {
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(232, 156, 25, 0.2);
-  box-shadow: 0 20px 48px -10px rgba(44, 28, 12, 0.25);
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(232, 156, 25, 0.25);
+  box-shadow: 0 24px 56px -10px rgba(44, 28, 12, 0.3), inset 0 1px 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .badge-glow {

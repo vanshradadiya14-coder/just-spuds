@@ -292,7 +292,10 @@ export default function MenuPage() {
           </div>
 
               <div className="relative overflow-hidden bg-stock pb-24 pt-4 sm:pt-10 sm:pb-32">
-                <Backdrop tone="light" spotlight intensity={0.4} gl={false} />
+                <Backdrop tone="light" spotlight intensity={0.6} gl={false} particles3D={true} />
+                {/* Radiant Ambient Honey & Hearth Pools */}
+                <div className="pointer-events-none absolute -top-40 right-1/4 h-[550px] w-[550px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-200/15 to-transparent blur-[130px]" />
+                <div className="pointer-events-none absolute bottom-40 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/15 to-transparent blur-[120px]" />
                 <div className="relative mx-auto max-w-[1400px] space-y-6 px-4 sm:space-y-16 sm:px-8">
                   
                   {/* Meal Deal Promo Callout & Fast Delivery Bar */}

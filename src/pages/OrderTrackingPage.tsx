@@ -234,8 +234,10 @@ export default function OrderTrackingPage() {
   // ==============================================================
   if (!order) {
     return (
-      <div className="min-h-[85vh] bg-stock pt-[120px] sm:pt-[140px] pb-24 px-5">
-        <div className="mx-auto max-w-xl text-center space-y-6">
+      <div className="relative min-h-[85vh] bg-stock pt-[120px] sm:pt-[140px] pb-24 px-5 overflow-hidden">
+        {/* Ambient Radiant Halo */}
+        <div className="pointer-events-none absolute left-1/2 top-40 -translate-x-1/2 h-[520px] w-[520px] rounded-full bg-gradient-to-tr from-amber-400/25 via-amber-200/15 to-orange-400/10 blur-[130px]" />
+        <div className="relative z-10 mx-auto max-w-xl text-center space-y-6">
           <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl bg-amber-400/20 text-4xl shadow-glow text-amber-500">
             🔍
           </div>
@@ -411,8 +413,11 @@ export default function OrderTrackingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-stock pb-32 pt-[110px] sm:pt-[130px]">
-      <div className="mx-auto max-w-5xl px-4 sm:px-6">
+    <div className="relative min-h-screen bg-stock pb-32 pt-[110px] sm:pt-[130px] overflow-hidden">
+      {/* Dynamic Ambient Status Glow Orbs */}
+      <div className="pointer-events-none absolute -top-32 right-10 h-[500px] w-[500px] rounded-full bg-gradient-to-br from-amber-400/20 via-orange-400/10 to-transparent blur-[130px]" />
+      <div className="pointer-events-none absolute bottom-40 left-10 h-[450px] w-[450px] rounded-full bg-gradient-to-tr from-amber-500/15 via-emerald-500/10 to-transparent blur-[120px]" />
+      <div className="relative z-10 mx-auto max-w-5xl px-4 sm:px-6">
 
         {/* Top Breadcrumb & Status Pill */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">

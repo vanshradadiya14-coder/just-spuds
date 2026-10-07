@@ -28,6 +28,7 @@ import {
 import { SITE } from '../data/site'
 import { cx, gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
+import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 
 export default function DriverDashboardPage() {
   useDocumentMeta({
@@ -290,8 +291,12 @@ export default function DriverDashboardPage() {
   // deliveries — making the suspend button in the admin console useless.
   if (!hasRole(currentUser, ['DRIVER'])) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-slate-900/90 p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6">
+      <div className="relative min-h-screen bg-portal-dark text-white flex flex-col items-center justify-center p-4 overflow-hidden">
+        {/* Dynamic High-Tech Portal Ambient Engine */}
+        <FixedAmbientBackdrop variant="portal" />
+        <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
+
+        <div className="relative z-10 w-full max-w-sm rounded-3xl border border-amber-400/40 bg-slate-900/90 p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6 ring-1 ring-amber-400/20">
           <div className="text-center space-y-2">
             <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/20 text-3xl text-amber-400 border border-amber-500/30">
               🛵
@@ -341,7 +346,9 @@ export default function DriverDashboardPage() {
   // MAIN MOBILE-FIRST DRIVER DASHBOARD
   // -------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col max-w-lg mx-auto pb-20 border-x border-slate-800 shadow-2xl">
+    <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col max-w-lg mx-auto pb-20 border-x border-slate-800 shadow-2xl overflow-hidden">
+      {/* Dynamic Courier Ambient Engine */}
+      <FixedAmbientBackdrop variant="portal" />
       {/* TOAST ALERT */}
       {claimToast && (
         <div

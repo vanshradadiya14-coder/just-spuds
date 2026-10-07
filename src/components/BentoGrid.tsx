@@ -6,6 +6,9 @@ import { gbp } from '../utils/format'
 export default function BentoGrid() {
   return (
     <section className="relative overflow-hidden bg-ink-stock py-24 sm:py-36 text-white">
+      {/* Radiant Ambient Hearth Pools */}
+      <div className="pointer-events-none absolute -top-40 right-1/4 h-[500px] w-[500px] rounded-full bg-gradient-to-br from-amber-400/20 via-orange-500/10 to-transparent blur-[130px]" />
+      <div className="pointer-events-none absolute -bottom-40 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 to-transparent blur-[130px]" />
       <div className="relative mx-auto max-w-[1400px] px-5 sm:px-8">
         
         {/* Section Header */}

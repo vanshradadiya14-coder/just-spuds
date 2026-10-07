@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { loginWithPin, loginWithGoogle, getCurrentUser, homePortalForRole, MANAGEMENT_ROLES, type Role } from '../services/authStore'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
+import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 
 type LoginTab = 'staff' | 'admin' | 'customer'
 
@@ -58,26 +59,32 @@ export default function LoginPage() {
   const currentUser = getCurrentUser()
 
   return (
-    <div className="min-h-screen bg-stock pb-32 pt-[110px] sm:pt-[130px] flex flex-col items-center justify-center px-4">
+    <div className="relative min-h-screen bg-stock pb-32 pt-[110px] sm:pt-[130px] flex flex-col items-center justify-center px-4 overflow-hidden">
+      {/* Dynamic Creative Ambient Particle & Aurora Engine */}
+      <FixedAmbientBackdrop variant="login" />
+
+      {/* Radiant Ambient Core Halo behind form */}
+      <div className="pointer-events-none absolute h-[550px] w-[550px] rounded-full bg-gradient-to-tr from-amber-400/25 via-amber-200/20 to-orange-400/10 blur-[130px]" />
+
       {/* Return to Site Header */}
-      <div className="mb-6 flex items-center gap-3">
+      <div className="relative z-10 mb-6 flex items-center gap-3">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 rounded-full border border-ink/15 bg-white px-4 py-2 font-body text-xs font-bold text-ink shadow-sm hover:bg-paper transition"
+          className="inline-flex items-center gap-2 rounded-full border border-amber-900/15 bg-white/90 backdrop-blur-md px-4 py-2 font-body text-xs font-bold text-ink shadow-sm hover:bg-amber-100/50 transition"
         >
           <span>←</span>
           <span>Back to Just Spuds Official Site</span>
         </Link>
         <Link
           to="/menu"
-          className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-400/20 px-4 py-2 font-body text-xs font-bold text-amber-900 shadow-sm hover:bg-amber-400 transition"
+          className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-400/25 backdrop-blur-md px-4 py-2 font-body text-xs font-bold text-amber-950 shadow-sm hover:bg-amber-400 transition"
         >
           <span>🥔</span>
           <span>Order Menu</span>
         </Link>
       </div>
 
-      <div className="w-full max-w-md rounded-3xl border border-ink/10 bg-white p-6 sm:p-8 shadow-2xl space-y-6">
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-amber-400/35 bg-white/95 backdrop-blur-xl p-6 sm:p-8 shadow-warm-lg ring-1 ring-amber-400/20 space-y-6">
         
         {/* Header */}
         <div className="text-center">

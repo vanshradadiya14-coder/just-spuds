@@ -87,8 +87,11 @@ export default function ProductPage() {
 
   return (
     <>
-      <div className="bg-stock pb-24 pt-[104px] sm:pt-[124px]">
-        <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
+      <div className="relative overflow-hidden bg-stock pb-24 pt-[104px] sm:pt-[124px]">
+        {/* Radiant Ambient Honey & Hearth Pools */}
+        <div className="pointer-events-none absolute -top-40 right-1/4 h-[550px] w-[550px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-200/15 to-transparent blur-[130px]" />
+        <div className="pointer-events-none absolute bottom-40 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/15 to-transparent blur-[120px]" />
+        <div className="relative z-10 mx-auto max-w-[1400px] px-5 sm:px-8">
           <nav className="flex items-center gap-2 font-body text-[11px] text-steel" aria-label="Breadcrumb">
             <Link to="/menu" className="ul-draw hover:text-ink">Menu</Link>
             <span aria-hidden>/</span>

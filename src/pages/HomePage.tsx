@@ -38,7 +38,9 @@ export default function HomePage() {
 
       {/* Build teaser */}
       <section className="on-dark relative overflow-hidden bg-ink-stock py-24 sm:py-36 border-t border-amber-500/15">
-        <Backdrop tone="dark" grid={false} spotlight intensity={1.15} />
+        <Backdrop tone="dark" grid={false} spotlight intensity={1.3} particles3D={true} />
+        {/* Glowing Hearth Ambient Pool */}
+        <div className="pointer-events-none absolute -top-32 right-1/4 h-[450px] w-[450px] rounded-full bg-gradient-to-br from-amber-400/20 to-amber-600/10 blur-[120px]" />
         <div className="relative mx-auto grid max-w-[1400px] items-center gap-12 px-5 sm:px-8 lg:grid-cols-2">
           <Reveal>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/15 px-3.5 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-amber-300">
@@ -85,8 +87,9 @@ export default function HomePage() {
       <ReviewsSection />
 
       {/* First Visit Interactive Voucher Box - Artisan Ticket Design */}
-      <section className="bg-stock py-20 sm:py-28">
-        <div className="mx-auto max-w-[1200px] px-5 sm:px-8">
+      <section className="relative overflow-hidden bg-stock py-20 sm:py-28">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[550px] w-[550px] rounded-full bg-gradient-to-tr from-amber-400/20 via-amber-200/20 to-orange-400/10 blur-[130px]" />
+        <div className="relative z-10 mx-auto max-w-[1200px] px-5 sm:px-8">
           <Reveal className="relative overflow-hidden rounded-3xl border-2 border-dashed border-amber-400/60 bg-gradient-to-br from-white via-amber-50/60 to-amber-100/40 p-8 sm:p-14 shadow-warm text-center flex flex-col items-center">
             <span className="rounded-full bg-amber-400 px-4 py-1 font-body text-[10px] font-black uppercase tracking-wider text-ink shadow-sm">
               🎁 First Time Visitor Gift

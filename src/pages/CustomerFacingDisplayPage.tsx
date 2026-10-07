@@ -6,6 +6,7 @@ import { lineUnitPrice } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { SITE } from '../data/site'
+import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 
 export default function CustomerFacingDisplayPage() {
   useDocumentMeta({
@@ -23,7 +24,9 @@ export default function CustomerFacingDisplayPage() {
   const isPaid = state.status === 'paid'
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-body flex flex-col select-none overflow-hidden">
+    <div className="relative min-h-screen bg-portal-dark text-slate-100 font-body flex flex-col select-none overflow-hidden">
+      {/* Appetizing Golden Aurora & Hearth Ambient Backdrop */}
+      <FixedAmbientBackdrop variant="cfd" />
       {/* Top Status Bar */}
       <header className="h-16 px-6 bg-slate-900 border-b border-white/10 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">

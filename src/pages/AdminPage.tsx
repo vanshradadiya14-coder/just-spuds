@@ -78,6 +78,7 @@ import ManualOrderFixModal from '../components/ManualOrderFixModal'
 import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import { gbp, cx } from '../utils/format'
 import SmartImage from '../components/SmartImage'
+import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
 import TillShiftHistory from './admin/components/TillShiftHistory'
@@ -771,25 +772,29 @@ export default function AdminPage() {
 
   if (!isAuthorized) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
-        <div className="mb-6 flex items-center gap-3">
+      <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-4 overflow-hidden">
+        {/* Dynamic High-Tech Portal Ambient Engine */}
+        <FixedAmbientBackdrop variant="portal" />
+        <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
+
+        <div className="relative z-10 mb-6 flex items-center gap-3">
           <Link
             to="/"
-            className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition"
+            className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition backdrop-blur-md"
           >
             <span>←</span>
             <span>Customer Website</span>
           </Link>
           <Link
             to="/staff"
-            className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition backdrop-blur-md"
           >
             <span>👨‍🍳</span>
             <span>Staff KDS</span>
           </Link>
         </div>
 
-        <div className="w-full max-w-sm rounded-3xl border border-amber-400/40 bg-gradient-to-b from-slate-900 to-black p-8 shadow-2xl text-center">
+        <div className="relative z-10 w-full max-w-sm rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-8 shadow-2xl text-center ring-1 ring-amber-400/20">
           <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl text-ink shadow-glow">
             🔒
           </div>
@@ -873,8 +878,10 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 pt-4 sm:pt-6">
-      <div className="mx-auto max-w-[1700px] px-4 sm:px-6">
+    <div className="relative min-h-screen bg-portal-dark text-slate-100 pb-20 pt-4 sm:pt-6 overflow-hidden">
+      {/* High-Tech Terminal Ambient Backdrop */}
+      <FixedAmbientBackdrop variant="portal" />
+      <div className="relative z-10 mx-auto max-w-[1700px] px-4 sm:px-6">
 
         {/* TOP EXECUTIVE BAR */}
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-white/10 pb-4 mb-6">

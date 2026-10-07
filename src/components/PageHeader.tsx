@@ -6,7 +6,10 @@ export default function PageHeader({
 }: { eyebrow: string; title: string; titleItalic?: string; blurb?: string; ghost?: string; compactMobile?: boolean }) {
   return (
     <header className={compactMobile ? "on-dark relative overflow-hidden bg-ink-stock pb-4 pt-24 sm:pb-16 sm:pt-[140px]" : "on-dark relative overflow-hidden bg-ink-stock pb-6 pt-24 sm:pb-20 sm:pt-[150px]"}>
-      <Backdrop tone="dark" spotlight intensity={1.05} />
+      <Backdrop tone="dark" spotlight intensity={1.25} particles3D={true} />
+      {/* Radiant Ambient Hearth Orbs for High Visual Polish */}
+      <div className="pointer-events-none absolute -top-24 left-1/3 h-[420px] w-[420px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-600/10 to-transparent blur-[120px]" />
+      <div className="pointer-events-none absolute -bottom-20 right-10 h-[380px] w-[380px] rounded-full bg-gradient-to-tr from-amber-500/20 to-transparent blur-[100px]" />
       {ghost && (
         <GhostType className="hidden sm:block -right-[5%] bottom-[-18%] text-[30vw]">{ghost}</GhostType>
       )}

@@ -16,7 +16,10 @@ export default function ReviewsSection() {
 
   return (
     <section className="relative overflow-hidden bg-stock py-24 sm:py-32 border-b border-amber-900/10">
-      <div className="mx-auto max-w-[1400px] px-5 sm:px-8">
+      {/* Radiant Ambient Honey & Hearth Pools */}
+      <div className="pointer-events-none absolute -top-40 right-1/4 h-[550px] w-[550px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-200/15 to-transparent blur-[130px]" />
+      <div className="pointer-events-none absolute bottom-20 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/15 to-transparent blur-[120px]" />
+      <div className="relative z-10 mx-auto max-w-[1400px] px-5 sm:px-8">
         <Reveal>
           <div className="flex flex-col items-center text-center">
             {ratingVerified && (
