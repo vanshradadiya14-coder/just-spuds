@@ -1,7 +1,7 @@
 import { useCart } from '../hooks/useCart'
 import { cx } from '../utils/format'
 
-import { SCHEDULE_TIMES, getScheduleDates } from '../utils/scheduling'
+import { getScheduleDates, getScheduleTimes } from '../utils/scheduling'
 
 interface FulfillmentSwitcherProps {
   variant?: 'compact' | 'expanded' | 'card'
@@ -28,6 +28,8 @@ export default function FulfillmentSwitcher({
     storeStatus,
     kitchenPause,
   } = useCart()
+  // Real bookable slots for the chosen day (configured hours, nothing in the past).
+  const slots = getScheduleTimes(scheduleDate, fulfilment)
 
   if (variant === 'compact') {
     return (
@@ -218,7 +220,7 @@ export default function FulfillmentSwitcher({
                 onChange={(e) => setScheduleDate(e.target.value)}
                 className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
               >
-                {getScheduleDates().map((d) => (
+                {getScheduleDates(fulfilment).map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
@@ -229,14 +231,14 @@ export default function FulfillmentSwitcher({
             {/* Time Selector */}
             <div>
               <label className="block font-body text-[10px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                Select Time Slot (11am – 9:30pm)
+                Select Time Slot{slots.length ? ` (${slots[0]} – ${slots[slots.length - 1]})` : ''}
               </label>
               <select
                 value={scheduleTime}
                 onChange={(e) => setScheduleTime(e.target.value)}
                 className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
               >
-                {SCHEDULE_TIMES.map((t) => (
+                {slots.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>

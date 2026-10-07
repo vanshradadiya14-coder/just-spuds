@@ -29,7 +29,7 @@ export default function AdminZReportModal({ isOpen, onClose, report }: AdminZRep
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto" role="dialog">
+      <div className="fixed inset-0 z-[200] flex items-center [align-items:safe_center] justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto" role="dialog">
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}

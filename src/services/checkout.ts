@@ -14,6 +14,8 @@
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import {
   createNewOrder,
+  FIRST_ORDER_CODE,
+  hasPlacedOrderBefore,
   getKitchenPauseState,
   getMenuStockOverrides,
   isOrderAllowedDuringPause,
@@ -26,6 +28,7 @@ import { getBusinessDetails, getConfiguredHours, getProducts, getPromoCodes, isP
 import { getDeliverySettings } from './deliverySettingsStore'
 import { getStoreStatus } from '../data/site'
 import { validateDeliveryPostcode } from '../data/deliveryZones'
+import { absoluteScheduleDate, validateScheduledSlot } from '../utils/scheduling'
 
 export type Fulfilment = 'collection' | 'delivery'
 
@@ -96,6 +99,7 @@ export function priceBasket(payload: Pick<CheckoutPayload, 'lines' | 'fulfilment
   if (code) {
     const promo = getPromoCodes().find((p) => p.code.toUpperCase() === code && p.active)
     if (!promo) promoRejected = `Voucher ${code} is no longer valid.`
+    else if (code === FIRST_ORDER_CODE && hasPlacedOrderBefore()) promoRejected = `${code} is for your first order only — welcome back!`
     else if (promo.minOrderPence && subtotal < promo.minOrderPence)
       promoRejected = `Voucher ${code} needs a basket of at least £${(promo.minOrderPence / 100).toFixed(2)}.`
     else if (promo.discountPercent) discount = Math.round(subtotal * (promo.discountPercent / 100))
@@ -145,9 +149,13 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
   }
 
   // Trading hours: ASAP orders must land inside the kitchen's hours (with the
-  // last-orders cutoffs); scheduled orders are checked by the pause/slot logic above.
+  // last-orders cutoffs); scheduled orders must be a real slot — not in the past,
+  // not on a closed day, not after last orders.
   const isDelivery = payload.fulfilment === 'delivery'
-  if (!payload.isScheduled) {
+  if (payload.isScheduled) {
+    const slotProblem = validateScheduledSlot(payload.scheduleDate, payload.scheduleTime, isDelivery ? 'delivery' : 'pickup', now)
+    if (slotProblem) return { ok: false, reason: slotProblem }
+  } else {
     const status = getStoreStatus(now, getKitchenPauseState(), getConfiguredHours(now))
     if (isDelivery && !status.isAcceptingDelivery) {
       return { ok: false, reason: status.message }
@@ -198,8 +206,8 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
   return { ok: true, priced }
 }
 
-export async function processCheckout(payload: CheckoutPayload): Promise<CheckoutResult> {
-  const check = validateCheckout(payload)
+export async function processCheckout(payload: CheckoutPayload, now: Date = new Date()): Promise<CheckoutResult> {
+  const check = validateCheckout(payload, now)
   if (!check.ok) return { ok: false, reason: check.reason }
   const { priced } = check
 
@@ -212,9 +220,17 @@ export async function processCheckout(payload: CheckoutPayload): Promise<Checkou
   // Simulate rapid 400ms secure gateway verification (Stripe / SumUp / Apple Pay)
   await new Promise((res) => setTimeout(res, 450))
 
+  // Store the calendar date, not "Tomorrow" — it must still be right after midnight.
+  const scheduleDate =
+    payload.isScheduled && payload.scheduleDate ? absoluteScheduleDate(payload.scheduleDate, now) : payload.scheduleDate
+  const scheduledFor =
+    payload.isScheduled && scheduleDate && payload.scheduleTime ? `${scheduleDate} @ ${payload.scheduleTime}` : payload.scheduledFor
+
   try {
     const order = createNewOrder({
       ...payload,
+      scheduleDate,
+      scheduledFor,
       lines: priced.lines,
       subtotal: priced.subtotal,
       discount: priced.discount,

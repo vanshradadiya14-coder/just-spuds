@@ -3,6 +3,12 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      screens: {
+        // Phones turned sideways: plenty of width, almost no height.
+        short: { raw: '(max-height: 500px) and (orientation: landscape)' },
+        // Smallest phones (iPhone SE 1st gen, small Androids).
+        tiny: { raw: '(max-width: 359px)' },
+      },
       colors: {
         // Warm Roasted Hearth & Deep Truffle base (human, cozy, authentic food brand)
         ink:   '#141210',
@@ -84,6 +90,7 @@ export default {
       },
       animation: {
         marquee: 'marquee 30s linear infinite',
+        rise: 'rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both',
         pulseSlow: 'pulseSlow 4s ease-in-out infinite',
         toast: 'toastSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
         aurora: 'auroraFloat 18s ease-in-out infinite',

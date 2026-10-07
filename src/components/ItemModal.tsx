@@ -131,7 +131,7 @@ export default function ItemModal({ product, isOpen, onClose }: ItemModalProps) 
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-6 overflow-y-auto" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-[200] flex items-center [align-items:safe_center] justify-center p-3 sm:p-6 overflow-y-auto" role="dialog" aria-modal="true">
           {/* Backdrop Overlay */}
           <motion.div
             initial={{ opacity: 0 }}

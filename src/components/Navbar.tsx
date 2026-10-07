@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
+import { useCssVarHeight } from '../hooks/useCssVarHeight'
 import { useIsScrolled } from '../hooks/useScrollProgress'
 import { cx, gbp } from '../utils/format'
 import { getCurrentUser, subscribeAuth, hasRole, homePortalForRole, INTERNAL_ROLES, type AuthUser } from '../services/authStore'
@@ -40,6 +41,7 @@ export default function Navbar() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(getCurrentUser())
   const portal = portalLinkFor(currentUser?.role)
+  const headerRef = useCssVarHeight<HTMLElement>('--header-h')
 
   useEffect(() => { setMenuOpen(false) }, [pathname])
   useEffect(() => {
@@ -62,7 +64,7 @@ export default function Navbar() {
         Skip to content
       </a>
 
-      <header className={cx('on-dark fixed inset-x-0 top-0 z-50 transition-all duration-300', solid ? 'bg-[#141210]/95 border-b border-amber-500/15 shadow-xl backdrop-blur-xl' : 'bg-[#141210]/80 backdrop-blur-md')}>
+      <header ref={headerRef} className={cx('on-dark fixed inset-x-0 top-0 z-50 transition-all duration-300', solid ? 'bg-[#141210]/95 border-b border-amber-500/15 shadow-xl backdrop-blur-xl' : 'bg-[#141210]/80 backdrop-blur-md')}>
         <PromoBar />
         <StoreStatusBanner />
         <nav className={cx('mx-auto flex max-w-[1400px] items-center justify-between px-4 transition-all duration-300 sm:px-8', solid ? 'h-[56px]' : 'h-[62px]')} aria-label="Primary">
@@ -73,7 +75,7 @@ export default function Navbar() {
                 alt="Just Spuds Logo"
                 className={cx('rounded-full object-cover transition-all duration-300 ring-1 ring-amber-400/40 group-hover:scale-105 shadow-md shadow-amber-950/30', solid ? 'h-9 w-9' : 'h-10 w-10')}
               />
-              <span className={cx('transition-all duration-300 font-bold tracking-tight', solid ? 'text-[20px] sm:text-[22px]' : 'text-[22px] sm:text-[25px]')}>
+              <span className={cx('whitespace-nowrap transition-all duration-300 font-bold tracking-tight', solid ? 'text-[20px] sm:text-[22px]' : 'text-[22px] sm:text-[25px]', 'tiny:text-[18px]')}>
                 Just <span className="italic text-amber-400 group-hover:text-amber-300 transition-colors">Spuds</span>
               </span>
             </Link>
@@ -100,7 +102,7 @@ export default function Navbar() {
             <button
               type="button"
               onClick={() => setIsSearchOpen(true)}
-              className="flex items-center gap-1.5 rounded-full p-2 text-white/80 hover:bg-white/10 hover:text-white transition active:scale-95"
+              className="flex items-center gap-1.5 rounded-full p-2 text-white/80 hover:bg-white/10 hover:text-white transition active:scale-95 tiny:hidden"
               title="Search menu & shortcuts (Ctrl + K)"
               aria-label="Search menu"
             >
@@ -148,7 +150,7 @@ export default function Navbar() {
             <button
               type="button"
               onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-2 rounded-full p-1.5 sm:px-3 sm:py-1.5 font-body text-xs font-bold text-white/90 hover:bg-white/10 hover:text-white transition-all active:scale-95 border border-white/15"
+              className="flex items-center gap-2 rounded-full p-2 sm:px-3 sm:py-1.5 font-body text-xs font-bold text-white/90 hover:bg-white/10 hover:text-white transition-all active:scale-95 border border-white/15 tiny:hidden"
               title="Customer Sign In & Rewards Account"
               aria-label="Customer Account"
             >
@@ -231,8 +233,11 @@ export default function Navbar() {
       <ActiveOrderBanner />
 
       {/* Mobile Drawer Menu */}
-      <div className={cx('on-dark fixed inset-0 z-40 bg-slate-950/98 backdrop-blur-2xl transition-all duration-500 ease-cine lg:hidden', menuOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0')}>
-        <ul className="flex h-full flex-col items-center justify-center gap-7">
+      <div
+        className={cx('on-dark fixed inset-0 z-40 overflow-y-auto bg-slate-950/98 pb-8 pt-[var(--header-h)] backdrop-blur-2xl transition-all duration-500 ease-cine lg:hidden', menuOpen ? 'pointer-events-auto opacity-100' : 'invisible pointer-events-none opacity-0')}
+        aria-hidden={!menuOpen}
+      >
+        <ul className="flex min-h-full flex-col items-center justify-center gap-5 py-6 sm:gap-7">
           {LINKS.map((l, i) => (
             <li
               key={l.to}

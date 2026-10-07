@@ -82,7 +82,21 @@ if (supabaseMod.isSupabaseConfigured) throw new Error('Refusing to run: Supabase
 const menuStore = await load('/src/services/menuStore.ts')
 const orderStore = await load('/src/services/orderStore.ts')
 const authStore = await load('/src/services/authStore.ts')
-const checkout = await load('/src/services/checkout.ts')
+const checkoutModule = await load('/src/services/checkout.ts')
+/**
+ * Checkout tests run at midday today: the shop's last-orders cut-offs would
+ * otherwise make them fail whenever the suite runs in the last minutes before
+ * midnight. (Trading-hours tests pass their own times to validateCheckout.)
+ */
+const middayToday = () => {
+  const d = new Date()
+  d.setHours(12, 0, 0, 0)
+  return d
+}
+const checkout = {
+  ...checkoutModule,
+  processCheckout: (payload, now = middayToday()) => checkoutModule.processCheckout(payload, now),
+}
 const tillStore = await load('/src/services/tillStore.ts')
 const timeclock = await load('/src/services/timeclockStore.ts')
 const alertBus = await load('/src/services/alertSoundBus.ts')
@@ -466,7 +480,77 @@ await test('ordering switched off, or outside trading hours, is refused at the s
   assert.match(check.reason, /closed/i)
   const open = checkout.validateCheckout(webPayload(p), new Date(2026, 0, 5, 11, 5))
   assert.equal(open.ok, true, 'inside hours is fine')
+  // Open but past last orders: the customer is told why, not "Kitchen open & baking".
+  const late = checkout.validateCheckout(webPayload(p), new Date(2026, 0, 5, 11, 20))
+  assert.equal(late.ok, false)
+  assert.match(late.reason, /last orders/i)
   openTheShop()
+})
+
+await test('pre-orders only offer and accept real slots: not past, not after last orders, not on a closed day', async () => {
+  const scheduling = await load('/src/utils/scheduling.ts')
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  openTheShop()
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+  const weeklyHours = Object.fromEntries(days.map((d) => [d, { openTime: '11:00', closeTime: '22:00', isClosed: false }]))
+  weeklyHours.Tuesday = { openTime: '11:00', closeTime: '22:00', isClosed: true }
+  menuStore.saveStoreSettings({ ...menuStore.getStoreSettings(), weeklyHours })
+  const mondayEvening = new Date(2026, 0, 5, 20, 0) // Mon 5 Jan 2026, 8pm
+
+  // Today: only slots after now + lead time, and pick-up's last slot is 15 min before close.
+  assert.deepEqual(scheduling.getScheduleTimes('Today', 'pickup', mondayEvening), ['8:30 PM', '9:00 PM', '9:30 PM'])
+  // Delivery stops 30 min before close and needs 40 min lead.
+  assert.deepEqual(scheduling.getScheduleTimes('Today', 'delivery', mondayEvening), ['9:00 PM', '9:30 PM'])
+  // Tuesday is closed, so it is never offered.
+  const dates = scheduling.getScheduleDates('pickup', mondayEvening)
+  assert.equal(dates.includes('Tomorrow'), false, 'closed Tuesday is not offered')
+  assert.equal(dates[0], 'Today')
+
+  const scheduled = (date, time) => webPayload(p, 1, { isScheduled: true, scheduleDate: date, scheduleTime: time })
+  let check = checkout.validateCheckout(scheduled('Today', '12:00 PM'), mondayEvening)
+  assert.equal(check.ok, false, 'a slot that has already passed is refused')
+  check = checkout.validateCheckout(scheduled('Tomorrow', '1:00 PM'), mondayEvening)
+  assert.equal(check.ok, false, 'a closed day is refused')
+  assert.match(check.reason, /closed/i)
+  check = checkout.validateCheckout(scheduled('Today', '9:00 PM'), mondayEvening)
+  assert.equal(check.ok, true, 'a real slot is fine')
+
+  // Orders keep the calendar date, so "Tomorrow" still reads right after midnight.
+  assert.ok(scheduling.absoluteScheduleDate('Today', mondayEvening).includes('5 Jan'))
+  assert.equal(scheduling.absoluteScheduleDate('Tomorrow', mondayEvening), new Date(2026, 0, 6).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))
+  openTheShop()
+})
+
+await test('the first-order voucher works once per customer and staff see repeat use from a cleared browser', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 20, 'test', 'seed')
+  const code = orderStore.FIRST_ORDER_CODE
+  const forget = () => {
+    localStorage.removeItem('just_spuds_customer_placed_order_ids_v1')
+    localStorage.removeItem('just_spuds_active_order_id')
+  }
+  const firstTimer = { ...customer, phone: '07700 900123' }
+  forget()
+  const first = await checkout.processCheckout(webPayload(p, 2, { customer: firstTimer, promoCode: code }))
+  assert.equal(first.ok, true, first.reason)
+  assert.equal(first.order.payment.promoCode, code, 'the order records which voucher made the discount')
+  assert.ok(first.order.payment.discount > 0)
+  assert.equal(orderStore.getFirstOrderOfferCheck(first.order).ok, true, 'a genuine first order is not flagged')
+
+  const again = await checkout.processCheckout(webPayload(p, 2, { customer: firstTimer, promoCode: code }))
+  assert.equal(again.ok, false, 'the same browser cannot use it twice')
+  assert.match(again.reason, /first order/i)
+
+  // Clearing the browser gets past the customer-side check, but staff see it.
+  forget()
+  const sneaky = await checkout.processCheckout(webPayload(p, 2, { customer: { ...firstTimer, phone: '+44 7700 900123' }, promoCode: code }))
+  assert.equal(sneaky.ok, true)
+  const flag = orderStore.getFirstOrderOfferCheck(sneaky.order)
+  assert.equal(flag.ok, false, 'staff screens flag the repeat (same number, different format)')
+  assert.match(flag.message, new RegExp(first.order.shortId))
+  forget()
 })
 
 await test('the basket is repriced from the live menu: stale prices and smuggled overrides are ignored', async () => {

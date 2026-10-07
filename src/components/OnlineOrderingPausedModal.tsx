@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { getBusinessDetails } from '../services/menuStore'
+import { getOpeningHours } from '../hooks/useOpeningHours'
 
 interface OnlineOrderingPausedModalProps {
   isOpen: boolean
@@ -18,7 +19,7 @@ export default function OnlineOrderingPausedModal({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true">
+      <div className="fixed inset-0 z-[100] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 sm:p-6" role="dialog" aria-modal="true">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -90,7 +91,7 @@ export default function OnlineOrderingPausedModal({
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 6v6l4 2" />
                 </svg>
-                <span>Everyday: 11:00 AM – 10:00 PM</span>
+                <span>{getOpeningHours().week}</span>
               </div>
               <a
                 href="tel:01296423456"

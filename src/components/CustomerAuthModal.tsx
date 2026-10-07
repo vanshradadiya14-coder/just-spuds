@@ -55,7 +55,7 @@ export default function CustomerAuthModal({ isOpen, onClose }: CustomerAuthModal
   const orderCount = getCustomerPlacedOrderIds().length
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-ink/80 backdrop-blur-md animate-fade-in" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[110] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-ink/80 backdrop-blur-md animate-fade-in" role="dialog" aria-modal="true">
       <div className="relative w-full max-w-md overflow-hidden rounded-3xl bg-white text-ink shadow-2xl border border-ink/10 my-auto">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-ink/10 bg-paper/60 px-6 py-4">
@@ -170,13 +170,11 @@ export default function CustomerAuthModal({ isOpen, onClose }: CustomerAuthModal
                     <span className="text-amber-500 font-bold">✓</span>
                     <span><strong>Fast Checkout</strong> with automatic name &amp; email auto-fill</span>
                   </li>
+                  {/* Only promise what the site actually does — there is no points scheme
+                      or cross-device order history yet. */}
                   <li className="flex items-center gap-2.5">
                     <span className="text-amber-500 font-bold">✓</span>
-                    <span><strong>Live Order Tracking</strong> synced across your phone and laptop</span>
-                  </li>
-                  <li className="flex items-center gap-2.5">
-                    <span className="text-amber-500 font-bold">✓</span>
-                    <span><strong>Earn 10 Spud Points</strong> for every £1 spent on jackets &amp; meal deals</span>
+                    <span><strong>Live Order Tracking</strong> with updates on this device</span>
                   </li>
                 </ul>
               </div>
@@ -184,25 +182,6 @@ export default function CustomerAuthModal({ isOpen, onClose }: CustomerAuthModal
               {error && (
                 <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-700 font-body space-y-2 text-left">
                   <p className="font-semibold">{error}</p>
-                  {error.includes('Authorized domains') ? (
-                    <a
-                      href="https://console.firebase.google.com/project/just-spuds/authentication/settings"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 font-bold text-amber-700 hover:text-amber-900 underline"
-                    >
-                      Open Firebase Authorized Domains Settings &rarr;
-                    </a>
-                  ) : error.includes('Firebase Console') ? (
-                    <a
-                      href="https://console.firebase.google.com/project/just-spuds/authentication/providers"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 font-bold text-amber-700 hover:text-amber-900 underline"
-                    >
-                      Open Firebase Console Sign-in settings &rarr;
-                    </a>
-                  ) : null}
                 </div>
               )}
 

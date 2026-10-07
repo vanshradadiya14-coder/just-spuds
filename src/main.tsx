@@ -47,10 +47,5 @@ import('./services/sync/supabaseBackend')
     void startCloudSync({ backend: null })
   })
 
-// Firebase Analytics initialises as a side effect of loading the module. Pull it
-// in once the page is idle so it never competes with first paint.
-if (typeof window !== 'undefined') {
-  const warm = () => import('./services/firebase').catch(() => {})
-  if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(warm, { timeout: 4000 })
-  else window.setTimeout(warm, 2500)
-}
+// Firebase is loaded on demand: Google sign-in pulls it in, and Analytics only
+// starts once a visitor accepts cookies (components/CookieConsent).

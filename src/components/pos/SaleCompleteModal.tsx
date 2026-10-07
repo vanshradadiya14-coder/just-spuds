@@ -83,7 +83,7 @@ export default function SaleCompleteModal({ order, changeDuePence, tenderLabel, 
   const isCash = order.payment.method === 'cash' || (order.payment.method === 'split' && changeDuePence > 0)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/90 backdrop-blur-md">
       <div className="w-full max-w-md rounded-3xl border border-emerald-400/40 bg-slate-900 p-6 shadow-2xl text-white font-body text-center space-y-5">
         <div>
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500 text-3xl text-ink shadow-glow">✓</div>

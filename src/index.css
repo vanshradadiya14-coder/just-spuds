@@ -2,11 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: light; }
+:root {
+  color-scheme: light;
+  /* Kept in sync with the real header / mobile dock heights by Navbar and
+     MobileAppDock, so sticky bars, anchors and floating cards sit right
+     below the header and above the dock on every screen. */
+  --header-h: 90px;
+  --dock-h: 0px;
+}
 * { -webkit-tap-highlight-color: transparent; }
 html {
   scroll-behavior: auto;
   overflow-x: hidden;
+  scroll-padding-top: calc(var(--header-h) + 12px);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -25,6 +33,15 @@ body {
   -moz-osx-font-smoothing: grayscale;
   margin: 0;
   overflow-x: hidden;
+}
+/* Form fields have a built-in minimum width (~150-200px); inside a flex row
+   that pushed buttons beside them off small phones. Let them shrink. */
+input, select, textarea { min-width: 0; }
+
+/* `clip` stops sideways panning like `hidden` but does not turn html/body
+   into scroll containers, which silently broke every `position: sticky`. */
+@supports (overflow: clip) {
+  html, body { overflow-x: clip; }
 }
 
 :focus-visible {

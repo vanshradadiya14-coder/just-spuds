@@ -201,6 +201,8 @@ export default function StaffPOSPage() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   // Below the lg breakpoint the ticket panel is a bottom sheet opened from the total bar.
   const [isTicketSheetOpen, setIsTicketSheetOpen] = useState(false)
+  // Occasional shift/manager actions live in one "More" menu so the top bar fits every screen.
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false)
   const [barcodeInput, setBarcodeInput] = useState('')
 
   // Big-POS flow: open checks (send now, pay later), sale-complete screen, tips,
@@ -219,6 +221,15 @@ export default function StaffPOSPage() {
   const [priceOverrideInput, setPriceOverrideInput] = useState('')
   const [lineVoidTarget, setLineVoidTarget] = useState<CartLine | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isToolsMenuOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsToolsMenuOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isToolsMenuOpen])
 
   // Subscriptions
   useEffect(() => {
@@ -1509,11 +1520,12 @@ export default function StaffPOSPage() {
   }
 
   return (
-    <div className="relative h-screen w-screen bg-portal-dark text-slate-100 flex flex-col overflow-hidden select-none font-body">
+    // 100dvh, not 100vh: on iPad/phone browsers 100vh runs under the toolbar and hid the Pay row.
+    <div className="relative h-screen supports-[height:100dvh]:h-dvh w-full bg-portal-dark text-slate-100 flex flex-col overflow-hidden select-none font-body">
       {/* High-Tech Terminal Ambient Backdrop */}
       <FixedAmbientBackdrop variant="portal" />
       {/* 1. TOP EPOS COMMAND & STATUS BAR */}
-      <header className="h-14 border-b border-white/10 bg-slate-900 px-3 flex items-center justify-between gap-2 shrink-0 z-20">
+      <header className="h-14 border-b border-white/10 bg-slate-900 px-2 sm:px-3 flex items-center justify-between gap-2 shrink-0 z-20">
         <div className="flex items-center gap-2.5 shrink-0">
           <div className="flex items-center gap-2 rounded-xl bg-black/60 border border-white/10 px-2.5 py-1">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse shadow-glow" />
@@ -1521,7 +1533,7 @@ export default function StaffPOSPage() {
             <span className="text-[10px] text-white/50 font-bold hidden sm:inline">| MARKET SQ</span>
           </div>
 
-          <div className="hidden md:flex items-center gap-2 text-xs">
+          <div className="hidden xl:flex items-center gap-2 text-xs">
             <span className="font-bold text-white/80">{user?.name}</span>
             <span className="text-white/30">&bull;</span>
             <span className="font-mono text-amber-300 font-bold">SHIFT #{shift.shiftNumber}</span>
@@ -1590,7 +1602,7 @@ export default function StaffPOSPage() {
             </button>
           )}
 
-          <div className="rounded-xl border border-white/10 bg-black/40 px-2.5 py-1 font-mono text-xs font-bold text-amber-300 hidden lg:block">
+          <div className="rounded-xl border border-white/10 bg-black/40 px-2.5 py-1 font-mono text-xs font-bold text-amber-300 hidden xl:block">
             🕒 {currentTime.toLocaleTimeString()}
           </div>
 
@@ -1599,81 +1611,16 @@ export default function StaffPOSPage() {
             onClick={() => setIsRecentSalesModalOpen(true)}
             className="rounded-xl border border-sky-400/40 bg-sky-500/10 px-2.5 py-1 text-xs font-bold text-sky-300 hover:bg-sky-400 hover:text-ink transition flex items-center gap-1"
             title="Search orders, reprint receipts, or process refunds"
+            aria-label="Orders and refunds"
           >
             <span>🧾</span>
-            <span className="hidden sm:inline">Orders &amp; Refunds</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              requireManagerAuth('Till Settings', 'Printer, drawer, sounds and float defaults', () => {
-                setIsSettingsModalOpen(true)
-              })
-            }}
-            className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-bold text-white hover:bg-white/20 transition active:scale-95 flex items-center gap-1"
-            title="Till settings (Manager PIN required)"
-            aria-label="Till settings"
-          >
-            <span>⚙️</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              requireManagerAuth('No Sale Drawer Kick', 'Authorize manual cash drawer opening without a sale', () => {
-                setIsNoSaleModalOpen(true)
-              })
-            }}
-            className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-bold text-white hover:bg-white/20 transition active:scale-95 flex items-center gap-1"
-            title="Open Cash Drawer without a sale (Manager PIN required)"
-          >
-            <span>🔓</span>
-            <span className="hidden sm:inline">No Sale</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsPayInOutModalOpen(true)}
-            className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-bold text-white hover:bg-white/20 transition hidden sm:flex items-center gap-1"
-            title="Record petty cash in/out"
-          >
-            <span>💵</span>
-            <span>Float In/Out</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsXReportOpen(true)}
-            className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition hidden md:flex items-center gap-1"
-            title="View mid-shift sales reading without closing"
-          >
-            <span>📊</span>
-            <span>X-Report</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              // Unpaid checks would vanish from the books if the shift closed over them.
-              if (openChecksCount > 0) {
-                setFlash(`${openChecksCount} open check${openChecksCount > 1 ? 's' : ''} still unpaid — settle or void them before closing the shift.`)
-                setIsOpenChecksOpen(true)
-                return
-              }
-              setClosingDenoms({ ...EMPTY_DENOMINATIONS })
-              setIsZReportOpen(true)
-            }}
-            className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-2.5 py-1 text-xs font-bold text-rose-300 hover:bg-rose-900/60 transition flex items-center gap-1"
-            title="End of day register closure and cash reconciliation"
-          >
-            <span>📋</span>
-            <span>Close Z-Report</span>
+            <span className="hidden md:inline">Orders &amp; Refunds</span>
           </button>
 
           <Link
             to="/staff"
             className="rounded-xl bg-amber-400 px-3 py-1 font-body text-xs font-black text-ink shadow hover:bg-amber-300 transition flex items-center gap-1"
+            aria-label="Kitchen display"
           >
             <span>👨‍🍳</span>
             <span className="hidden sm:inline">KDS</span>
@@ -1681,14 +1628,107 @@ export default function StaffPOSPage() {
 
           <button
             type="button"
+            onClick={() => setIsToolsMenuOpen((v) => !v)}
+            className={`rounded-xl border px-2.5 py-1 text-xs font-bold transition flex items-center gap-1 ${
+              isToolsMenuOpen ? 'border-amber-400 bg-amber-400 text-ink' : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+            }`}
+            aria-haspopup="menu"
+            aria-expanded={isToolsMenuOpen}
+            title="Float in/out, no sale, X-report, close shift, till settings"
+          >
+            <span aria-hidden>☰</span>
+            <span className="hidden sm:inline">More</span>
+          </button>
+
+          <button
+            type="button"
             onClick={logout}
             className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50"
             title="Lock terminal"
+            aria-label="Lock terminal"
           >
             🔒
           </button>
         </div>
       </header>
+
+      {/* "More" menu: rendered outside the header's scroll strip so it is never clipped. */}
+      {isToolsMenuOpen && (
+        <>
+          <div className="fixed inset-0 z-[55]" onClick={() => setIsToolsMenuOpen(false)} aria-hidden />
+          <div
+            role="menu"
+            aria-label="Till tools"
+            className="fixed right-2 top-14 z-[56] w-[min(18rem,calc(100vw-1rem))] max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-2 shadow-2xl"
+          >
+            <div className="px-2.5 pb-2 pt-1 text-[11px] text-white/60">
+              <p className="font-bold text-white">{user?.name}</p>
+              <p className="font-mono">
+                Shift #{shift.shiftNumber} &bull; Float {gbp(shift.startingFloat)} &bull; {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+            {(
+              [
+                { icon: '💵', label: 'Float in / out', hint: 'Petty cash paid in or out', run: () => setIsPayInOutModalOpen(true) },
+                {
+                  icon: '🔓',
+                  label: 'No sale (open drawer)',
+                  hint: 'Manager PIN',
+                  run: () =>
+                    requireManagerAuth('No Sale Drawer Kick', 'Authorize manual cash drawer opening without a sale', () => {
+                      setIsNoSaleModalOpen(true)
+                    }),
+                },
+                { icon: '📊', label: 'X-Report', hint: 'Mid-shift reading, shift stays open', run: () => setIsXReportOpen(true) },
+                {
+                  icon: '📋',
+                  label: 'Close shift (Z-Report)',
+                  hint: 'Count the drawer and end the day',
+                  danger: true,
+                  run: () => {
+                    // Unpaid checks would vanish from the books if the shift closed over them.
+                    if (openChecksCount > 0) {
+                      setFlash(`${openChecksCount} open check${openChecksCount > 1 ? 's' : ''} still unpaid — settle or void them before closing the shift.`)
+                      setIsOpenChecksOpen(true)
+                      return
+                    }
+                    setClosingDenoms({ ...EMPTY_DENOMINATIONS })
+                    setIsZReportOpen(true)
+                  },
+                },
+                {
+                  icon: '⚙️',
+                  label: 'Till settings',
+                  hint: 'Printer, drawer, sounds, lock — manager PIN',
+                  run: () =>
+                    requireManagerAuth('Till Settings', 'Printer, drawer, sounds and float defaults', () => {
+                      setIsSettingsModalOpen(true)
+                    }),
+                },
+              ] as { icon: string; label: string; hint: string; danger?: boolean; run: () => void }[]
+            ).map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setIsToolsMenuOpen(false)
+                  item.run()
+                }}
+                className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition ${
+                  item.danger ? 'text-rose-300 hover:bg-rose-950/60' : 'text-white hover:bg-white/10'
+                }`}
+              >
+                <span className="text-base" aria-hidden>{item.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold">{item.label}</span>
+                  <span className="block text-[11px] text-white/50">{item.hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* 2. MAIN EPOS 3-PANEL WORKSPACE */}
       <div className="flex-1 flex overflow-hidden">
@@ -1815,18 +1855,18 @@ export default function StaffPOSPage() {
             ))}
           </div>
 
-          <div className="p-2.5 border-b border-white/10 bg-slate-900/50 flex items-center gap-2 shrink-0">
+          <div className="p-2.5 border-b border-white/10 bg-slate-900/50 flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => {
                 const baseSpud = products.find((p) => p.id === 'spud-just-a') || products[0]
                 if (baseSpud) handleItemClick(baseSpud)
               }}
-              className="flex-1 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 py-2.5 px-4 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95 flex items-center justify-center gap-2"
+              className="shrink-0 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 py-2.5 px-4 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap"
             >
-              <span className="text-base">🥔</span>
-              <span className="hidden xl:inline">+ Build Custom Jacket Potato (Wizard)</span>
-              <span className="xl:hidden">🥔 Build a Spud</span>
+              <span className="text-base" aria-hidden>🥔</span>
+              <span className="hidden 2xl:inline">Build Custom Jacket Potato</span>
+              <span className="2xl:hidden">Build a Spud</span>
             </button>
 
             <button
@@ -1835,11 +1875,11 @@ export default function StaffPOSPage() {
                 playPOSTouchTone('tap')
                 setIsCustomItemModalOpen(true)
               }}
-              className="rounded-xl bg-purple-600/30 border border-purple-400/50 py-2.5 px-3 font-body text-xs font-black uppercase tracking-wider text-purple-200 hover:bg-purple-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1.5 shrink-0 shadow"
+              className="rounded-xl bg-purple-600/30 border border-purple-400/50 py-2.5 px-3 font-body text-xs font-black uppercase tracking-wider text-purple-200 hover:bg-purple-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1.5 shrink-0 shadow whitespace-nowrap"
               title="Add any custom item and price directly to this order"
             >
-              <span className="text-sm">➕</span>
-              <span className="hidden sm:inline">Manual Item /</span>
+              <span className="text-sm" aria-hidden>➕</span>
+              <span className="hidden 2xl:inline">Manual Item /</span>
               <span>Custom £</span>
             </button>
 
@@ -1851,12 +1891,14 @@ export default function StaffPOSPage() {
               }}
               className="rounded-xl bg-sky-600/20 border border-sky-400/40 py-2.5 px-3 font-body text-xs font-bold text-sky-300 hover:bg-sky-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1 shrink-0"
               title="Quick Barcode or SKU Scanner"
+              aria-label="Barcode or SKU"
             >
-              <span>📟</span>
-              <span className="hidden sm:inline">Barcode / SKU</span>
+              <span aria-hidden>📟</span>
+              <span className="hidden 2xl:inline">Barcode / SKU</span>
             </button>
 
-            <div className="w-32 sm:w-44 md:w-56">
+            {/* Fills what is left of the row; drops to its own line on phones. */}
+            <div className="min-w-[8rem] flex-1 basis-full sm:basis-0">
               <input
                 type="text"
                 value={searchQuery}
@@ -1867,7 +1909,8 @@ export default function StaffPOSPage() {
             </div>
           </div>
 
-          <div className="flex-1 p-3 pb-24 lg:pb-3 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 auto-rows-max">
+          {/* Tiles size to the space actually left between the category rail and the ticket. */}
+          <div className="flex-1 p-3 pb-24 lg:pb-3 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2.5 auto-rows-max content-start">
             {filteredProducts.map((prod) => {
               const soldOut = isOutOfStock(prod) || prod.available === false
               const isLowStock = !soldOut && typeof prod.stockQuantity === 'number' && prod.stockQuantity <= (prod.lowStockThreshold || 5)
@@ -1969,7 +2012,7 @@ export default function StaffPOSPage() {
 
         {/* PANEL C: EPOS RECEIPT TAPE & NUMPAD CONSOLE */}
         <aside
-          className={`${isTicketSheetOpen ? 'flex' : 'hidden'} lg:flex fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto w-full lg:w-96 xl:w-[420px] bg-slate-900 lg:border-l border-white/10 flex-col shrink-0 shadow-2xl`}
+          className={`${isTicketSheetOpen ? 'flex' : 'hidden'} lg:flex fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto w-full lg:w-96 xl:w-[420px] bg-slate-900 lg:border-l border-white/10 flex-col shrink-0 shadow-2xl overflow-y-auto overscroll-contain`}
           aria-label="Till ticket"
         >
           <div className="lg:hidden flex items-center justify-between border-b border-white/10 bg-black/60 px-3 py-2 shrink-0">
@@ -1983,12 +2026,12 @@ export default function StaffPOSPage() {
             </button>
           </div>
           <div className="p-2.5 border-b border-white/10 bg-black/40 space-y-2 shrink-0">
-            <div className="flex items-center justify-between gap-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
               <div className="flex rounded-xl bg-white/5 p-1 border border-white/10 text-xs">
                 <button
                   type="button"
                   onClick={() => setOrderType('takeaway')}
-                  className={`px-3 py-1 rounded-lg font-black transition ${
+                  className={`px-2 xl:px-3 py-1 rounded-lg font-black whitespace-nowrap transition ${
                     orderType === 'takeaway' ? 'bg-amber-400 text-ink shadow-glow' : 'text-white/60 hover:text-white'
                   }`}
                 >
@@ -1997,7 +2040,7 @@ export default function StaffPOSPage() {
                 <button
                   type="button"
                   onClick={() => setOrderType('eat_in')}
-                  className={`px-3 py-1 rounded-lg font-black transition ${
+                  className={`px-2 xl:px-3 py-1 rounded-lg font-black whitespace-nowrap transition ${
                     orderType === 'eat_in' ? 'bg-amber-400 text-ink shadow-glow' : 'text-white/60 hover:text-white'
                   }`}
                 >
@@ -2006,7 +2049,7 @@ export default function StaffPOSPage() {
                 <button
                   type="button"
                   onClick={() => setOrderType('phone')}
-                  className={`px-2 py-1 rounded-lg font-black transition ${
+                  className={`px-2 xl:px-3 py-1 rounded-lg font-black whitespace-nowrap transition ${
                     orderType === 'phone' ? 'bg-amber-400 text-ink shadow-glow' : 'text-white/60 hover:text-white'
                   }`}
                 >
@@ -2098,8 +2141,9 @@ export default function StaffPOSPage() {
             )}
           </div>
 
-          {/* Digital Receipt Journal */}
-          <div className="flex-1 p-2.5 overflow-y-auto space-y-1.5 bg-black/20">
+          {/* Digital Receipt Journal — keeps a usable height; on short screens the
+              whole sheet scrolls instead, so the pay buttons are never cut off. */}
+          <div className="flex-1 min-h-[7rem] p-2.5 overflow-y-auto space-y-1.5 bg-black/20">
             {cartLines.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-6 text-white/40">
                 <span className="text-4xl mb-2">🧾</span>
@@ -2494,7 +2538,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: SPLIT PAYMENT (SOME ONLINE/CARD & REST CASH) */}
       {isSplitModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-lg rounded-3xl border border-purple-500/50 bg-slate-900 p-6 shadow-2xl space-y-5 text-white font-body">
             <div className="flex items-start justify-between border-b border-white/10 pb-3">
               <div>
@@ -2829,9 +2873,10 @@ export default function StaffPOSPage() {
 
       {/* MODAL: FOOD STORE MODIFIER WIZARD */}
       {customizingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-2xl rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body my-4">
-            <div className="flex items-start justify-between border-b border-white/10 pb-3">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-3 bg-black/85 backdrop-blur-md">
+          {/* Header and "Add To Ticket" stay put; only the options scroll. */}
+          <div className="flex w-full max-w-2xl max-h-[calc(100vh-1.5rem)] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-3xl border border-white/20 bg-slate-900 shadow-2xl text-white font-body">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-5 pb-3 pt-5">
               <div>
                 <span className="rounded-md bg-amber-400 px-2 py-0.5 text-[10px] font-black uppercase text-ink">
                   {customizingProduct.category}
@@ -2842,12 +2887,14 @@ export default function StaffPOSPage() {
               <button
                 type="button"
                 onClick={() => setCustomizingProduct(null)}
-                className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white/60 hover:text-white"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/10 text-white/60 hover:text-white"
+                aria-label="Close"
               >
                 ✕
               </button>
             </div>
 
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
             {/* STEP 1: BUTTER SELECTION */}
             {customizingProduct.category === 'SPUDS' && (
               <div className="space-y-1.5">
@@ -2892,7 +2939,7 @@ export default function StaffPOSPage() {
                 </span>
               </div>
 
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-1.5">
                 {[
                   { id: 'Mature Cheddar Cheese', icon: '🧀' },
                   { id: 'Heinz Baked Beans', icon: '🥫' },
@@ -3187,7 +3234,10 @@ export default function StaffPOSPage() {
               </div>
             </div>
 
-            {/* CONFIRM & ADD TO TICKET */}
+            </div>
+
+            {/* CONFIRM & ADD TO TICKET — pinned, so a plain spud is one tap */}
+            <div className="shrink-0 border-t border-white/10 bg-slate-900 p-4">
             {(() => {
               const extraCount = Object.values(conversationalMods).filter((m) => m === 'extra').length
               const lineTotalPence = customizingProduct.price + extraCount * 100 + (isMealDealCombo ? 180 : 0)
@@ -3202,13 +3252,14 @@ export default function StaffPOSPage() {
                 </button>
               )
             })()}
+            </div>
           </div>
         </div>
       )}
 
       {/* MODAL: X-REPORT (MID-DAY SHIFT READING WITHOUT CLOSING) */}
       {isXReportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-md rounded-3xl border border-amber-400/40 bg-slate-900 p-6 shadow-2xl space-y-5 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
@@ -3268,7 +3319,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: Z-REPORT (END OF DAY REGISTER CLOSE & CASH RECONCILIATION) */}
       {isZReportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/90 backdrop-blur-md overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-3 bg-black/90 backdrop-blur-md overflow-y-auto">
           <div className="w-full max-w-lg rounded-3xl border border-rose-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div>
@@ -3405,7 +3456,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: NO SALE / POP CASH DRAWER */}
       {isNoSaleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <h3 className="font-bold text-sm text-white">🔓 No Sale / Open Drawer</h3>
@@ -3478,7 +3529,7 @@ export default function StaffPOSPage() {
       {isCustomerLookupOpen && <CustomerLookupModal onClose={() => setIsCustomerLookupOpen(false)} onAttach={handleAttachCustomer} />}
 
       {priceOverrideLineId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -3512,7 +3563,7 @@ export default function StaffPOSPage() {
       )}
 
       {lineVoidTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-rose-500/40 bg-slate-900 p-5 shadow-2xl space-y-3 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <h3 className="font-bold text-sm">Void sent item</h3>
@@ -3548,7 +3599,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: PARKED (HELD) TICKETS */}
       {isParkedModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-md rounded-3xl border border-purple-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <h3 className="font-bold text-sm text-white">Held Tickets ({parkedOrders.length})</h3>
@@ -3577,7 +3628,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: ONLINE ORDERS PENDING QUEUE */}
       {isOnlineOrdersModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-lg rounded-3xl border border-rose-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <div className="flex items-center gap-2">
@@ -3660,7 +3711,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: BILL SPLITTING (TOAST / SQUARE STYLE: EVEN SPLIT OR BY ITEMS) */}
       {isBillSplitModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/90 backdrop-blur-md overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-3 bg-black/90 backdrop-blur-md overflow-y-auto">
           <div className="w-full max-w-lg rounded-3xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
@@ -3796,7 +3847,7 @@ export default function StaffPOSPage() {
 
       {/* MODAL: COMPS & MANAGER DISCOUNTS */}
       {isCompsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-purple-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
@@ -3948,7 +3999,7 @@ export default function StaffPOSPage() {
 
       {/* SAFE TENDER: CASH CONFIRMATION MODAL */}
       {isCashConfirmModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-md rounded-3xl border border-emerald-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
@@ -4036,7 +4087,7 @@ export default function StaffPOSPage() {
 
       {/* SAFE TENDER: SECURE CARD TERMINAL SIMULATION (SumUp / Stripe) */}
       {isCardTerminalModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2 text-left">
@@ -4150,7 +4201,7 @@ export default function StaffPOSPage() {
 
       {/* MANAGER PIN AUTHORIZATION GATE */}
       {isManagerAuthModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-amber-400/50 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2 text-left">
@@ -4269,7 +4320,7 @@ export default function StaffPOSPage() {
 
       {/* BARCODE / SKU QUICK SCANNER MODAL */}
       {isBarcodeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-sky-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <div className="flex items-center gap-2">
@@ -4325,7 +4376,7 @@ export default function StaffPOSPage() {
 
       {/* RECENT SALES, RECEIPTS & REFUNDS MODAL */}
       {isRecentSalesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-4 bg-black/90 backdrop-blur-md overflow-y-auto">
           <div className="w-full max-w-2xl rounded-3xl border border-sky-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
@@ -4490,7 +4541,7 @@ function CustomItemModal({
   const parsed = parseFloat(priceString) || 0
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-3 bg-black/85 backdrop-blur-md">
       <div className="w-full max-w-md rounded-3xl border border-purple-500/40 bg-slate-900 p-5 sm:p-6 shadow-2xl space-y-4 text-white font-body my-auto">
         <div className="flex items-center justify-between border-b border-white/10 pb-3">
           <div className="flex items-center gap-2">
@@ -4682,7 +4733,7 @@ function PayInOutModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
       <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
         <div className="flex items-center justify-between border-b border-white/10 pb-2">
           <h3 className="font-bold text-sm text-white">💵 Cash Float Adjustment</h3>
@@ -4763,7 +4814,7 @@ function LineNoteModal({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
       <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
         <div className="flex items-center justify-between border-b border-white/10 pb-2">
           <h3 className="font-bold text-sm text-white">Item Kitchen Note</h3>

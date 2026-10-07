@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
+import { useModalOpen } from '../hooks/useModalOpen'
 import { cx, gbp } from '../utils/format'
 
 /**
@@ -19,23 +20,20 @@ export default function OrderBar() {
     return () => clearTimeout(t)
   }, [bump])
 
-  const [isModalActive, setIsModalActive] = useState(false)
-
-  useEffect(() => {
-    const checkModal = () => {
-      const isLocked = document.body.style.overflow === 'hidden'
-      const hasModal = Boolean(document.querySelector('[role="dialog"]'))
-      setIsModalActive(isLocked || hasModal)
-    }
-    checkModal()
-    const observer = new MutationObserver(checkModal)
-    observer.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] })
-    return () => observer.disconnect()
-  }, [])
-
-  if (isOpen || isModalActive) return null
+  const isModalActive = useModalOpen()
 
   const empty = count === 0
+  // Tell the page shell how much room to leave under the footer while the
+  // rail is showing (desktop only; phones use the bottom tab bar instead).
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--orderbar-h', empty ? '0px' : '96px')
+    return () => {
+      root.style.removeProperty('--orderbar-h')
+    }
+  }, [empty])
+
+  if (isOpen || isModalActive) return null
 
   return (
     <div className="hidden lg:block pointer-events-none fixed inset-x-0 bottom-0 z-30 px-4 pb-4 sm:px-6 sm:pb-6">

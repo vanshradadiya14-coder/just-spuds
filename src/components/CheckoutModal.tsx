@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useCart } from '../hooks/useCart'
 import { processCheckout, SERVICE_FEE_PENCE } from '../services/checkout'
+import { getScheduleDates, getScheduleTimes } from '../utils/scheduling'
 import { getMenuStockOverrides, type PaymentMethod, type CustomerInfo } from '../services/orderStore'
 import { gbp, cx } from '../utils/format'
 import { SITE } from '../data/site'
@@ -17,42 +18,6 @@ interface CheckoutModalProps {
 
 const TIPS = [0, 100, 200, 300] // in pence
 const SERVICE_FEE = SERVICE_FEE_PENCE // packaging & service fee — one definition, shared with checkout validation
-
-const SCHEDULE_TIMES = [
-  '11:00 AM',
-  '11:30 AM',
-  '12:00 PM',
-  '12:30 PM',
-  '1:00 PM',
-  '1:30 PM',
-  '2:00 PM',
-  '2:30 PM',
-  '3:00 PM',
-  '3:30 PM',
-  '4:00 PM',
-  '4:30 PM',
-  '5:00 PM',
-  '5:30 PM',
-  '6:00 PM',
-  '6:30 PM',
-  '7:00 PM',
-  '7:30 PM',
-  '8:00 PM',
-  '8:30 PM',
-  '9:00 PM',
-  '9:30 PM',
-]
-
-function getScheduleDates(): string[] {
-  const days: string[] = ['Today', 'Tomorrow']
-  const now = new Date()
-  for (let i = 2; i <= 6; i++) {
-    const d = new Date(now)
-    d.setDate(d.getDate() + i)
-    days.push(d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))
-  }
-  return days
-}
 
 export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
   const navigate = useNavigate()
@@ -141,7 +106,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
         return
       }
     } else if (!storeStatus.isOpen && !isScheduled) {
-      setError(`Kitchen Notice: Standard ordering hours are 11:00 AM – 10:00 PM. Please choose a scheduled order slot to place a pre-order!`)
+      setError(`Kitchen Notice: ${storeStatus.message} Please choose a pre-order slot below.`)
       setTimingMode('scheduled')
       return
     }
@@ -269,7 +234,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-5 overflow-y-auto" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-[200] flex items-center [align-items:safe_center] justify-center p-3 sm:p-5 overflow-y-auto" role="dialog" aria-modal="true">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -321,7 +286,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                       <span className="text-xl">🥔</span>
                       <div className="flex flex-col">
                         <span className="font-bold text-amber-900">Have an account?</span>
-                        <span className="text-[11px] text-amber-800">Sign in for Spud Points & fast checkout</span>
+                        <span className="text-[11px] text-amber-800">Sign in for faster checkout</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -547,14 +512,14 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="block font-body text-[10px] font-bold uppercase text-slate-600 mb-1">
-                            Select Delivery Day
+                            {fulfilment === 'delivery' ? 'Delivery day' : 'Pick-up day'}
                           </label>
                           <select
                             value={scheduleDate}
                             onChange={(e) => setScheduleDate(e.target.value)}
                             className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
                           >
-                            {getScheduleDates().map((d) => (
+                            {getScheduleDates(fulfilment).map((d) => (
                               <option key={d} value={d}>
                                 {d}
                               </option>
@@ -564,14 +529,14 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
 
                         <div>
                           <label className="block font-body text-[10px] font-bold uppercase text-slate-600 mb-1">
-                            Select Time Slot (11am – 9:30pm)
+                            Time slot
                           </label>
                           <select
                             value={scheduleTime}
                             onChange={(e) => setScheduleTime(e.target.value)}
                             className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
                           >
-                            {SCHEDULE_TIMES.map((t) => (
+                            {getScheduleTimes(scheduleDate, fulfilment).map((t) => (
                               <option key={t} value={t}>
                                 {t}
                               </option>

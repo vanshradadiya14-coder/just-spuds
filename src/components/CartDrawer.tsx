@@ -7,10 +7,10 @@ import OnlineOrderingPausedModal from './OnlineOrderingPausedModal'
 import { useCart, lineUnitPrice } from '../hooks/useCart'
 import { optionLabel, getProduct, MEAL_DEAL } from '../data/menu'
 import { gbp, cx } from '../utils/format'
+import { getScheduleDates, getScheduleTimes } from '../utils/scheduling'
+import { getBusinessDetails } from '../services/menuStore'
 
 const ease = [0.16, 1, 0.3, 1] as const
-
-import { PICKUP_TIMES, DELIVERY_TIMES, SCHEDULE_TIMES, getScheduleDates } from '../utils/scheduling'
 
 const QUICK_PAIRINGS = [
   { id: 'cold-coca-cola', name: 'Coca Cola Can', price: 150, icon: '🥤' },
@@ -25,12 +25,15 @@ export default function CartDrawer() {
     promoCode, applyPromo, removePromo, fulfilment, setFulfilment,
     timingMode, setTimingMode, scheduleDate, setScheduleDate, scheduleTime, setScheduleTime,
     formattedScheduledTime, isScheduled, kitchenPause,
-    collectionTime, setCollectionTime, deliveryTime, setDeliveryTime,
     deliveryAddress, setDeliveryAddress, deliveryFee, freeDeliveryThreshold,
     postcodeValidation, minOrderPence, isMinOrderMet, storeStatus,
     finalTotal, kitchenNotes, setKitchenNotes, count, add, updateMeal,
     isOnlineOrderingEnabled, orderingPausedTitle, orderingPausedMessage,
   } = useCart()
+
+  // "No postcode yet" and "postcode outside the area" need different messages and actions.
+  const needsPostcode = fulfilment === 'delivery' && !deliveryAddress.postcode.trim()
+  const outsideArea = fulfilment === 'delivery' && !needsPostcode && !postcodeValidation.canDeliver
 
   const [inputCode, setInputCode] = useState('')
   const [promoError, setPromoError] = useState<string | null>(null)
@@ -90,7 +93,9 @@ export default function CartDrawer() {
           <motion.aside
             initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
             transition={{ duration: 0.55, ease }}
-            className="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col glass-panel"
+            // Sideways phones: the whole bag scrolls as one page, so the checkout
+            // button is never pushed below the screen by a pinned footer.
+            className="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col glass-panel short:overflow-y-auto"
           >
             {/* Header */}
             <header className="flex items-center justify-between border-b border-ink/10 px-6 py-4">
@@ -190,26 +195,34 @@ export default function CartDrawer() {
 
               {/* Scheduled Pickers in Drawer */}
               {(timingMode === 'scheduled' || storeStatus.isKitchenPaused || kitchenPause.isPaused) && (
-                <div className="mt-2 grid grid-cols-2 gap-2 pt-2 border-t border-ink/5 animate-fadeIn">
-                  <select
-                    value={scheduleDate}
-                    onChange={(e) => setScheduleDate(e.target.value)}
-                    className="w-full rounded-lg border border-ink/15 bg-white px-2 py-1 font-body text-[11px] font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
-                  >
-                    {getScheduleDates().map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={scheduleTime}
-                    onChange={(e) => setScheduleTime(e.target.value)}
-                    className="w-full rounded-lg border border-ink/15 bg-white px-2 py-1 font-body text-[11px] font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
-                  >
-                    {SCHEDULE_TIMES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
+                getScheduleDates(fulfilment).length ? (
+                  <div className="mt-2 grid grid-cols-2 gap-2 pt-2 border-t border-ink/5 animate-fadeIn">
+                    <select
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                      aria-label="Pre-order day"
+                      className="w-full rounded-lg border border-ink/15 bg-white px-2 py-1.5 font-body text-[11px] font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
+                    >
+                      {getScheduleDates(fulfilment).map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      aria-label="Pre-order time"
+                      className="w-full rounded-lg border border-ink/15 bg-white px-2 py-1.5 font-body text-[11px] font-bold text-ink focus:border-amber-500 focus:outline-none shadow-xs"
+                    >
+                      {getScheduleTimes(scheduleDate, fulfilment).map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <p className="mt-2 border-t border-ink/5 pt-2 font-body text-[11px] text-amber-900">
+                    No pre-order slots are open this week — please call the shop.
+                  </p>
+                )
               )}
             </div>
 
@@ -284,7 +297,7 @@ export default function CartDrawer() {
               </div>
             ) : (
               <>
-                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 short:flex-none short:overflow-visible">
                   {/* Items List */}
                   <ul className="divide-y divide-ink/8">
                     {lines.map((l) => {
@@ -485,28 +498,16 @@ export default function CartDrawer() {
                           />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <input
-                              type="text"
-                              value={deliveryAddress.postcode}
-                              onChange={(e) => setDeliveryAddress((prev) => ({ ...prev, postcode: e.target.value.toUpperCase() }))}
-                              placeholder="Postcode (e.g. HP20 1SN)"
-                              className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs uppercase text-ink placeholder:normal-case placeholder:text-steel focus:border-amber-500 focus:outline-none"
-                            />
-                          </div>
-                          <div>
-                            <select
-                              value={deliveryTime}
-                              onChange={(e) => setDeliveryTime(e.target.value)}
-                              className="w-full rounded-xl border border-ink/15 bg-white px-2 py-2 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
-                            >
-                              {DELIVERY_TIMES.map((t) => (
-                                <option key={t} value={t}>{t}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
+                        {/* Delivery time is the ASAP / Schedule choice at the top of the bag
+                            (a separate time list here was never sent with the order). */}
+                        <input
+                          type="text"
+                          value={deliveryAddress.postcode}
+                          onChange={(e) => setDeliveryAddress((prev) => ({ ...prev, postcode: e.target.value.toUpperCase() }))}
+                          placeholder="Postcode (e.g. HP20 1SN)"
+                          autoComplete="postal-code"
+                          className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs uppercase text-ink placeholder:normal-case placeholder:text-steel focus:border-amber-500 focus:outline-none"
+                        />
 
                         {/* Live Postcode Validation Feedback */}
                         {deliveryAddress.postcode && (
@@ -545,21 +546,25 @@ export default function CartDrawer() {
                   {/* Estimated Pick Up Time (Conditional) */}
                   {fulfilment === 'pickup' && (
                     <div className="rounded-2xl border border-ink/10 bg-paper/60 p-4">
-                      <label htmlFor="collection-time" className="block font-body text-[11px] font-bold uppercase tracking-wider text-ink">
-                        🕒 Estimated Store Pick Up Time
-                      </label>
-                      <select
-                        id="collection-time"
-                        value={collectionTime}
-                        onChange={(e) => setCollectionTime(e.target.value)}
-                        className="mt-2 w-full rounded-xl border border-ink/15 bg-white p-2.5 font-body text-xs font-medium text-ink focus:border-amber-500 focus:outline-none"
-                      >
-                        {PICKUP_TIMES.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
+                      <p className="font-body text-[11px] font-bold uppercase tracking-wider text-ink">🕒 Store Pick Up</p>
+                      <p className="mt-1.5 font-body text-xs text-ink">
+                        {isScheduled ? (
+                          <>Ready for <strong>{formattedScheduledTime}</strong></>
+                        ) : (
+                          <>Ready in about <strong>15 minutes</strong> once the kitchen accepts it.</>
+                        )}
+                        {!isScheduled && (
+                          <button
+                            type="button"
+                            onClick={() => setTimingMode('scheduled')}
+                            className="ml-1.5 font-bold text-amber-800 underline hover:text-ink"
+                          >
+                            Pick a later time
+                          </button>
+                        )}
+                      </p>
                       <p className="mt-1.5 font-body text-[10px] text-slate-500">
-                        📍 Pick up at: Market Square, Shop B Brook House, Aylesbury
+                        📍 Pick up at: {getBusinessDetails().address}
                       </p>
                     </div>
                   )}
@@ -709,7 +714,14 @@ export default function CartDrawer() {
                     </div>
                   )}
 
-                  {fulfilment === 'delivery' && !postcodeValidation.canDeliver && (
+                  {needsPostcode && (
+                    <div className="mt-2.5 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-amber-900 text-xs font-body">
+                      <p className="font-bold">📍 Where are we delivering?</p>
+                      <p className="text-[10px] mt-0.5 text-amber-800">Add your postcode above so we can check we deliver to you.</p>
+                    </div>
+                  )}
+
+                  {outsideArea && (
                     <div className="mt-2.5 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-amber-900 text-xs font-body">
                       <p className="font-bold">📍 Outside Delivery Area</p>
                       <p className="text-[10px] mt-0.5 text-amber-800">
@@ -740,7 +752,7 @@ export default function CartDrawer() {
                   {!storeStatus.isOpen && !storeStatus.isKitchenPaused && !kitchenPause.isPaused && !isScheduled && (
                     <div className="mt-2.5 rounded-2xl border border-amber-400 bg-amber-950 p-3 text-xs font-body shadow-sm text-amber-100">
                       <p className="font-bold text-white flex items-center gap-1.5">
-                        <span>🌙 Ordering Hours: 11am – 10pm</span>
+                        <span>🌙 Kitchen hours today: {storeStatus.opensTodayAt} – {storeStatus.closingTime}</span>
                       </p>
                       <p className="text-[11px] mt-1 text-white/85 leading-snug">
                         {storeStatus.message}
@@ -750,7 +762,7 @@ export default function CartDrawer() {
                         onClick={() => setTimingMode('scheduled')}
                         className="mt-2 text-[11px] font-bold text-amber-300 underline hover:text-amber-200"
                       >
-                        📅 Tap here to schedule a pre-order slot (11am – 10pm) →
+                        📅 Tap here to schedule a pre-order slot →
                       </button>
                     </div>
                   )}
@@ -780,22 +792,28 @@ export default function CartDrawer() {
                         setPausedModalOpen(true)
                         return
                       }
+                      // The button says "Switch to Store Pick Up" here, so do exactly that
+                      // (it used to be greyed out and did nothing).
+                      if (outsideArea) {
+                        setFulfilment('pickup')
+                        return
+                      }
                       if ((storeStatus.isKitchenPaused || kitchenPause.isPaused) && !isScheduled) {
                         setTimingMode('scheduled')
                       }
                       checkout()
                     }}
-                    disabled={
-                      isOnlineOrderingEnabled && fulfilment === 'delivery' && (!isMinOrderMet || !postcodeValidation.canDeliver)
-                    }
+                    disabled={isOnlineOrderingEnabled && (needsPostcode || (fulfilment === 'delivery' && !outsideArea && !isMinOrderMet))}
                     className="mt-4 w-full rounded-full bg-amber-400 py-4 font-body text-[12px] font-bold uppercase tracking-[0.14em] text-ink shadow-glow transition-all duration-300 hover:bg-amber-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {!isOnlineOrderingEnabled
                       ? '📢 Online Ordering Launching Soon →'
+                      : outsideArea
+                      ? 'Switch to Store Pick Up'
+                      : needsPostcode
+                      ? 'Add your postcode to deliver'
                       : fulfilment === 'delivery' && !isMinOrderMet
                       ? `Add ${gbp(minOrderPence - rawSubtotal)} to Deliver`
-                      : fulfilment === 'delivery' && !postcodeValidation.canDeliver
-                      ? 'Switch to Store Pick Up'
                       : (storeStatus.isKitchenPaused || kitchenPause.isPaused) && !isScheduled
                       ? '📅 Schedule Pre-Order Slot'
                       : !storeStatus.isOpen && !isScheduled

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getOnlineProducts } from '../services/menuStore'
+import { getOpeningHours } from '../hooks/useOpeningHours'
 import { type Product } from '../data/menu'
 import { gbp } from '../utils/format'
 import SmartImage from './SmartImage'
@@ -64,7 +65,7 @@ export default function CommandPalette({ isOpen, onClose, onOpen }: CommandPalet
   // straight into the management portal.
   const quickLinks = [
     { label: '🥔 Custom Potato Builder', path: '/build', desc: 'Build your meal from scratch with custom toppings' },
-    { label: '📍 Find Us & Opening Hours', path: '/find-us', desc: 'Market Square, Aylesbury (11am – 10pm)' },
+    { label: '📍 Find Us & Opening Hours', path: '/find-us', desc: `Market Square, Aylesbury (${getOpeningHours().week})` },
     { label: '🛵 Track Live Order', path: '/track', desc: 'Track your food in real-time on the map' },
     { label: '📖 The Story of Just Spuds', path: '/story', desc: '800-year British heritage & King Edward potatoes' },
   ]

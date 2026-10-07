@@ -5,6 +5,7 @@ import ProductStage from './ProductStage'
 import Backdrop from './Backdrop'
 import { SITE } from '../data/site'
 import { useCart } from '../hooks/useCart'
+import { useOpeningHours } from '../hooks/useOpeningHours'
 
 const ease = [0.16, 1, 0.3, 1] as const
 const stage = (i: number) => ({
@@ -74,7 +75,9 @@ const TICKER_ITEMS = [
 export default function Hero() {
   const [activeTab, setActiveTab] = useState(0)
   const currentItem = SHOWCASE_ITEMS[activeTab]
-  const { setFulfilment } = useCart()
+  const { setFulfilment, storeStatus } = useCart()
+  const hours = useOpeningHours()
+  const ratingVerified = (SITE.stats as { ratingVerified?: boolean }).ratingVerified === true
 
   return (
     <section id="top" className="on-dark relative min-h-[100svh] overflow-hidden bg-ink-stock">
@@ -87,13 +90,24 @@ export default function Hero() {
         {/* Copy - Positioned First on All Screens for Instant Clarity & Thumb Access */}
         <div className="order-1 max-w-2xl">
           <motion.div {...stage(0)} className="flex flex-wrap items-center gap-2.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-3.5 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-emerald-400 backdrop-blur-md">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Open Everyday: 11:00 AM – 10:00 PM
+            {/* Live open/closed status from the hours set in Admin › Store Ops. */}
+            <span
+              className={
+                storeStatus.isOpen
+                  ? 'inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-3.5 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-emerald-400 backdrop-blur-md'
+                  : 'inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-950/50 px-3.5 py-1 font-body text-[10px] font-bold uppercase tracking-wider text-amber-300 backdrop-blur-md'
+              }
+            >
+              <span className={storeStatus.isOpen ? 'h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse' : 'h-1.5 w-1.5 rounded-full bg-amber-400'} />
+              {storeStatus.isOpen ? `Open now · ${hours.today}` : `Closed now · ${hours.week}`}
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3.5 py-1 font-body text-[10px] font-semibold text-amber-300 backdrop-blur-md">
-              <span>★ 4.9 Rating</span>
-              <span className="text-white/40">&bull;</span>
+              {ratingVerified && (
+                <>
+                  <span>★ {SITE.stats.rating} Rating</span>
+                  <span className="text-white/40">&bull;</span>
+                </>
+              )}
               <span>Market Square, Aylesbury</span>
             </span>
           </motion.div>

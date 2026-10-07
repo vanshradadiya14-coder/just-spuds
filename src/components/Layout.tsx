@@ -10,6 +10,7 @@ import Toast from './Toast'
 import MobileAppDock from './MobileAppDock'
 import FixedAmbientBackdrop from './FixedAmbientBackdrop'
 import StaffPortalDock from './StaffPortalDock'
+import CookieConsent from './CookieConsent'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 import { useOrderNotifications } from '../hooks/useOrderNotifications'
 
@@ -66,13 +67,19 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="grain" aria-hidden />
       <Navbar />
       <ScrollProgress />
-      <main className="relative z-10 min-h-[60svh] pb-28 lg:pb-0">{children}</main>
+      {/* No z-index here: it trapped every page pop-up (item customiser, receipts)
+          underneath the fixed header and bottom bars. */}
+      <main id="main" tabIndex={-1} className="relative min-h-[60svh] focus:outline-none">{children}</main>
       <Footer />
+      {/* Room for whichever bottom bar is showing (phone tab bar or desktop order
+          rail), so the end of the footer is never stuck underneath it. */}
+      <div aria-hidden className="h-[calc(max(var(--dock-h,0px),var(--orderbar-h,0px))+var(--consent-h,0px))]" />
       <OrderBar />
       <CartDrawer />
       <Toast />
       <MobileAppDock />
       <StaffPortalDock />
+      <CookieConsent />
     </>
   )
 }

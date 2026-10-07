@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import { Wordmark } from './Brand'
 import { SITE, MAPS_SEARCH_URL } from '../data/site'
 import { getBusinessDetails } from '../services/menuStore'
+import { getOpeningHours } from '../hooks/useOpeningHours'
+import { resetCookieChoice } from './CookieConsent'
 
 // Staff/admin portals are deliberately not linked from the public storefront —
 // they're reached directly at /staff and /admin, gated by the PIN screen there.
@@ -45,6 +47,7 @@ export default function Footer() {
                 <span key={l} className="block">{l}</span>
               ))}
               <a href={business.phoneHref} className="mt-1 block hover:text-white">{business.phone}</a>
+              <span className="mt-2 block text-white/50">{getOpeningHours().week}</span>
             </address>
             <a href={MAPS_SEARCH_URL} target="_blank" rel="noopener noreferrer"
               className="mt-3 inline-block font-body text-[11px] font-bold uppercase tracking-[0.14em] text-white/80 underline-offset-4 hover:underline">
@@ -53,8 +56,7 @@ export default function Footer() {
           </div>
 
           <div>
-            <p className="label text-white/35">{socials.length ? 'Follow' : 'Opening hours'}</p>
-            {socials.length === 0 && <p className="mt-4 font-body text-[13px] text-white/65">{SITE.openingHours.display}</p>}
+            <p className="label text-white/35">{socials.length ? 'Follow' : 'Ordering'}</p>
             <ul className="mt-4 space-y-2.5">
               {socials.map((s) => (
                 <li key={s.key}>
@@ -74,7 +76,12 @@ export default function Footer() {
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="label text-white/40">{SITE.tagline}</p>
-          <p className="font-body text-[11px] text-white/30">© {new Date().getFullYear()} {SITE.name} {SITE.town}</p>
+          <p className="font-body text-[11px] text-white/30">
+            © {new Date().getFullYear()} {SITE.name} {SITE.town}
+            <button type="button" onClick={resetCookieChoice} className="ml-3 underline-offset-4 hover:text-white/70 hover:underline">
+              Cookie settings
+            </button>
+          </p>
         </div>
       </div>
     </footer>

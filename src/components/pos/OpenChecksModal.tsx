@@ -47,7 +47,7 @@ export default function OpenChecksModal({ onClose, onSettle, onReprint, requireM
   const outstanding = checks.reduce((sum, c) => sum + c.payment.total, 0)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
       <div className="w-full max-w-2xl rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between border-b border-white/10 pb-2 shrink-0">
           <div>

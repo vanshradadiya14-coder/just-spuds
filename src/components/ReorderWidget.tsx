@@ -47,12 +47,12 @@ export default function ReorderWidget() {
   return (
     <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-r from-amber-50/80 via-white to-amber-50/50 p-4 sm:p-5 shadow-warm backdrop-blur-md">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start gap-3.5">
+        <div className="flex min-w-0 items-start gap-3.5">
           <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400/20 text-2xl border border-amber-400/30">
             🥔
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="font-body text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-200/90 px-2.5 py-0.5 rounded-full">
                 Welcome Back
               </span>
@@ -63,9 +63,10 @@ export default function ReorderWidget() {
             <h4 className="font-display text-base sm:text-lg text-ink font-bold mt-1">
               Reorder your favourite meal
             </h4>
-            <p className="font-body text-xs text-slate-700 line-clamp-1 mt-0.5">
-              {lastOrder.lines.map((l) => `${l.qty}x ${l.name}`).join(', ')} &bull;{' '}
-              <strong className="text-ink font-bold">{gbp(lastOrder.payment.total)}</strong>
+            {/* Items may truncate; the total never does. */}
+            <p className="mt-0.5 flex min-w-0 items-baseline gap-1.5 font-body text-xs text-slate-700">
+              <span className="truncate">{lastOrder.lines.map((l) => `${l.qty}x ${l.name}`).join(', ')}</span>
+              <strong className="shrink-0 font-bold text-ink">&bull; {gbp(lastOrder.payment.total)}</strong>
             </p>
           </div>
         </div>

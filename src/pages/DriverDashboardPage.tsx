@@ -1051,7 +1051,7 @@ export default function DriverDashboardPage() {
       {/* DELIVERY PIN (OTP) VERIFICATION MODAL */}
       {/* ========================================================= */}
       {pinModalOpen && activeDelivery && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-4 font-body">
             <div className="text-center space-y-1">
               <span className="text-3xl">🔐</span>
@@ -1127,7 +1127,7 @@ export default function DriverDashboardPage() {
       {/* CANCEL / DROP DELIVERY MODAL */}
       {/* ========================================================= */}
       {showCancelModal && activeDelivery && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-red-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 font-body">
             <div className="text-center space-y-1">
               <span className="text-3xl">⚠️</span>
@@ -1195,7 +1195,7 @@ export default function DriverDashboardPage() {
       {/* REPORT FAILED DELIVERY MODAL */}
       {/* ========================================================= */}
       {showFailModal && activeDelivery && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-md">
           <div className="w-full max-w-sm rounded-3xl border border-red-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 font-body">
             <div className="text-center space-y-1">
               <span className="text-3xl">❌</span>

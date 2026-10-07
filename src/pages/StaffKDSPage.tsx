@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   subscribeOrders,
@@ -45,6 +45,7 @@ import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import NewOrderAlertModal from '../components/staff/NewOrderAlertModal'
 import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
 import SyncStatusPill from '../components/SyncStatusPill'
+import MenuPopover from '../components/MenuPopover'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import { cx, gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
@@ -78,6 +79,16 @@ export default function StaffKDSPage() {
   const [soundState, setSoundState] = useState<AlertSoundState>({ sounding: false, blocked: false, deferredToOtherTab: false, engine: null, enabled: true })
   const [tillSettings, setTillSettings] = useState<TillSettings>(() => getTillSettings())
   const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false)
+  const [isMoreOpen, setIsMoreOpen] = useState(false)
+  const moreButtonRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!isMoreOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsMoreOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isMoreOpen])
 
   // Manual resolution and creation modals
   const [fixingOrder, setFixingOrder] = useState<Order | null>(null)
@@ -364,20 +375,23 @@ export default function StaffKDSPage() {
 
   // Filter list
   return (
-    <div className="relative min-h-screen bg-portal-dark text-slate-100 pb-20 pt-4 sm:pt-6 overflow-hidden">
+    // overflow-x-clip (not overflow-hidden) so the sticky column headings keep working.
+    <div className="relative min-h-screen bg-portal-dark text-slate-100 pb-20 pt-3 sm:pt-5 overflow-x-clip">
       {/* High-Tech Terminal Ambient Backdrop */}
       <FixedAmbientBackdrop variant="portal" />
-      <div className="relative z-10 mx-auto max-w-[1700px] px-4 sm:px-6">
+      <div className="relative z-10 mx-auto max-w-[2560px] px-3 sm:px-5">
 
         {/* STAFF DEDICATED TOP BAR */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4 mb-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-amber-400 text-2xl text-ink shadow-glow">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-white/10 pb-3 mb-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-amber-400 text-xl text-ink shadow-glow">
               👨‍🍳
             </span>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide">JUST SPUDS &bull; KITCHEN DISPLAY</h1>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h1 className="display text-lg sm:text-2xl text-white font-bold tracking-wide">
+                  <span className="hidden xl:inline">JUST SPUDS &bull; </span>KITCHEN DISPLAY
+                </h1>
                 {hasRole(user, MANAGEMENT_ROLES) ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-500/40 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-300">
                     👑 Store Manager
@@ -395,35 +409,14 @@ export default function StaffKDSPage() {
             </div>
           </div>
 
-          {/* Header Action Tools */}
-          <div className="flex flex-wrap items-center gap-2.5">
+          {/* Header Action Tools — the everyday ones; the rest sit under "More". */}
+          <div className="flex flex-wrap items-center gap-2 [&>*]:shrink-0">
             {/* Live Clock */}
-            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-amber-300">
+            <div className="hidden sm:block rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-amber-300">
               🕒 {currentTime.toLocaleTimeString()}
             </div>
 
             <SyncStatusPill />
-
-            {hasRole(user, MANAGEMENT_ROLES) && (
-              <Link
-                to="/admin"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
-                title="Admin console — sales, stock, staff"
-              >
-                <span>📊</span>
-                <span>Admin</span>
-              </Link>
-            )}
-
-            {/* Counter Till POS Terminal Link */}
-            <Link
-              to="/pos"
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-1.5 font-body text-xs font-black text-ink shadow-glow hover:bg-emerald-400 transition active:scale-95 whitespace-nowrap"
-              title="Open Counter Till / POS Terminal with cash drawer"
-            >
-              <span>🥔</span>
-              <span>Open Counter Till</span>
-            </Link>
 
             {/* New Manual Phone / Counter Order Button */}
             <button
@@ -432,8 +425,10 @@ export default function StaffKDSPage() {
               className="inline-flex items-center gap-1.5 rounded-xl bg-amber-400 px-3.5 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-amber-300 transition active:scale-95 whitespace-nowrap"
               title="Directly enter a phone-in or walk-in till order into KDS"
             >
-              <span>📝</span>
-              <span>+ Phone / Till Order</span>
+              <span aria-hidden>📝</span>
+              <span>
+                + Phone<span className="hidden sm:inline"> / Till</span> Order
+              </span>
             </button>
 
             {/* Kitchen Stream Pause/Resume Toggle */}
@@ -458,15 +453,6 @@ export default function StaffKDSPage() {
                 <span>Pause Orders</span>
               </button>
             )}
-
-            <button
-              type="button"
-              onClick={toggleFullScreen}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-white hover:bg-white/15"
-              title="Toggle Fullscreen Kitchen Terminal"
-            >
-              {isFullscreen ? '🗗 Exit Fullscreen' : '⛶ Fullscreen KDS'}
-            </button>
 
             <div className="inline-flex items-stretch rounded-xl border border-white/20 bg-white/5 overflow-hidden">
               <button
@@ -493,21 +479,56 @@ export default function StaffKDSPage() {
               </button>
             </div>
 
-            <Link
-              to="/"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-white hover:bg-white/15 transition"
-              title="Open Customer Storefront"
-            >
-              <span>🌐</span>
-              <span>Storefront</span>
-            </Link>
+            <div>
+              <button
+                ref={moreButtonRef}
+                type="button"
+                onClick={() => setIsMoreOpen((v) => !v)}
+                className={cx(
+                  'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-body text-xs font-bold transition',
+                  isMoreOpen ? 'border-amber-400 bg-amber-400 text-ink' : 'border-white/20 bg-white/5 text-white hover:bg-white/15',
+                )}
+                aria-haspopup="menu"
+                aria-expanded={isMoreOpen}
+              >
+                <span aria-hidden>☰</span>
+                <span>More</span>
+              </button>
+              {isMoreOpen && (
+                <MenuPopover anchorRef={moreButtonRef} onClose={() => setIsMoreOpen(false)} label="Kitchen display tools" width={256}>
+                    <Link role="menuitem" to="/pos" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-emerald-300 hover:bg-white/10">
+                      <span aria-hidden>🥔</span> Open counter till
+                    </Link>
+                    {hasRole(user, MANAGEMENT_ROLES) && (
+                      <Link role="menuitem" to="/admin" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-amber-300 hover:bg-white/10">
+                        <span aria-hidden>📊</span> Admin console
+                      </Link>
+                    )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsMoreOpen(false)
+                        toggleFullScreen()
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-white hover:bg-white/10"
+                    >
+                      <span aria-hidden>{isFullscreen ? '🗗' : '⛶'}</span> {isFullscreen ? 'Exit full screen' : 'Full screen'}
+                    </button>
+                    <Link role="menuitem" to="/" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-white hover:bg-white/10">
+                      <span aria-hidden>🌐</span> Customer website
+                    </Link>
+                </MenuPopover>
+              )}
+            </div>
 
             <button
               type="button"
               onClick={logout}
               className="rounded-xl border border-red-500/30 bg-red-950/30 px-3 py-1.5 font-body text-xs font-bold text-red-300 hover:bg-red-900/50"
+              aria-label="Lock station"
             >
-              Lock Station 🔒
+              <span className="hidden sm:inline">Lock Station </span>🔒
             </button>
           </div>
         </div>
@@ -561,7 +582,7 @@ export default function StaffKDSPage() {
               </div>
             </div>
 
-            <div className="flex flex-1 items-center gap-3 sm:justify-end min-w-0">
+            <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1 sm:justify-end">
               <div className="relative flex-1 sm:flex-none sm:w-64 min-w-0">
                 <input
                   type="text"
@@ -584,7 +605,7 @@ export default function StaffKDSPage() {
                 type="button"
                 onClick={() => setActiveTab(activeTab === 'stock' ? 'active' : 'stock')}
                 className={cx(
-                  'rounded-xl px-4 py-2 font-body text-xs font-black uppercase tracking-wider transition shadow-glow',
+                  'shrink-0 whitespace-nowrap rounded-xl px-4 py-2 font-body text-xs font-black uppercase tracking-wider transition shadow-glow',
                   activeTab === 'stock' ? 'bg-amber-400 text-ink' : 'bg-white/10 text-white hover:bg-white/20'
                 )}
               >
@@ -597,7 +618,7 @@ export default function StaffKDSPage() {
 
           {activeTab === 'stock' ? (
             /* TAB: STOCK AVAILABILITY */
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4 overflow-y-auto">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4 overflow-y-auto">
               <div className="border-b border-white/10 pb-4">
                 <h2 className="display text-xl text-white">Kitchen Stock &amp; Ingredient Availability</h2>
                 <p className="font-body text-xs text-white/60 mt-0.5">
@@ -643,10 +664,10 @@ export default function StaffKDSPage() {
           ) : (
             /* KANBAN BOARD */
             <div className="flex-1 pb-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-5 items-start">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 xl:gap-5 items-start">
                 
                 {/* Column 1: NEW / PENDING */}
-                <div className="min-w-0 flex flex-col gap-4 xl:border-r xl:border-white/10 xl:pr-5">
+                <div className="min-w-0 flex flex-col gap-4 lg:border-r lg:border-white/10 lg:pr-4 xl:pr-5">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-amber-400 flex items-center gap-2">
                       📝 New &amp; Pending
@@ -672,7 +693,7 @@ export default function StaffKDSPage() {
                 </div>
 
                 {/* Column 2: IN PREP / OVEN */}
-                <div className="min-w-0 flex flex-col gap-4 xl:border-r xl:border-white/10 xl:pr-5">
+                <div className="min-w-0 flex flex-col gap-4 lg:border-r lg:border-white/10 lg:pr-4 xl:pr-5">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-orange-400 flex items-center gap-2">
                       🍳 In Oven (Baking)
@@ -698,7 +719,7 @@ export default function StaffKDSPage() {
                 </div>
 
                 {/* Column 3: READY / DISPATCH */}
-                <div className="min-w-0 flex flex-col gap-4 xl:border-r xl:border-white/10 xl:pr-5">
+                <div className="min-w-0 flex flex-col gap-4 lg:border-r lg:border-white/10 lg:pr-4 xl:pr-5">
                   <div className="flex items-center justify-between sticky top-0 bg-slate-950 py-2 z-10">
                     <h3 className="font-display text-lg font-bold text-emerald-400 flex items-center gap-2">
                       🛵 Ready for Dispatch
@@ -778,7 +799,7 @@ export default function StaffKDSPage() {
 
       {/* REJECT & AUTOMATIC REFUND MODAL */}
       {rejectingOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/80 backdrop-blur-md animate-fade-in">
           <div className="w-full max-w-lg rounded-3xl border border-red-500/50 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 p-6 sm:p-8 shadow-2xl text-slate-100 space-y-6">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -883,7 +904,7 @@ export default function StaffKDSPage() {
 
       {/* STAFF PAUSE ORDER MODAL */}
       {isPauseModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/80 backdrop-blur-md animate-fade-in">
           <div className="w-full max-w-lg rounded-3xl border border-rose-500/40 bg-gradient-to-b from-slate-900 to-slate-950 p-6 sm:p-8 shadow-2xl text-slate-100 space-y-6">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">

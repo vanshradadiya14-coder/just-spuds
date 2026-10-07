@@ -13,6 +13,10 @@ import { logAuditEvent } from './auditStore'
 import { getSharedAudioContext } from './printerBridge'
 import { deductStockForOrderLines, getBusinessDetails, getProducts, restoreStockForOrderLines } from './menuStore'
 import { recordOnlineOrderInShift, recordTillRefund } from './tillStore'
+import { SITE } from '../data/site'
+
+/** The "your first one's on us" voucher — valid on a customer's first order only. */
+export const FIRST_ORDER_CODE = SITE.offer.code.toUpperCase()
 
 export type OrderSource = 'WEBSITE' | 'TILL' | 'PHONE' | 'STAFF'
 
@@ -94,6 +98,8 @@ export interface OrderPayment {
   tip: number
   discount: number
   total: number
+  /** Voucher behind `discount` (web orders), so staff can see what a discount was for. */
+  promoCode?: string
   paidAt?: string
   paidNote?: string
   splitDetails?: SplitTenderPortion[]
@@ -510,6 +516,7 @@ export function createNewOrder(params: {
   scheduleTime?: string
   /** Training order: no stock, no takings, no customer tracking. */
   isTest?: boolean
+  promoCode?: string | null
 }): Order {
   const pauseCheck = isOrderAllowedDuringPause({
     isScheduled: params.isScheduled,
@@ -553,6 +560,7 @@ export function createNewOrder(params: {
       tip: params.tip,
       discount: params.discount,
       total: params.total,
+      ...(params.promoCode && params.discount > 0 ? { promoCode: params.promoCode.trim().toUpperCase() } : {}),
       paidAt: (params.paymentMethod === 'card' || params.paymentMethod === 'apple_pay' || params.paymentMethod === 'google_pay')
         ? new Date().toISOString()
         : undefined,
@@ -2718,5 +2726,42 @@ export function getPriceCheck(order: Pick<Order, 'source' | 'lines' | 'payment'>
     expected,
     charged,
     message: `Priced below the menu: order says £${(charged / 100).toFixed(2)} for the food, the menu says £${(expected / 100).toFixed(2)}. Check before handing it over.`,
+  }
+}
+
+const phoneKey = (phone: string | undefined) => {
+  const digits = (phone || '').replace(/\D/g, '').replace(/^44/, '0')
+  return digits.length >= 7 ? digits.slice(-10) : ''
+}
+
+/**
+ * Has THIS browser placed a real order before? First-order offers are refused
+ * here at checkout. (A customer could clear their browser, which is why staff
+ * screens also run getFirstOrderOfferCheck against every order in the shop.)
+ */
+export function hasPlacedOrderBefore(): boolean {
+  return getCustomerPlacedOrderIds().some((id) => {
+    const o = getOrderById(id)
+    return Boolean(o && !o.isTest && o.status !== 'cancelled')
+  })
+}
+
+/**
+ * Staff-side check for first-order-only vouchers: flags the order when the same
+ * phone number has ordered before. Staff devices hold every order, so this sees
+ * repeat use that a customer's own browser cannot.
+ */
+export function getFirstOrderOfferCheck(order: Pick<Order, 'id' | 'createdAt' | 'customer' | 'payment'>, all: Order[] = getStoredOrders()): { ok: true } | { ok: false; message: string } {
+  if (!order.payment.promoCode || order.payment.promoCode !== FIRST_ORDER_CODE) return { ok: true }
+  const key = phoneKey(order.customer.phone)
+  if (!key) return { ok: true }
+  const placed = new Date(order.createdAt).getTime()
+  const earlier = all.filter(
+    (o) => o.id !== order.id && !o.isTest && o.status !== 'cancelled' && phoneKey(o.customer.phone) === key && new Date(o.createdAt).getTime() < placed,
+  )
+  if (!earlier.length) return { ok: true }
+  return {
+    ok: false,
+    message: `${FIRST_ORDER_CODE} is a first-order offer, but this phone number has ${earlier.length} earlier order${earlier.length > 1 ? 's' : ''} (e.g. #${earlier[0].shortId}). Charge the £${(order.payment.discount / 100).toFixed(2)} if you don't want to honour it.`,
   }
 }

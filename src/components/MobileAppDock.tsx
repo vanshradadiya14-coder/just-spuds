@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useCart } from '../hooks/useCart'
+import { useCssVarHeight } from '../hooks/useCssVarHeight'
+import { useModalOpen } from '../hooks/useModalOpen'
 import { gbp, cx } from '../utils/format'
 
 export default function MobileAppDock() {
@@ -13,19 +14,8 @@ export default function MobileAppDock() {
     isOpen,
     isOnlineOrderingEnabled,
   } = useCart()
-  const [isModalActive, setIsModalActive] = useState(false)
-
-  useEffect(() => {
-    const checkModal = () => {
-      const isLocked = document.body.style.overflow === 'hidden'
-      const hasModal = Boolean(document.querySelector('[role="dialog"]'))
-      setIsModalActive(isLocked || hasModal)
-    }
-    checkModal()
-    const observer = new MutationObserver(checkModal)
-    observer.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] })
-    return () => observer.disconnect()
-  }, [])
+  const isModalActive = useModalOpen()
+  const dockRef = useCssVarHeight<HTMLDivElement>('--dock-h')
 
   if (isOpen || isModalActive) return null
 
@@ -35,7 +25,7 @@ export default function MobileAppDock() {
   const isFindUs = pathname === '/find-us'
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 block lg:hidden pointer-events-none select-none">
+    <div ref={dockRef} className="fixed inset-x-0 bottom-0 z-40 block lg:hidden pointer-events-none select-none">
       <div className="relative pointer-events-auto">
         {/* Deliveroo / UberEats style Floating "View Basket" Bar */}
         <AnimatePresence>
@@ -81,8 +71,10 @@ export default function MobileAppDock() {
         </AnimatePresence>
 
         {/* Native App Bottom Tab Bar */}
+        {/* Hidden on sideways phones: the header already has Bag + menu, and
+            every pixel of height counts there. */}
         <nav
-          className="border-t border-amber-900/10 bg-[#FAF7F2]/95 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(20,18,16,0.06)] backdrop-blur-xl"
+          className="border-t border-amber-900/10 bg-[#FAF7F2]/95 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(20,18,16,0.06)] backdrop-blur-xl short:hidden"
           aria-label="Mobile Navigation"
         >
           <div className="grid grid-cols-5 items-center">

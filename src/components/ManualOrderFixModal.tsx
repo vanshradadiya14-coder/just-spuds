@@ -142,7 +142,7 @@ export default function ManualOrderFixModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
       <div className="w-full max-w-2xl rounded-3xl border border-white/20 bg-slate-900 p-6 sm:p-8 shadow-2xl space-y-6 text-white my-8">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-white/10 pb-4">

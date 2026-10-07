@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../utils/format'
-import { getPriceCheck, getStatusChangeBlocker, type Order } from '../../services/orderStore'
+import { getFirstOrderOfferCheck, getPriceCheck, getStatusChangeBlocker, type Order } from '../../services/orderStore'
 import { parseKitchenNotes } from '../../utils/kitchenNotes'
 
 export default function TicketCard({
@@ -40,6 +40,7 @@ export default function TicketCard({
   const source = ord.source
   const notes = parseKitchenNotes(ord.kitchenNotes)
   const priceCheck = getPriceCheck(ord)
+  const offerCheck = getFirstOrderOfferCheck(ord)
 
   return (
     <div
@@ -159,6 +160,12 @@ export default function TicketCard({
             <p className="mt-1 text-[11px] text-emerald-400 font-bold">
               ✓ 100% Refund of {gbp(ord.cancellation.refundAmount)} automatically issued.
             </p>
+          </div>
+        )}
+
+        {!offerCheck.ok && !isCancelled && (
+          <div role="alert" className="rounded-xl border-2 border-amber-400 bg-amber-950/60 p-2.5 font-body text-[11px] font-bold text-amber-100">
+            🎟️ {offerCheck.message}
           </div>
         )}
 

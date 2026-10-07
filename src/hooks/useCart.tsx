@@ -5,8 +5,9 @@ import { MEAL_DEAL, optionPrice, type Product } from '../data/menu'
 import { getConfiguredHours, getPromoCodes, getProducts, subscribeMenu } from '../services/menuStore'
 import { getStoreStatus, type StoreStatus } from '../data/site'
 import { validateDeliveryPostcode, type PostcodeValidationResult } from '../data/deliveryZones'
-import { getKitchenPauseState, subscribeKitchenPause, type KitchenPauseState } from '../services/orderStore'
+import { FIRST_ORDER_CODE, getKitchenPauseState, hasPlacedOrderBefore, subscribeKitchenPause, type KitchenPauseState } from '../services/orderStore'
 import { getDeliverySettings, subscribeDeliverySettings, type StoreDeliverySettings } from '../services/deliverySettingsStore'
+import { getScheduleDates, getScheduleTimes } from '../utils/scheduling'
 
 export type ModifierType = 'regular' | 'extra' | 'no' | 'lite' | 'side'
 
@@ -217,10 +218,6 @@ interface CartApi {
   setScheduleTime: (time: string) => void
   isScheduled: boolean
   formattedScheduledTime: string
-  collectionTime: string
-  setCollectionTime: (time: string) => void
-  deliveryTime: string
-  setDeliveryTime: (time: string) => void
   deliveryAddress: DeliveryAddress
   setDeliveryAddress: (address: DeliveryAddress | ((prev: DeliveryAddress) => DeliveryAddress)) => void
   postcodeValidation: PostcodeValidationResult
@@ -265,8 +262,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [timingMode, setTimingMode] = useState<'asap' | 'scheduled'>('asap')
   const [scheduleDate, setScheduleDate] = useState('Today')
   const [scheduleTime, setScheduleTime] = useState('1:00 PM')
-  const [collectionTime, setCollectionTime] = useState('ASAP (~15 mins)')
-  const [deliveryTime, setDeliveryTime] = useState('ASAP (~25-35 mins)')
   const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddress>(loadPersistedAddress)
   const [kitchenNotes, setKitchenNotes] = useState('')
   const [toasts, setToasts] = useState<ToastMessage[]>([])
@@ -414,6 +409,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const found = promos.find((p) => p.code.toUpperCase() === trimmed && p.active)
 
     if (found) {
+      if (trimmed === FIRST_ORDER_CODE && hasPlacedOrderBefore()) {
+        return { ok: false, message: `${trimmed} is for your first order only — welcome back!` }
+      }
       if (found.minOrderPence && rawSubtotal < found.minOrderPence) {
         return {
           ok: false,
@@ -424,7 +422,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
       pushToast('Voucher Applied! 🎉', found.description)
       return { ok: true, message: `Voucher ${trimmed} applied: ${found.description}` }
     }
-    return { ok: false, message: 'Invalid promo code. Try "SPUD10" or "FIRSTSPUD"!' }
+    // Never hint at other codes here — the message used to list valid vouchers to anyone who mistyped.
+    return { ok: false, message: "That code isn't valid. Check the spelling and try again." }
   }, [pushToast, rawSubtotal])
 
   const removePromo = useCallback(() => {
@@ -459,6 +458,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [pushToast])
 
+  // Keep the pre-order day/time on a slot that is still bookable: slots pass as
+  // the clock moves, hours can change from admin, and pick-up and delivery have
+  // different first/last slots. (storeStatus refreshes every 15 s.)
+  useEffect(() => {
+    const dates = getScheduleDates(fulfilment)
+    if (!dates.length) return
+    const date = dates.includes(scheduleDate) ? scheduleDate : dates[0]
+    if (date !== scheduleDate) setScheduleDate(date)
+    const times = getScheduleTimes(date, fulfilment)
+    if (times.length && !times.includes(scheduleTime)) setScheduleTime(times[0])
+  }, [fulfilment, scheduleDate, scheduleTime, storeStatus])
+
   const isScheduled = timingMode === 'scheduled'
   const formattedScheduledTime = isScheduled
     ? `${scheduleDate} @ ${scheduleTime}`
@@ -483,10 +494,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setScheduleTime,
     isScheduled,
     formattedScheduledTime,
-    collectionTime,
-    setCollectionTime,
-    deliveryTime,
-    setDeliveryTime,
     deliveryAddress,
     setDeliveryAddress,
     postcodeValidation,
@@ -521,7 +528,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }), [
     lines, rawSubtotal, subtotal, discount, promoCode, applyPromo, removePromo,
     fulfilment, handleSetFulfilment, timingMode, handleSetTimingMode, scheduleDate,
-    scheduleTime, isScheduled, formattedScheduledTime, collectionTime, deliveryTime,
+    scheduleTime, isScheduled, formattedScheduledTime,
     deliveryAddress, postcodeValidation, storeStatus, kitchenPause, deliverySettings, deliveryFee, activeFreeThreshold,
     minOrderPence, isMinOrderMet, finalTotal, kitchenNotes, isOpen, bump, toasts,
     dismissToast, add, reorder, toggleMeal, updateMeal,

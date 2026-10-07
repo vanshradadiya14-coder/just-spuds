@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Reveal from '../components/Reveal'
 import RevealImage from '../components/RevealImage'
@@ -51,14 +51,19 @@ export default function MenuPage() {
     return lines.filter((l) => l.productId === productId).reduce((sum, l) => sum + l.qty, 0)
   }
 
+  const listTopRef = useRef<HTMLDivElement>(null)
   const handleCategoryClick = (id: CategoryId | 'ALL') => {
     setActiveCategory(id)
-    if (id !== 'ALL') {
-      const el = document.getElementById(id)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Wait one frame so the filtered list has rendered, then bring its start
+    // just under the sticky header + category rail.
+    requestAnimationFrame(() => {
+      if (id !== 'ALL') {
+        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return
       }
-    }
+      const top = listTopRef.current
+      if (top && top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   // Live stock overrides
@@ -129,9 +134,9 @@ export default function MenuPage() {
         </div>
       </div>
 
-      <main>
+      <div>
         {/* TOP INTERACTIVE FEATURE: Custom Spud & Bowl Crafting */}
-        <section className="bg-ink-stock text-paper py-3.5 sm:py-8 px-4 sm:px-8 border-b border-amber-900/20 relative overflow-hidden">
+        <section id="craft-spud" className="bg-ink-stock text-paper py-3.5 sm:py-8 px-4 sm:px-8 border-b border-amber-900/20 relative overflow-hidden">
           <div className="mx-auto max-w-[1400px]">
             {/* Mobile Compact View */}
             <div className="sm:hidden rounded-2xl border border-amber-500/30 bg-ink/70 p-3.5 backdrop-blur-md shadow-warm">
@@ -200,10 +205,10 @@ export default function MenuPage() {
         </section>
 
         {/* SECTION: CHEF SPECIALS & COMPLETE MENU CATALOG */}
-        <div>
-          {/* Sticky Search & Filter Bar */}
-          <div className="sticky top-[80px] sm:top-[88px] z-30 border-y border-ink/10 bg-white/95 shadow-sm backdrop-blur-md">
-            <div className="mx-auto max-w-[1400px] px-4 py-2.5 sm:px-8 sm:py-3.5">
+        <div ref={listTopRef}>
+          {/* Search & dietary filters (scroll away; the header search stays available) */}
+          <div className="border-t border-ink/10 bg-white/95">
+            <div className="mx-auto max-w-[1400px] px-4 pb-1 pt-2.5 sm:px-8 sm:pb-2 sm:pt-3.5">
               <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
                 {/* Search Input */}
                 <div className="relative flex-1 max-w-md">
@@ -230,7 +235,7 @@ export default function MenuPage() {
                 </div>
 
                 {/* Quick Dietary Filter Tags */}
-                <div className="no-scrollbar -mx-5 flex items-center gap-2 overflow-x-auto px-5 sm:mx-0 sm:px-0">
+                <div className="no-scrollbar -mx-4 flex items-center gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0">
                   {FILTER_TAGS.map((f) => (
                     <button
                       key={f.id}
@@ -248,9 +253,13 @@ export default function MenuPage() {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
 
-              {/* Category Anchor Rail */}
-              <div className="mt-3 flex items-center gap-2 overflow-x-auto no-scrollbar border-t border-ink/8 pt-2.5">
+          {/* Sticky category rail: one slim row pinned under the header */}
+          <div className="sticky top-[var(--header-h)] z-30 border-b border-ink/10 bg-white/95 shadow-sm backdrop-blur-md">
+            <div className="mx-auto max-w-[1400px] px-4 sm:px-8">
+              <div className="no-scrollbar -mx-4 flex items-center gap-2 overflow-x-auto px-4 py-2.5 sm:mx-0 sm:px-0">
                 <button
                   type="button"
                   onClick={() => handleCategoryClick('ALL')}
@@ -317,7 +326,7 @@ export default function MenuPage() {
                           type="button"
                           onClick={() => {
                             setIsBuilderOpen(true)
-                            window.scrollTo({ top: 180, behavior: 'smooth' })
+                            requestAnimationFrame(() => document.getElementById('craft-spud')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
                           }}
                           className="shrink-0 rounded-full bg-ink px-4 py-2 sm:px-6 sm:py-3 font-body text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-paper transition hover:bg-slate-800 shadow-sm"
                         >
@@ -372,7 +381,7 @@ export default function MenuPage() {
                     const visual = VISUAL.includes(cat.id)
 
                     return (
-                      <section key={cat.id} id={cat.id} className="scroll-mt-40">
+                      <section key={cat.id} id={cat.id} className="scroll-mt-[calc(var(--header-h)+76px)]">
                         <Reveal>
                           <div className="flex items-end justify-between gap-6 border-b border-ink/12 pb-4">
                             <div>
@@ -576,7 +585,7 @@ export default function MenuPage() {
                             </ul>
                           </div>
                         ) : (
-                          <ul className="mt-6 grid gap-3 sm:gap-x-12 sm:grid-cols-2">
+                          <ul className="mt-6 grid grid-cols-1 gap-3 sm:gap-x-12 sm:grid-cols-2">
                             {items.map((p, i) => {
                               const cartQty = getItemCartCount(p.id)
 
@@ -635,7 +644,7 @@ export default function MenuPage() {
                 </div>
               </div>
             </div>
-      </main>
+      </div>
 
       {/* Item Modal Customizer */}
       <ItemModal

@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom'
 import Reveal from './Reveal'
 import { SITE, MAPS_SEARCH_URL, APPLE_MAPS_URL } from '../data/site'
 import { useCart } from '../hooks/useCart'
+import { useOpeningHours } from '../hooks/useOpeningHours'
 
 export default function FindUs({ embedded = false }: { embedded?: boolean } = {}) {
   const { open, count } = useCart()
+  const hours = useOpeningHours()
   const [copied, setCopied] = useState(false)
 
   const copyAddress = () => {
@@ -69,8 +71,8 @@ export default function FindUs({ embedded = false }: { embedded?: boolean } = {}
             <div className="rounded-3xl border border-ink/10 bg-white p-7 shadow-sm flex flex-col justify-between h-full">
               <div>
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 font-body text-[10px] font-bold uppercase text-emerald-800">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Open Everyday &bull; 11am – 10pm</span>
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span>{hours.week}</span>
                 </div>
 
                 <address className="mt-4 not-italic font-body text-[16px] leading-relaxed text-ink font-bold">

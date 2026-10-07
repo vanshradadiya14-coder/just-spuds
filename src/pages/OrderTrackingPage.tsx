@@ -663,19 +663,19 @@ export default function OrderTrackingPage() {
               </div>
             )}
 
-            {/* LIVE SIMULATED GPS ROUTE MAP (Uber Eats Style) */}
+            {/* Delivery progress illustration — status-driven, not real GPS, so it must not claim to be */}
             {isDelivery && !isCancelled && (
               <div className="relative overflow-hidden rounded-3xl border border-ink/10 bg-white shadow-xl">
                 <div className="p-4 border-b border-ink/10 flex items-center justify-between bg-paper/60">
                   <div className="flex items-center gap-2">
                     <span className="text-base">🗺️</span>
                     <span className="font-body text-xs font-bold uppercase tracking-wider text-ink">
-                      Live Courier GPS Tracker &bull; Aylesbury
+                      Delivery Progress &bull; Aylesbury
                     </span>
                   </div>
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    GPS Connected
+                    Live status
                   </span>
                 </div>
 
@@ -742,13 +742,17 @@ export default function OrderTrackingPage() {
                       <div>
                         <p className="font-body text-xs font-bold text-ink">
                           {order.status === 'out_for_delivery'
-                            ? `Driver is ${order.etaMinutes} mins away from ${order.customer.postcode}`
+                            ? order.etaMinutes > 0
+                              ? `On its way — about ${order.etaMinutes} min${order.etaMinutes === 1 ? '' : 's'} to ${order.customer.postcode}`
+                              : `On its way to ${order.customer.postcode}`
                             : isComplete
-                            ? 'Order safely delivered to destination'
-                            : 'Driver is assigned and waiting at Market Square'}
+                            ? 'Order delivered'
+                            : order.driver
+                            ? `${order.driver.name} will bring it once it's ready`
+                            : 'Being freshly made at Market Square'}
                         </p>
                         <p className="text-[11px] text-steel">
-                          Direct hot-delivery route via Buckingham Road
+                          Updates automatically as the kitchen and driver progress
                         </p>
                       </div>
                     </div>
@@ -1018,18 +1022,18 @@ export default function OrderTrackingPage() {
                     🥔
                   </span>
                   <div>
-                    <h4 className="font-body text-sm font-black text-ink">Earn 50 Spud Loyalty Points</h4>
-                    <p className="font-body text-xs text-slate-600">Save this order to your Just Spuds account</p>
+                    <h4 className="font-body text-sm font-black text-ink">Faster checkout next time</h4>
+                    <p className="font-body text-xs text-slate-600">Sign in with your Google account</p>
                   </div>
                 </div>
                 <p className="font-body text-xs text-slate-600 leading-relaxed">
-                  Sign in or create a free account to save your delivery address, track orders across devices, and earn points towards free spud toppings.
+                  Sign in once and your name and email are filled in for you next time you order.
                 </p>
                 <Link
-                  to={`/login?redirect=/track/${order.id}`}
+                  to={`/login?tab=customer&redirect=/track/${order.id}`}
                   className="block w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow transition hover:bg-amber-300 text-center"
                 >
-                  Sign In &amp; Save Order ➔
+                  Sign in with Google ➔
                 </Link>
               </div>
             )}
@@ -1085,7 +1089,7 @@ export default function OrderTrackingPage() {
                 )}
                 {order.payment.discount > 0 && (
                   <div className="flex justify-between text-emerald-600 font-bold">
-                    <span>Voucher Discount</span>
+                    <span>Voucher Discount{order.payment.promoCode ? ` (${order.payment.promoCode})` : ''}</span>
                     <span className="font-mono">-{gbp(order.payment.discount)}</span>
                   </div>
                 )}
@@ -1148,7 +1152,7 @@ export default function OrderTrackingPage() {
 
       {/* CANCELLATION MODAL */}
       {isCancelModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[100] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl text-ink space-y-4">
             <h3 className="display text-xl">Cancel Your Order?</h3>
             <p className="text-xs text-steel">

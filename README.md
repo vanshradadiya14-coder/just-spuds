@@ -159,6 +159,15 @@ Deliveroo tablet or a Subway KDS behaves.
   stock and channel, delivery postcode and minimum basket, and it re-prices the
   basket from the live menu — stale prices, a voucher that no longer applies or
   a smuggled price override are corrected, never trusted.
+- **Pre-orders** (`utils/scheduling.ts`) only offer slots the kitchen is open
+  for, from the hours in *Admin › Store Ops*: never in the past (20 min lead for
+  pick-up, 40 for delivery), never on a closed day, never after last orders.
+  Checkout re-checks the slot, and orders store the calendar date ("Thu 9 Oct"),
+  so "Tomorrow" still reads right after midnight.
+- **First-order voucher** (`FIRSTSPUD`): refused on a browser that has ordered
+  before, and the order records which voucher made a discount. If someone clears
+  their browser to use it again, the kitchen card, new-order alarm and admin
+  order drawer flag that the phone number has ordered before.
 - **Status changes**: cancelled and completed orders are final; a till/phone
   open check that hasn't been paid cannot be "completed" from the kitchen (the
   card says *take payment on the till* instead), so no sale slips past the shift.
@@ -215,6 +224,30 @@ never appear on the till grid.
 
 `public/_redirects` and `vercel.json` are included so deep links survive a
 static host. Without one of those, refreshing on `/menu` 404s.
+
+## Every screen size
+
+The site is checked at 320 px phones up to 1920 px screens, including phones
+turned sideways (a `short:` Tailwind variant hides the promo bar and tab bar
+there) and the iPad-landscape till. A few rules keep it that way:
+
+- `--header-h`, `--dock-h`, `--orderbar-h` and `--consent-h` are live CSS
+  variables (`hooks/useCssVarHeight.ts`) — sticky bars, anchors, the order-status
+  card and the footer spacer sit against the real header and bottom bars.
+- `html`/`body` use `overflow-x: clip`, not `hidden` (hidden broke every
+  `position: sticky`). Fix sideways overflow at its source; on mobile grids use
+  `grid-cols-1` (an implicit column grows to its widest `truncate` text).
+- Full-screen pop-ups scroll: overlays are `overflow-y-auto` with
+  `[align-items:safe_center]`, so a tall pop-up starts at the top instead of
+  losing its header and buttons off both ends.
+- Floating bars hide while a dialog is open (`hooks/useModalOpen.ts`).
+- Till, kitchen and admin keep everyday buttons in the top bar and the rest
+  under **More**, so the bar never runs off a tablet.
+
+Google Analytics runs only after a visitor accepts the cookie bar
+(`components/CookieConsent.tsx`, UK PECR) and never on staff screens; the
+footer's *Cookie settings* link asks again. Opening hours shown anywhere on the
+site come from *Admin › Store Ops* (`hooks/useOpeningHours.ts`).
 
 ## Ordering flow
 

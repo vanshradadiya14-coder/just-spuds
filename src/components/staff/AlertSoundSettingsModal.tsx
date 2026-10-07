@@ -82,7 +82,7 @@ export default function AlertSoundSettingsModal({ onClose, actor }: AlertSoundSe
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-[80] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
       <div className="w-full max-w-md rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b border-white/10 pb-2">
           <h3 className="font-bold text-sm text-white">🔔 New order alert sound</h3>

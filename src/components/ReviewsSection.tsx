@@ -29,14 +29,21 @@ export default function ReviewsSection() {
               </div>
             )}
             <h2 className="mt-4 display display-tight text-4xl text-ink sm:text-6xl">
-              Loved by <span className="italic text-amber-700">Aylesbury</span>
+              {reviews.length ? (
+                <>Loved by <span className="italic text-amber-700">Aylesbury</span></>
+              ) : (
+                <>Tried us? <span className="italic text-amber-700">Tell Aylesbury.</span></>
+              )}
             </h2>
             <p className="mt-4 max-w-xl font-body text-[15px] leading-relaxed text-slate-700">
-              From market stall shoppers to lunch-break regulars, here is what our local community says about our steaming jacket potatoes, toasted paninis, and friendly service.
+              {reviews.length
+                ? 'From market stall shoppers to lunch-break regulars, here is what our local community says about our steaming jacket potatoes, toasted paninis, and friendly service.'
+                : 'We are a small, local kitchen and every honest review helps. Tell other people what you had and what you thought.'}
             </p>
           </div>
         </Reveal>
 
+        {reviews.length > 0 && (
         <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {reviews.map((r, i) => (
             <Reveal key={r.id} delay={i * 0.08}>
@@ -79,6 +86,7 @@ export default function ReviewsSection() {
             </Reveal>
           ))}
         </div>
+        )}
 
         {/* Live Market Counter Banner */}
         <Reveal delay={3}>
@@ -89,8 +97,17 @@ export default function ReviewsSection() {
                 <p className="font-body text-[11px] uppercase tracking-wider text-amber-100/70">Spuds Baked in Aylesbury</p>
               </div>
               <div className="space-y-1">
-                <p className="display text-4xl sm:text-5xl text-white font-bold">{SITE.stats.rating} / 5.0</p>
-                <p className="font-body text-[11px] uppercase tracking-wider text-amber-100/70">Average Google rating ({SITE.stats.reviewCount}+ reviews)</p>
+                {ratingVerified ? (
+                  <>
+                    <p className="display text-4xl sm:text-5xl text-white font-bold">{SITE.stats.rating} / 5.0</p>
+                    <p className="font-body text-[11px] uppercase tracking-wider text-amber-100/70">Average Google rating ({SITE.stats.reviewCount}+ reviews)</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="display text-4xl sm:text-5xl text-white font-bold">20–30 min</p>
+                    <p className="font-body text-[11px] uppercase tracking-wider text-amber-100/70">Fresh batches from the oven</p>
+                  </>
+                )}
               </div>
               <div className="space-y-1">
                 <p className="display text-4xl sm:text-5xl text-amber-400 font-bold">100%</p>
@@ -100,7 +117,7 @@ export default function ReviewsSection() {
           </div>
         </Reveal>
 
-        <div className="mt-10 text-center">
+        <div className={reviews.length ? 'mt-10 text-center' : 'mt-8 text-center'}>
           <a
             href={reviewUrl}
             target="_blank"

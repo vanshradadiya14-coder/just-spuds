@@ -31,7 +31,11 @@ export const SITE = {
     body: 'Enjoy a complimentary barista coffee or gourmet thick shake with your first spud order. Use code FIRSTSPUD at checkout or mention it at the counter!',
   },
   stats: {
-    ratingVerified: true,
+    /**
+     * Only shown once replaced with the shop's real Google figures and set to true —
+     * publishing a made-up rating is a banned practice under the DMCC Act 2024.
+     */
+    ratingVerified: false,
     rating: 4.9,
     reviewCount: 380,
     potatoesBaked: '50,000+',
@@ -74,7 +78,8 @@ export const REVIEWS = [
     title: 'Hands down the best lunch in Market Square',
     text: 'Crispy skin, piping hot fluffy potato, and they loaded it with cheese and crispy onions. Absolute perfection for lunchtime!',
     item: 'The Great British Classic',
-    verified: true,
+    /** Sample copy written for the design — shown only once replaced with a real, attributable Google review. */
+    verified: false,
   },
   {
     id: '2',
@@ -85,7 +90,8 @@ export const REVIEWS = [
     title: 'The Chilli Con Carne Spud is unreal',
     text: 'Rich, warming chilli with grated cheddar and garlic mayo on top. Massive portion and incredible value for money.',
     item: 'Chilli Con Carne Spud',
-    verified: true,
+    /** Sample copy written for the design — shown only once replaced with a real, attributable Google review. */
+    verified: false,
   },
   {
     id: '3',
@@ -96,7 +102,8 @@ export const REVIEWS = [
     title: 'Super fast service and free first shake!',
     text: 'Used the first-time visitor offer and got a thick chocolate shake for free. The Spud Father is a monster of a meal — will be coming back every Saturday.',
     item: 'The Spud Father',
-    verified: true,
+    /** Sample copy written for the design — shown only once replaced with a real, attributable Google review. */
+    verified: false,
   },
   {
     id: '4',
@@ -107,7 +114,8 @@ export const REVIEWS = [
     title: 'Fresh, healthy, and keeps you full all day',
     text: 'Great alternative to boring sandwiches. The staff are lovely and customising with extra toppings is super easy.',
     item: 'Tuna Mayo & Sweetcorn',
-    verified: true,
+    /** Sample copy written for the design — shown only once replaced with a real, attributable Google review. */
+    verified: false,
   },
 ]
 
@@ -296,6 +304,10 @@ export function getStoreStatus(
     }
   } else if (!isAcceptingDelivery && isAcceptingPickup) {
     message = `Delivery closed for tonight (last orders passed ${deliveryCutoffLabel}). Store Pick Up available until ${pickupCutoffLabel}.`
+  } else if (!isAcceptingPickup) {
+    // Open, but past last orders: this used to fall through to "Kitchen open &
+    // baking…", which was then shown to customers as the reason their order failed.
+    message = `Last orders were at ${pickupCutoffLabel} — the kitchen closes at ${closeLabel}. Pre-orders welcome for tomorrow!`
   }
 
   let pauseResumeTime: string | undefined

@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { getPriceCheck, getStatusChangeBlocker, type Order } from '../../../services/orderStore'
+import { getFirstOrderOfferCheck, getPriceCheck, getStatusChangeBlocker, type Order } from '../../../services/orderStore'
 import { lineUnitPrice } from '../../../hooks/useCart'
 import { cx, gbp } from '../../../utils/format'
 import { nextStepLabel, sourceBadge, statusTone } from './orderLabels'
@@ -89,6 +89,14 @@ export default function OrderDetailDrawer({ order, onClose, onAdvance, onPrint, 
             </div>
           )}
 
+          {(() => {
+            const offer = getFirstOrderOfferCheck(order)
+            return offer.ok ? null : (
+              <div role="alert" className="rounded-xl border-2 border-amber-400 bg-amber-950/60 p-3 text-xs font-bold text-amber-100">
+                🎟️ {offer.message}
+              </div>
+            )
+          })()}
           {!getPriceCheck(order).ok && (
             <div role="alert" className="rounded-2xl border-2 border-red-500 bg-red-950/60 p-3 text-xs font-bold text-red-100">
               💷 {getPriceCheck(order).message}
@@ -174,7 +182,7 @@ export default function OrderDetailDrawer({ order, onClose, onAdvance, onPrint, 
           <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs space-y-1">
             <p className="text-[10px] font-black uppercase tracking-wider text-white/50">Payment</p>
             <div className="flex justify-between"><span className="text-white/60">Subtotal</span><span className="font-mono">{money(order.payment.subtotal)}</span></div>
-            {order.payment.discount > 0 && <div className="flex justify-between text-emerald-300"><span>Discount</span><span className="font-mono">-{money(order.payment.discount)}</span></div>}
+            {order.payment.discount > 0 && <div className="flex justify-between text-emerald-300"><span>Discount{order.payment.promoCode ? ` · ${order.payment.promoCode}` : ''}</span><span className="font-mono">-{money(order.payment.discount)}</span></div>}
             {order.payment.deliveryFee > 0 && <div className="flex justify-between"><span className="text-white/60">Delivery</span><span className="font-mono">{money(order.payment.deliveryFee)}</span></div>}
             {order.payment.serviceFee > 0 && <div className="flex justify-between"><span className="text-white/60">Service</span><span className="font-mono">{money(order.payment.serviceFee)}</span></div>}
             {order.payment.tip > 0 && <div className="flex justify-between"><span className="text-white/60">Tip</span><span className="font-mono">{money(order.payment.tip)}</span></div>}

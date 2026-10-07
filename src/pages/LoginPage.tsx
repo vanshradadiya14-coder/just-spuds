@@ -16,7 +16,8 @@ export default function LoginPage() {
     description: 'Sign in to the Just Spuds Kitchen Display System (KDS) or Management Console.',
   })
 
-  const [tab, setTab] = useState<LoginTab>('staff')
+  // Customer links (e.g. from the tracking page) open straight on the Customer tab.
+  const [tab, setTab] = useState<LoginTab>(() => (params.get('tab') === 'customer' ? 'customer' : 'staff'))
   const [pin, setPin] = useState('')
   const [loadingGoogle, setLoadingGoogle] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -221,7 +222,7 @@ export default function LoginPage() {
                 ✨ Fast 1-Click Customer Access
               </p>
               <p className="font-body text-xs text-slate-600 leading-relaxed">
-                Continue with your Google account for live GPS order tracking, 1-click checkout, and instant loyalty rewards.
+                Sign in with Google and your name and email are filled in for you at checkout.
               </p>
             </div>
 

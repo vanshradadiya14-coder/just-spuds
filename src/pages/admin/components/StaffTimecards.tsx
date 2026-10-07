@@ -44,7 +44,7 @@ export default function StaffTimecards({ actor }: { actor: string }) {
   const totalMs = perPerson.reduce((sum, p) => sum + p.ms, 0)
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+    <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
         <div>
           <h2 className="display text-xl text-white font-bold">⏱️ Timecards</h2>

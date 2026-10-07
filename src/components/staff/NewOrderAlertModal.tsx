@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getPriceCheck, type Order } from '../../services/orderStore'
+import { getFirstOrderOfferCheck, getPriceCheck, type Order } from '../../services/orderStore'
 import { type AlertSoundState, type OnlineOrderAlert } from '../../services/alertSoundBus'
 import { lineUnitPrice } from '../../hooks/useCart'
 import { cx, gbp } from '../../utils/format'
@@ -93,7 +93,7 @@ export default function NewOrderAlertModal({
       role="dialog"
       aria-modal="true"
       aria-label={`New online order ${order.shortId}`}
-      className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6 bg-black/90 backdrop-blur-md animate-alarm"
+      className="fixed inset-0 z-[70] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-3 sm:p-6 bg-black/90 backdrop-blur-md animate-alarm"
     >
       <div className="w-full max-w-3xl max-h-[95vh] overflow-y-auto rounded-3xl border-2 border-rose-500/70 bg-gradient-to-b from-slate-900 via-slate-900 to-black shadow-2xl text-white font-body">
         {/* Header */}
@@ -152,6 +152,15 @@ export default function NewOrderAlertModal({
               </p>
             </div>
           </div>
+
+          {(() => {
+            const offer = getFirstOrderOfferCheck(order)
+            return offer.ok ? null : (
+              <div role="alert" className="rounded-xl border-2 border-amber-400 bg-amber-950/70 p-3 text-xs font-bold text-amber-100">
+                🎟️ {offer.message}
+              </div>
+            )
+          })()}
 
           {(() => {
             const check = getPriceCheck(order)

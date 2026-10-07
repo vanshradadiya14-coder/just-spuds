@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   getDeliverySettings,
@@ -86,13 +86,14 @@ import StaffTimecards from './admin/components/StaffTimecards'
 import StaffAccounts from './admin/components/StaffAccounts'
 import GoLivePanel from './admin/components/GoLivePanel'
 import SyncStatusPill from '../components/SyncStatusPill'
+import MenuPopover from '../components/MenuPopover'
 import { usingDefaultPins } from '../services/staffRoster'
 import { orderVat, ordersVat } from '../services/vat'
 import { validateNewPin } from '../services/staffRoster'
 import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
 import { dismissOrderAlert, subscribeOrderAlerts, type OnlineOrderAlert } from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
-import { getAuditLogs, subscribeAuditLogs, type AuditLogItem } from '../services/auditStore'
+import { getAuditLogs, logAuditEvent, subscribeAuditLogs, type AuditLogItem } from '../services/auditStore'
 import {
   getBlacklistEntries,
   subscribeBlacklist,
@@ -179,6 +180,17 @@ export default function AdminPage() {
   // New web orders nobody has accepted yet — same alarm as the KDS and till.
   const [newOrderAlerts, setNewOrderAlerts] = useState<OnlineOrderAlert[]>([])
   const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false)
+  // Occasional header actions live in one "More" menu so the header fits a phone.
+  const [isHeaderMoreOpen, setIsHeaderMoreOpen] = useState(false)
+  const headerMoreRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!isHeaderMoreOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsHeaderMoreOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isHeaderMoreOpen])
 
   // PIN gate state
   const [adminPin, setAdminPin] = useState('')
@@ -878,60 +890,40 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="relative min-h-screen bg-portal-dark text-slate-100 pb-20 pt-4 sm:pt-6 overflow-hidden">
+    // overflow-x-clip (not overflow-hidden) so sticky table headers keep working.
+    <div className="relative min-h-screen bg-portal-dark text-slate-100 pb-20 pt-3 sm:pt-6 overflow-x-clip">
       {/* High-Tech Terminal Ambient Backdrop */}
       <FixedAmbientBackdrop variant="portal" />
-      <div className="relative z-10 mx-auto max-w-[1700px] px-4 sm:px-6">
+      <div className="relative z-10 mx-auto max-w-[1700px] px-3 sm:px-6">
 
         {/* TOP EXECUTIVE BAR */}
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-white/10 pb-4 mb-6">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl text-ink shadow-glow">
+        <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-5 sm:mb-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-amber-400 text-xl text-ink shadow-glow sm:h-12 sm:w-12 sm:text-2xl">
               🥔
             </span>
-            <div>
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="display text-xl sm:text-2xl text-white font-bold tracking-wide">
-                  JUST SPUDS &bull; ADMIN
+                <h1 className="display text-lg sm:text-2xl text-white font-bold tracking-wide">
+                  <span className="hidden sm:inline">JUST SPUDS &bull; </span>ADMIN
                 </h1>
                 <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2.5 py-0.5 text-[10px] font-black uppercase text-amber-300">
-                  {user?.role || 'SUPER ADMIN'}
+                  {(user?.role || 'SUPER ADMIN').replace(/_/g, ' ')}
                 </span>
               </div>
-              <p className="font-body text-xs text-white/60">
-                Aylesbury Market Square Flagship &bull; Manager: <strong>{user?.name}</strong>
+              <p className="truncate font-body text-xs text-white/60">
+                <span className="hidden sm:inline">Aylesbury Market Square Flagship &bull; </span>Signed in: <strong>{user?.name}</strong>
               </p>
             </div>
           </div>
 
-          {/* Quick Actions */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-amber-300">
+          {/* Quick Actions — everyday ones visible, the rest under "More" */}
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 [&>*]:shrink-0">
+            <div className="hidden sm:block rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-amber-300">
               🕒 {currentTime.toLocaleTimeString()}
             </div>
 
             <SyncStatusPill />
-
-            {/* Test & Simulation Actions */}
-            <button
-              type="button"
-              onClick={handleSimulateRush}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/50 bg-amber-400/15 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
-              title="Inject 2 test orders into the live queue to test sound & printer"
-            >
-              <span>⚡</span>
-              <span>Simulate Rush</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsSoundSettingsOpen(true)}
-              className="inline-flex items-center gap-1 rounded-xl border border-white/20 bg-white/5 px-2.5 py-1.5 font-body text-xs text-white/80 hover:bg-white/15"
-              title="New-order alarm: choose or upload the sound, volume, test"
-            >
-              <span>🔔</span>
-              <span>Alert Sound</span>
-            </button>
 
             {kitchenPause.isPaused ? (
               <button
@@ -956,18 +948,23 @@ export default function AdminPage() {
                     )}
                   >
                     <span className={cx('h-2 w-2 rounded-full', open ? 'bg-emerald-400 animate-pulse' : 'bg-white/40')} />
-                    {h.isClosed ? 'Closed today' : `${open ? 'Open' : 'Closed'} · today ${fmt(h.openHour)}–${fmt(h.closeHour)}`}
+                    {h.isClosed ? 'Closed today' : `${open ? 'Open' : 'Closed'} · ${fmt(h.openHour)}–${fmt(h.closeHour)}`}
                   </span>
                 )
               })()
             )}
 
-            {/* Online Ordering Launch Toggle */}
+            {/* Online Ordering Launch Toggle — confirmed and audited: one tap opens or shuts the whole website. */}
             <button
               type="button"
               onClick={() => {
                 const nextState = !deliverySettings.isOnlineOrderingEnabled
+                const question = nextState
+                  ? 'Switch online ordering ON? Customers will be able to place real orders from the website straight away.'
+                  : 'Switch online ordering OFF? The website stops taking new orders immediately (orders already placed are not affected).'
+                if (!window.confirm(question)) return
                 saveDeliverySettings({ isOnlineOrderingEnabled: nextState })
+                logAuditEvent(user?.name || 'Admin', 'store.online_ordering', 'Website', nextState ? 'switched ON' : 'switched OFF')
               }}
               className={cx(
                 'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 font-body text-xs font-black uppercase tracking-wider transition shadow',
@@ -975,9 +972,10 @@ export default function AdminPage() {
                   ? 'bg-emerald-500 text-ink hover:bg-emerald-400'
                   : 'bg-amber-500/20 text-amber-300 border border-amber-400/50 hover:bg-amber-500/30'
               )}
-              title="Toggle Online Ordering (Delivery & Pickup)"
+              title="Turn online ordering (delivery & pick-up) on or off for the whole website"
+              aria-pressed={deliverySettings.isOnlineOrderingEnabled}
             >
-              <span>{deliverySettings.isOnlineOrderingEnabled ? '🟢 Online Orders: ACTIVE' : '⏸️ Online Orders: PAUSED'}</span>
+              <span>{deliverySettings.isOnlineOrderingEnabled ? '🟢 Online Orders: ON' : '⏸️ Online Orders: OFF'}</span>
             </button>
 
             <button
@@ -989,47 +987,90 @@ export default function AdminPage() {
               <span>Z-Report</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => exportOrdersCSV(orders)}
-              className="inline-flex items-center gap-1 rounded-xl border border-white/20 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-white hover:bg-white/15"
-            >
-              <span>📥</span>
-              <span>Export Ledger</span>
-            </button>
-
             <Link
               to="/pos"
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-emerald-400 transition"
+              className="hidden xl:inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-emerald-400 transition"
               title="Open Counter Till with Cash Drawer"
             >
               <span>🥔</span>
-              <span>Counter Till POS</span>
+              <span>Till</span>
             </Link>
 
             <Link
               to="/staff"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+              className="hidden xl:inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
             >
               <span>👨‍🍳</span>
-              <span>Staff KDS</span>
+              <span>KDS</span>
             </Link>
 
-
-            <button
-              type="button"
-              onClick={toggleFullScreen}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-white hover:bg-white/15"
-            >
-              {isFullscreen ? '🗗 Exit' : '⛶ Fullscreen'}
-            </button>
+            <div>
+              <button
+                ref={headerMoreRef}
+                type="button"
+                onClick={() => setIsHeaderMoreOpen((v) => !v)}
+                className={cx(
+                  'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-body text-xs font-bold transition',
+                  isHeaderMoreOpen ? 'border-amber-400 bg-amber-400 text-ink' : 'border-white/20 bg-white/5 text-white hover:bg-white/15',
+                )}
+                aria-haspopup="menu"
+                aria-expanded={isHeaderMoreOpen}
+              >
+                <span aria-hidden>☰</span>
+                <span>More</span>
+              </button>
+              {isHeaderMoreOpen && (
+                <MenuPopover anchorRef={headerMoreRef} onClose={() => setIsHeaderMoreOpen(false)} label="Admin tools">
+                    {(
+                      [
+                        { icon: '🥔', label: 'Counter till', to: '/pos', className: 'xl:hidden' },
+                        { icon: '👨‍🍳', label: 'Kitchen display', to: '/staff', className: 'xl:hidden' },
+                        { icon: '⚡', label: 'Send 2 test orders', hint: 'Practise the alarm and printer', run: handleSimulateRush },
+                        { icon: '🔔', label: 'Alert sound', hint: 'Choose, upload or test the alarm', run: () => setIsSoundSettingsOpen(true) },
+                        { icon: '📥', label: 'Export ledger (CSV)', hint: 'Every order in this browser', run: () => exportOrdersCSV(orders) },
+                        { icon: isFullscreen ? '🗗' : '⛶', label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullScreen },
+                      ] as { icon: string; label: string; hint?: string; to?: string; className?: string; run?: () => void }[]
+                    ).map((item) =>
+                      item.to ? (
+                        <Link
+                          key={item.label}
+                          role="menuitem"
+                          to={item.to}
+                          className={cx('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-white hover:bg-white/10', item.className)}
+                        >
+                          <span aria-hidden>{item.icon}</span>
+                          {item.label}
+                        </Link>
+                      ) : (
+                        <button
+                          key={item.label}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setIsHeaderMoreOpen(false)
+                            item.run?.()
+                          }}
+                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-white hover:bg-white/10"
+                        >
+                          <span aria-hidden>{item.icon}</span>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-bold">{item.label}</span>
+                            {item.hint && <span className="block text-[11px] text-white/50">{item.hint}</span>}
+                          </span>
+                        </button>
+                      ),
+                    )}
+                </MenuPopover>
+              )}
+            </div>
 
             <button
               type="button"
               onClick={logout}
               className="rounded-xl border border-white/20 bg-white/5 px-3 py-1.5 font-body text-xs font-bold text-white hover:bg-white/10"
+              aria-label="Sign out"
             >
-              Sign Out 🔒
+              <span className="hidden sm:inline">Sign Out </span>🔒
             </button>
           </div>
         </div>
@@ -1061,7 +1102,7 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
-            <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {newOrderAlerts
                 .slice()
                 .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
@@ -1089,7 +1130,38 @@ export default function AdminPage() {
 
         {/* PRIMARY NAVIGATION TABS */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Phones: one native picker instead of 13 buttons wrapping over 7 rows. */}
+          <label className="block w-full md:hidden">
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-white/50">Section</span>
+            <select
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value as AdminTab)}
+              className="w-full rounded-xl border border-amber-400/40 bg-slate-900 px-3 py-2.5 font-body text-sm font-bold text-white focus:border-amber-400 focus:outline-none"
+            >
+              {(
+                [
+                  ['golive', '🚀 Go-Live'],
+                  ['overview', '📊 Overview'],
+                  ['reports', '📈 Reports & Sales'],
+                  ['inventory', `📦 Stock & Inventory${lowStockProducts.length ? ` (${lowStockProducts.length} low)` : ''}`],
+                  ['orders', `📋 Live Orders${newOrderAlerts.length ? ` (${newOrderAlerts.length} new)` : analytics.activeCount ? ` (${analytics.activeCount})` : ''}`],
+                  ['products', `🥔 Product Studio (${products.length})`],
+                  ['toppings', '🧀 Toppings & Sauces'],
+                  ['promos', '🎟️ Promo Vouchers'],
+                  ['crm', '👥 Customer CRM'],
+                  ['delivery', '⚙️ Store Ops'],
+                  ['drivers', `🚚 Drivers & Fleet${onlineDriversCount ? ` (${onlineDriversCount} online)` : ''}`],
+                  ['staff', '👨‍🍳 Staff Accounts'],
+                  ['audit', '🛡️ Audit Trail'],
+                ] as [AdminTab, string][]
+              ).map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="hidden md:flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setActiveTab('golive')}
@@ -1270,7 +1342,7 @@ export default function AdminPage() {
           </div>
 
           {(activeTab === 'overview' || activeTab === 'reports') && (
-            <div className="flex items-center gap-1.5 rounded-2xl bg-white/5 p-1 border border-white/10">
+            <div className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-white/10 bg-white/5 p-1 sm:gap-1.5 [&>button]:shrink-0">
               {(
                 [
                   { key: 'today', label: 'Today' },
@@ -1395,7 +1467,7 @@ export default function AdminPage() {
 
             {/* CHARTS */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className="lg:col-span-7 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-xl space-y-4">
+              <div className="lg:col-span-7 rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-xl space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="display text-lg text-white font-bold">
@@ -1449,7 +1521,7 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="lg:col-span-5 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-xl space-y-4">
+              <div className="lg:col-span-5 rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-xl space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="display text-lg text-white font-bold">
                     7-Day Revenue Trend
@@ -2259,7 +2331,7 @@ export default function AdminPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Extra Toppings Section */}
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4">
                 <h3 className="display text-lg text-white font-bold">
                   🧀 Extra Toppings &amp; Cheeses
                 </h3>
@@ -2274,7 +2346,7 @@ export default function AdminPage() {
                     placeholder="New Topping (e.g. Crispy Chorizo)"
                     className="flex-1 rounded-xl border border-white/20 bg-white/10 px-3.5 py-2 font-body text-xs text-white placeholder:text-white/40 focus:border-amber-400 focus:outline-none"
                   />
-                  <div className="w-24 relative">
+                  <div className="w-20 shrink-0 relative sm:w-24">
                     <span className="absolute left-2.5 top-2 text-xs font-bold text-amber-400">£</span>
                     <input
                       type="number"
@@ -2289,7 +2361,7 @@ export default function AdminPage() {
                   </div>
                   <button
                     type="submit"
-                    className="rounded-xl bg-amber-400 px-4 py-2 font-body text-xs font-black uppercase text-ink hover:bg-amber-300 transition"
+                    className="shrink-0 rounded-xl bg-amber-400 px-3 py-2 font-body text-xs font-black uppercase text-ink hover:bg-amber-300 transition sm:px-4"
                   >
                     + Add
                   </button>
@@ -2316,7 +2388,7 @@ export default function AdminPage() {
               </div>
 
               {/* Sauces Section */}
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4">
                 <h3 className="display text-lg text-white font-bold">
                   🍯 Complimentary Sauces &amp; Dressings
                 </h3>
@@ -2333,7 +2405,7 @@ export default function AdminPage() {
                   />
                   <button
                     type="submit"
-                    className="rounded-xl bg-amber-400 px-4 py-2 font-body text-xs font-black uppercase text-ink hover:bg-amber-300 transition"
+                    className="shrink-0 rounded-xl bg-amber-400 px-3 py-2 font-body text-xs font-black uppercase text-ink hover:bg-amber-300 transition sm:px-4"
                   >
                     + Add Sauce
                   </button>
@@ -2377,7 +2449,7 @@ export default function AdminPage() {
             </div>
 
             {/* Add Promo Code Form */}
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
               <h3 className="display text-base text-white font-bold mb-4">Create New Promotional Voucher</h3>
               <form onSubmit={handleAddPromo} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
                 <div>
@@ -2821,15 +2893,15 @@ export default function AdminPage() {
             <form onSubmit={handleSaveSettings} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Store Hours */}
-                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4 md:col-span-2">
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4 md:col-span-2">
                   <h3 className="display text-lg text-white font-bold">🕒 Daily Operating Hours</h3>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => {
                       const daily = storeSettings.weeklyHours?.[day] || { openTime: '11:00', closeTime: '22:00', isClosed: false }
                       return (
-                        <div key={day} className="flex items-center justify-between gap-4 bg-white/5 p-3 rounded-2xl border border-white/5">
+                        <div key={day} className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-white/5 p-3 rounded-2xl border border-white/5">
                           <div className="w-24 shrink-0 font-bold text-white/90">{day}</div>
-                          <div className="flex items-center gap-2">
+                          <label className="flex cursor-pointer items-center gap-2">
                             <input
                               type="checkbox"
                               checked={daily.isClosed}
@@ -2843,9 +2915,9 @@ export default function AdminPage() {
                               className="h-4 w-4 rounded bg-white/10 border-white/20 text-amber-500 focus:ring-amber-500/50 cursor-pointer"
                             />
                             <span className="text-[10px] uppercase font-bold text-white/60">Closed</span>
-                          </div>
+                          </label>
                           {!daily.isClosed && (
-                            <div className="flex items-center gap-2 flex-1 max-w-[200px]">
+                            <div className="flex basis-full items-center gap-2 sm:ml-auto sm:max-w-[220px] sm:flex-1 sm:basis-auto">
                               <input
                                 type="time"
                                 value={daily.openTime}
@@ -2874,7 +2946,7 @@ export default function AdminPage() {
                             </div>
                           )}
                           {daily.isClosed && (
-                            <div className="flex-1 max-w-[200px] text-center py-1.5 text-[10px] text-red-400 font-bold uppercase tracking-wider bg-red-500/10 rounded-xl">
+                            <div className="basis-full text-center py-1.5 text-[10px] text-red-400 font-bold uppercase tracking-wider bg-red-500/10 rounded-xl sm:ml-auto sm:max-w-[220px] sm:flex-1 sm:basis-auto">
                               Closed All Day
                             </div>
                           )}
@@ -2888,7 +2960,7 @@ export default function AdminPage() {
                 </div>
 
                 {/* Announcement Banner */}
-                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4">
                   <h3 className="display text-lg text-white font-bold">📢 Top Announcement Banner</h3>
                   <div>
                     <label className="block text-[10px] uppercase font-bold text-white/60 mb-1">Banner Text</label>
@@ -3179,7 +3251,7 @@ export default function AdminPage() {
         {/* TAB 9: AUDIT LOGS                                              */}
         {/* ============================================================== */}
         {activeTab === 'audit' && (
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h2 className="display text-xl text-white font-bold">Real-Time Operational Audit Trail</h2>
@@ -3227,7 +3299,7 @@ export default function AdminPage() {
 
       {/* COURIER DRIVER ADD / EDIT MODAL */}
       {isDriverModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md font-body">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/80 backdrop-blur-md font-body">
           <div className="w-full max-w-md rounded-3xl border border-white/20 bg-slate-900 p-6 sm:p-8 shadow-2xl space-y-5 text-white">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">

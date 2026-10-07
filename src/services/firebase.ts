@@ -39,16 +39,23 @@ if (typeof window !== 'undefined' && isFirebaseConfigured()) {
     googleProvider.setCustomParameters({
       prompt: 'select_account',
     })
-
-    isSupported().then((supported) => {
-      if (supported && app) {
-        analytics = getAnalytics(app)
-      }
-    }).catch(() => {
-      // Analytics not supported in this environment
-    })
   } catch (err) {
     console.warn('[Firebase] Initialization error:', err)
+  }
+}
+
+let analyticsStarted = false
+/**
+ * Google Analytics sets cookies, so under UK PECR it may only start after the
+ * visitor has agreed (see CookieConsent). Never called on staff screens.
+ */
+export async function startAnalytics(): Promise<void> {
+  if (analyticsStarted || !app) return
+  analyticsStarted = true
+  try {
+    if (await isSupported()) analytics = getAnalytics(app)
+  } catch {
+    // Offline, blocked by the browser, or unsupported — analytics is optional.
   }
 }
 

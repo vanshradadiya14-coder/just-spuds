@@ -235,7 +235,7 @@ export default function ZReportReceipt({ shift, onClose, isModal = true }: ZRepo
   }
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm overflow-y-auto" role="dialog">
+    <div className="fixed inset-0 z-[130] flex items-center [align-items:safe_center] justify-center p-4 bg-ink/80 backdrop-blur-sm overflow-y-auto" role="dialog">
       <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6 my-8 border border-ink/20">
         <div className="flex items-center justify-between pb-4 mb-4 border-b border-ink/10">
           <div className="flex items-center gap-2">

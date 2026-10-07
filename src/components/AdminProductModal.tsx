@@ -228,7 +228,7 @@ export default function AdminProductModal({
   return (
     <AnimatePresence>
       <div
-        className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md overflow-y-auto"
+        className="fixed inset-0 z-[200] flex items-center [align-items:safe_center] justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md overflow-y-auto"
         role="dialog"
         aria-modal="true"
       >
