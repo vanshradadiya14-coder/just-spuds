@@ -3,37 +3,46 @@ import { Link } from 'react-router-dom'
 import {
   getCurrentShift,
   openTillShift,
-  closeTillShift,
   recordTillSale,
+  recordTillVoid,
   performNoSaleDrawerKick,
-  recordCashFloatAdjustment,
   subscribeShift,
   getTillSettings,
   subscribeTillSettings,
-  calculateDenominationsTotal,
-  EMPTY_DENOMINATIONS,
   getLastCompletedTillOrder,
   setLastCompletedTillOrder,
   type TillShift,
-  type CashDenominations,
+  type CashMovementKind,
 } from '../services/tillStore'
 import {
   subscribeOrders,
   updateOrderStatus,
   createManualCounterOrder,
-  refundOrder,
   getOrderById,
   getOpenTillChecks,
+  getOpenChecksDueToday,
   settleOpenOrder,
   voidOpenOrderLine,
   cancelOrder,
   recordReceiptDelivery,
+  getMenuStockOverrides,
+  subscribeStock,
   type Order,
+  type PaymentMethod,
+  type SplitTenderPortion,
 } from '../services/orderStore'
-import OpenChecksModal from '../components/pos/OpenChecksModal'
 import SaleCompleteModal from '../components/pos/SaleCompleteModal'
 import TimeclockModal from '../components/pos/TimeclockModal'
 import CustomerLookupModal, { type AttachedCustomer } from '../components/pos/CustomerLookupModal'
+import ItemOptionsWizard, { stationFor } from '../components/pos/ItemOptionsWizard'
+import PaymentScreen, { type PaymentTab, type Tender } from '../components/pos/PaymentScreen'
+import OrdersScreen, { type OrdersTab } from '../components/pos/OrdersScreen'
+import TillSideMenu, { type SideMenuAction } from '../components/pos/TillSideMenu'
+import CashMovementModal from '../components/pos/CashMovementModal'
+import StockModal from '../components/pos/StockModal'
+import CloseTillScreen from '../components/pos/CloseTillScreen'
+import EndOfDayReportModal from '../components/EndOfDayReportSlip'
+import EndOfDayHistoryModal, { reportForShift } from '../components/EndOfDayHistory'
 import { formatDuration, getActiveTimeclockEntry, isOnBreak, subscribeTimeclock, workedMs, type TimeclockEntry } from '../services/timeclockStore'
 import {
   getCurrentUser,
@@ -46,145 +55,125 @@ import {
   SHOP_FLOOR_ROLES,
   type AuthUser,
 } from '../services/authStore'
-import { getProducts, subscribeMenu, getProductByBarcode, isListedInStore, isOutOfStock } from '../services/menuStore'
+import { getProducts, subscribeMenu, getProductByBarcode, isListedInStore, isProductSoldOut, getCategories } from '../services/menuStore'
 import { logAuditEvent } from '../services/auditStore'
-import { CATEGORIES, type Product } from '../data/menu'
-import { lineUnitPrice, type CartLine, type CartLineModifier, type ModifierType } from '../hooks/useCart'
+import { extrasFor, MEAL_DEAL, type Product } from '../data/menu'
+import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { gbp } from '../utils/format'
+import { lineExtras, mealText, modifierText, saucesText } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
-import { triggerBrowserPrint, playPOSTouchTone } from '../services/printerBridge'
+import { playPOSTouchTone } from '../services/printerBridge'
 import TillSettingsModal from '../components/TillSettingsModal'
-import {
-  dismissOrderAlert,
-  subscribeOrderAlerts,
-  type OnlineOrderAlert,
-} from '../services/alertSoundBus'
+import { dismissOrderAlert, subscribeOrderAlerts, type OnlineOrderAlert } from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
 import SyncStatusPill from '../components/SyncStatusPill'
 import { computeVat, isVatRegistered } from '../services/vat'
-import {
-  broadcastCFDState,
-  resetCFDState,
-} from '../services/cfdBus'
+import { broadcastCFDState, resetCFDState } from '../services/cfdBus'
+import { getHeldTickets, holdTicket, subscribeHeldTickets, takeHeldTicket, type HeldTicket } from '../services/heldTickets'
+import { buildEndOfDayReport, type EndOfDayReport } from '../services/endOfDayReport'
 import ThermalReceipt from '../components/ThermalReceipt'
-import ZReportReceipt from '../components/ZReportReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 
-// Fast Shortcut Keys (Common counter drinks & crisps)
-const FAST_BAR_ITEMS = [
-  { id: 'cold-coke', name: 'Coca-Cola Can', price: 150, icon: '🥤', cat: 'COLD_DRINKS' },
-  { id: 'cold-diet-coke', name: 'Diet Coke Can', price: 150, icon: '🥤', cat: 'COLD_DRINKS' },
-  { id: 'cold-water', name: 'Spring Water 500ml', price: 120, icon: '💧', cat: 'COLD_DRINKS' },
-  { id: 'snack-ready-salted', name: 'Walkers Ready Salted', price: 100, icon: '🥔', cat: 'SNACKS' },
-  { id: 'snack-cheese-onion', name: 'Walkers Cheese & Onion', price: 100, icon: '🧀', cat: 'SNACKS' },
-]
+type OrderType = 'takeaway' | 'eat_in' | 'phone'
 
-type ButterChoice = 'salted' | 'garlic' | 'vegan' | 'none'
-type KitchenStation = 'spuds' | 'grill' | 'drinks'
+/** Categories whose dishes open the options pop-up (toppings, sauces, meal deal, leave-offs). */
+const DISH_CATEGORIES = new Set(['SPUDS', 'BAGUETTES', 'PANINIS', 'WRAPS', 'RICE_BOXES', 'SALADS'])
+const hasOptions = (p: Product) => DISH_CATEGORIES.has(p.category) || extrasFor(p).length > 0 || p.sauces || p.mealEligible
+
+/** EPOS-style home tiles: one colour per category. */
+const CATEGORY_TILE: Record<string, string> = {
+  SPUDS: 'from-amber-500/35 to-amber-600/15 border-amber-400/50 text-amber-100',
+  BAGUETTES: 'from-orange-500/35 to-orange-600/15 border-orange-400/50 text-orange-100',
+  PANINIS: 'from-red-500/30 to-red-600/10 border-red-400/50 text-red-100',
+  WRAPS: 'from-emerald-500/30 to-emerald-600/10 border-emerald-400/50 text-emerald-100',
+  RICE_BOXES: 'from-indigo-500/35 to-indigo-600/15 border-indigo-400/50 text-indigo-100',
+  SALADS: 'from-lime-500/30 to-lime-600/10 border-lime-400/50 text-lime-100',
+  HOT_DRINKS: 'from-yellow-700/40 to-yellow-800/15 border-yellow-600/50 text-yellow-100',
+  COLD_DRINKS: 'from-sky-500/35 to-sky-600/15 border-sky-400/50 text-sky-100',
+  SNACKS: 'from-rose-500/30 to-rose-600/10 border-rose-400/50 text-rose-100',
+}
+
+const COMP_SUMMARY = (percent: number, reason: string) => (percent >= 100 ? `Comp — ${reason}` : `${percent}% — ${reason}`)
 
 export default function StaffPOSPage() {
   useDocumentMeta({
     title: 'Food Store Till & POS Terminal',
-    description: 'Commercial in-store food till and EPOS system with split payments, cash drawer and thermal printer connection.',
+    description: 'In-store food till with split payments, cash drawer, end-of-day report and thermal printer support.',
   })
 
-  // Auth State
+  // Auth
   const [user, setUser] = useState<AuthUser | null>(() => getCurrentUser())
   const [pinInput, setPinInput] = useState('')
   const [pinError, setPinError] = useState<string | null>(null)
 
-  // Shift & Till State
+  // Shift & till settings
   const [shift, setShift] = useState<TillShift | null>(() => getCurrentShift())
   const [tillSettings, setSettings] = useState(() => getTillSettings())
 
-  // Menu & Products
+  // Menu
   const [products, setProducts] = useState<Product[]>(() => getProducts())
-  const [selectedCategory, setSelectedCategory] = useState<string>('SPUDS')
+  const [stockOverrides, setStockOverrides] = useState<Record<string, boolean>>(() => getMenuStockOverrides())
+  const [browse, setBrowse] = useState<string>('HOME')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Active Ticket State
+  // Ticket
   const [cartLines, setCartLines] = useState<CartLine[]>([])
   const [customerName, setCustomerName] = useState('')
   const [buzzerNumber, setBuzzerNumber] = useState('')
   const [tableNumber, setTableNumber] = useState('')
-  const [orderType, setOrderType] = useState<'takeaway' | 'eat_in' | 'phone'>('takeaway')
-  const [discountPercent, setDiscountPercent] = useState<number>(0)
-  const [discountFixedPence, setDiscountFixedPence] = useState<number>(0)
+  const [orderType, setOrderType] = useState<OrderType>('takeaway')
+  const [discountPercent, setDiscountPercent] = useState(0)
+  const [discountFixedPence, setDiscountFixedPence] = useState(0)
+  const [discountReason, setDiscountReason] = useState('')
+  const [tipPence, setTipPence] = useState(0)
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null)
+  const [attachedCustomer, setAttachedCustomer] = useState<AttachedCustomer | null>(null)
+  const [settlingOrder, setSettlingOrder] = useState<Order | null>(null)
 
-  // Parked (Hold) Orders
-  const [parkedOrders, setParkedOrders] = useState<
-    Array<{ id: string; customer: string; lines: CartLine[]; type: 'takeaway' | 'eat_in' | 'phone'; time: string; buzzer?: string; table?: string }>
-  >([])
-
-  // Fast Numpad & Tender State
-  const [tenderNumpadValue, setTenderNumpadValue] = useState<string>('')
-
-  // Modal States
-  const [customizingProduct, setCustomizingProduct] = useState<Product | null>(null)
-  const [isSplitModalOpen, setIsSplitModalOpen] = useState(false)
-  const [isBillSplitModalOpen, setIsBillSplitModalOpen] = useState(false)
-  const [evenSplitWays, setEvenSplitWays] = useState<number>(2)
-  const [evenSplitPaidSteps, setEvenSplitPaidSteps] = useState<number>(0)
-  const [selectedSplitLineIds, setSelectedSplitLineIds] = useState<string[]>([])
-  const [isCompsModalOpen, setIsCompsModalOpen] = useState(false)
-  const [compReason, setCompReason] = useState<string>('Spillage / Food Remake')
-  const [isFastSearchOpen, setIsFastSearchOpen] = useState(false)
-  const [fastSearchInput, setFastSearchInput] = useState('')
-  const [isXReportOpen, setIsXReportOpen] = useState(false)
-  const [isZReportOpen, setIsZReportOpen] = useState(false)
+  // Screens & pop-ups
+  const [wizard, setWizard] = useState<{ product: Product; editLineId?: string } | null>(null)
+  const [paying, setPaying] = useState<PaymentTab | null>(null)
+  const [ordersTab, setOrdersTab] = useState<OrdersTab | null>(null)
+  const [isSideMenuOpen, setIsSideMenuOpen] = useState(false)
+  const [cashMovement, setCashMovement] = useState<CashMovementKind | null>(null)
+  const [isStockOpen, setIsStockOpen] = useState(false)
+  const [isCloseTillOpen, setIsCloseTillOpen] = useState(false)
+  const [eodReport, setEodReport] = useState<{ report: EndOfDayReport; autoPrint: boolean } | null>(null)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false)
+  const [isTipOpen, setIsTipOpen] = useState(false)
   const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false)
-  const [isPayInOutModalOpen, setIsPayInOutModalOpen] = useState(false)
-  const [isParkedModalOpen, setIsParkedModalOpen] = useState(false)
   const [isOnlineOrdersModalOpen, setIsOnlineOrdersModalOpen] = useState(false)
   const [isLineNoteModalOpen, setIsLineNoteModalOpen] = useState(false)
+  const [isCustomItemModalOpen, setIsCustomItemModalOpen] = useState(false)
+  const [isFastSearchOpen, setIsFastSearchOpen] = useState(false)
+  const [fastSearchInput, setFastSearchInput] = useState('')
+  const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false)
+  const [barcodeInput, setBarcodeInput] = useState('')
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [isTicketSheetOpen, setIsTicketSheetOpen] = useState(false)
+  const [isCustomerLookupOpen, setIsCustomerLookupOpen] = useState(false)
+  const [isTimeclockOpen, setIsTimeclockOpen] = useState(false)
+  const [priceOverrideLineId, setPriceOverrideLineId] = useState<string | null>(null)
+  const [priceOverrideInput, setPriceOverrideInput] = useState('')
+  const [lineVoidTarget, setLineVoidTarget] = useState<CartLine | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
-  // Split Pay Allocation State
-  const [splitCashInput, setSplitCashInput] = useState<string>('')
-  const [splitCardInput, setSplitCardInput] = useState<string>('')
-  const [splitOnlineInput, setSplitOnlineInput] = useState<string>('')
-  const [splitCustomerCashGiven, setSplitCustomerCashGiven] = useState<string>('')
-
-  // Toast-Style Conversational Modifiers State
-  const [selectedButter, setSelectedButter] = useState<ButterChoice>('salted')
-  const [conversationalMods, setConversationalMods] = useState<Record<string, ModifierType>>({})
-  const [selectedSauces, setSelectedSauces] = useState<string[]>([])
-  const [isMealDealCombo, setIsMealDealCombo] = useState(false)
-  const [selectedMealDrink] = useState('cold-coke')
-  const [selectedMealSnack] = useState('snack-ready-salted')
-  const [speedTags, setSpeedTags] = useState<string[]>([])
-  const [selectedStation, setSelectedStation] = useState<KitchenStation>('spuds')
-  const [isRushTicket, setIsRushTicket] = useState(false)
-  const [customItemNote] = useState('')
-
-  // Starting Float - 100% Manual Touch & Keypad Entry
+  // Opening float
   const [startingFloatString, setStartingFloatString] = useState<string>(() => (getTillSettings().defaultFloatPence / 100).toFixed(2))
   const [hasManuallyEditedFloat, setHasManuallyEditedFloat] = useState(false)
 
-  // Manual / Custom Amount Item Modal
-  const [isCustomItemModalOpen, setIsCustomItemModalOpen] = useState(false)
-
-  // Closing Z-Report Denominations & Loss Prevention Blind Count
-  const [closingDenoms, setClosingDenoms] = useState<CashDenominations>({ ...EMPTY_DENOMINATIONS })
-  const [closingNotes] = useState('')
-  const [blindCountingConfirmed, setBlindCountingConfirmed] = useState(false)
-  const [completedZReport, setCompletedZReport] = useState<TillShift | null>(null)
-
-  // Receipt Printing
+  // Receipts & sale-complete
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null)
   const [lastOrder, setLastOrder] = useState<Order | null>(() => getLastCompletedTillOrder())
+  const [saleComplete, setSaleComplete] = useState<{ order: Order; changeDuePence: number; tenderLabel: string } | null>(null)
 
-  // Online Order Siren Alerts
+  // Online order alerts
   const [activeAlerts, setActiveAlerts] = useState<OnlineOrderAlert[]>([])
   const seenAlertIds = useRef<Set<string>>(new Set())
   const [currentTime, setCurrentTime] = useState(new Date())
 
-  // Safe Tender & Payment Terminal Simulation Modals
-  const [isCashConfirmModalOpen, setIsCashConfirmModalOpen] = useState(false)
-  const [isCardTerminalModalOpen, setIsCardTerminalModalOpen] = useState(false)
-  const [cardTerminalStep, setCardTerminalStep] = useState<'tip' | 'waiting' | 'processing' | 'approved'>('waiting')
-
-  // Manager PIN Authorization Gate
+  // Manager PIN gate
   const [isManagerAuthModalOpen, setIsManagerAuthModalOpen] = useState(false)
   const [managerActionTitle, setManagerActionTitle] = useState('')
   const [managerActionDescription, setManagerActionDescription] = useState('')
@@ -192,44 +181,15 @@ export default function StaffPOSPage() {
   const [managerPinInput, setManagerPinInput] = useState('')
   const [managerPinError, setManagerPinError] = useState<string | null>(null)
 
-  // Recent Completed Orders, Receipts & Refunds
-  const [isRecentSalesModalOpen, setIsRecentSalesModalOpen] = useState(false)
+  // Orders, held tickets, staff clock, connectivity
   const [allOrdersList, setAllOrdersList] = useState<Order[]>([])
-
-  // Barcode / SKU Hardware & Manual Entry
-  const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false)
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
-  // Below the lg breakpoint the ticket panel is a bottom sheet opened from the total bar.
-  const [isTicketSheetOpen, setIsTicketSheetOpen] = useState(false)
-  // Occasional shift/manager actions live in one "More" menu so the top bar fits every screen.
-  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false)
-  const [barcodeInput, setBarcodeInput] = useState('')
-
-  // Big-POS flow: open checks (send now, pay later), sale-complete screen, tips,
-  // attached customer, time clock, price override, favourites.
-  const [settlingOrder, setSettlingOrder] = useState<Order | null>(null)
-  const [isOpenChecksOpen, setIsOpenChecksOpen] = useState(false)
   const [openChecksCount, setOpenChecksCount] = useState(() => getOpenTillChecks().length)
-  const [saleComplete, setSaleComplete] = useState<{ order: Order; changeDuePence: number; tenderLabel: string } | null>(null)
-  const [tipPence, setTipPence] = useState(0)
-  const [attachedCustomer, setAttachedCustomer] = useState<AttachedCustomer | null>(null)
-  const [isCustomerLookupOpen, setIsCustomerLookupOpen] = useState(false)
-  const [isTimeclockOpen, setIsTimeclockOpen] = useState(false)
+  const [heldTickets, setHeldTickets] = useState<HeldTicket[]>(() => getHeldTickets())
   const [myClock, setMyClock] = useState<TimeclockEntry | undefined>(undefined)
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
-  const [priceOverrideLineId, setPriceOverrideLineId] = useState<string | null>(null)
-  const [priceOverrideInput, setPriceOverrideInput] = useState('')
-  const [lineVoidTarget, setLineVoidTarget] = useState<CartLine | null>(null)
-  const [flash, setFlash] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!isToolsMenuOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsToolsMenuOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [isToolsMenuOpen])
+  const actor = user?.name || 'Staff Cashier'
+  const tillName = tillSettings.tillName || 'Till 1'
 
   // Subscriptions
   useEffect(() => {
@@ -237,8 +197,7 @@ export default function StaffPOSPage() {
     const unsubShift = subscribeShift((s) => setShift(s))
     const unsubSettings = subscribeTillSettings((st) => setSettings(st))
     const unsubAlerts = subscribeOrderAlerts((a) => {
-      // "Receipt when an online order arrives": pop the ticket for anything
-      // that wasn't already in the queue, without accepting it.
+      // "Receipt when an online order arrives": pop the ticket for anything new, without accepting it.
       const fresh = a.find((alert) => !seenAlertIds.current.has(alert.orderId))
       a.forEach((alert) => seenAlertIds.current.add(alert.orderId))
       if (fresh && getTillSettings().autoPrintOnline) {
@@ -248,45 +207,36 @@ export default function StaffPOSPage() {
       setActiveAlerts(a)
     })
     const unsubMenu = subscribeMenu(() => setProducts(getProducts()))
-
+    const unsubStock = subscribeStock(setStockOverrides)
+    const unsubHeld = subscribeHeldTickets(setHeldTickets)
     const unsubOrders = subscribeOrders((allOrders) => {
       setAllOrdersList(allOrders)
       setOpenChecksCount(getOpenTillChecks().length)
     })
     // New web orders → alert queue + alarm, shared with the KDS and admin.
     const stopAlertWatcher = startOnlineOrderAlertWatcher()
+    const timer = setInterval(() => setCurrentTime(new Date()), 15_000)
 
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000)
-
-    // Hardware USB/Bluetooth Barcode Scanner Listener (fast keystrokes ending in Enter)
+    // USB/Bluetooth barcode scanner: fast keystrokes ending in Enter.
     let buffer = ''
     let lastKeyTime = 0
-
     const handleBarcodeKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
-
       const now = Date.now()
-      if (now - lastKeyTime > 150) {
-        buffer = ''
-      }
+      if (now - lastKeyTime > 150) buffer = ''
       lastKeyTime = now
-
       if (e.key === 'Enter') {
         if (buffer.length >= 3) {
           e.preventDefault()
           const prod = getProductByBarcode(buffer)
-          if (prod) {
-            handleItemClick(prod)
-            playPOSTouchTone('action')
-          }
+          if (prod) handleItemClickRef.current(prod)
         }
         buffer = ''
       } else if (e.key.length === 1) {
         buffer += e.key
       }
     }
-
     window.addEventListener('keydown', handleBarcodeKey)
 
     return () => {
@@ -295,8 +245,10 @@ export default function StaffPOSPage() {
       unsubSettings()
       unsubAlerts()
       unsubOrders()
-      stopAlertWatcher()
       unsubMenu()
+      unsubStock()
+      unsubHeld()
+      stopAlertWatcher()
       clearInterval(timer)
       window.removeEventListener('keydown', handleBarcodeKey)
     }
@@ -304,11 +256,9 @@ export default function StaffPOSPage() {
 
   const isAuthorized = hasRole(user, SHOP_FLOOR_ROLES)
 
-  // Square / Toast behaviour: an idle register locks itself so the next person
-  // has to use their own PIN. The shift and any open ticket are kept. Never
-  // mid-payment — a card reader may still be waiting for the customer.
+  // Square / Toast behaviour: an idle register locks itself. Never mid-payment.
   const lastActivityRef = useRef(Date.now())
-  const paymentInProgress = isCashConfirmModalOpen || isCardTerminalModalOpen || isSplitModalOpen
+  const paymentInProgress = paying !== null
   useEffect(() => {
     const touch = () => {
       lastActivityRef.current = Date.now()
@@ -334,100 +284,10 @@ export default function StaffPOSPage() {
     return () => clearInterval(timer)
   }, [isAuthorized, tillSettings.autoLockMinutes, paymentInProgress])
 
-  // Nothing left in the queue → the queue modal has nothing to show; close it.
   useEffect(() => {
     if (activeAlerts.length === 0) setIsOnlineOrdersModalOpen(false)
   }, [activeAlerts.length])
 
-  const handlePinSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    if (!pinInput.trim()) return
-    const res = loginWithPin(pinInput)
-    if (res.ok) {
-      setPinInput('')
-      setPinError(null)
-    } else {
-      setPinError(res.message)
-    }
-  }
-
-  // Financial Calculations
-  const subtotalPence = useMemo(() => {
-    return cartLines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0)
-  }, [cartLines])
-
-  const discountPence = useMemo(() => {
-    let disc = 0
-    if (discountPercent > 0) {
-      disc += Math.round((subtotalPence * discountPercent) / 100)
-    }
-    if (discountFixedPence > 0) {
-      disc += discountFixedPence
-    }
-    return Math.min(disc, subtotalPence)
-  }, [subtotalPence, discountPercent, discountFixedPence])
-
-  // Tips are not VATable and sit on top of the discounted goods total.
-  const totalDuePence = Math.max(0, subtotalPence - discountPence) + tipPence
-  const vatIncludedPence = useMemo(
-    () => computeVat({ lines: cartLines, discount: discountPence, eatIn: orderType === 'eat_in' }).vat,
-    [cartLines, discountPence, orderType, products],
-  )
-  const showVat = isVatRegistered()
-
-  // Fast Numpad Cash Tender Calculation
-  const tenderedCashPence = tenderNumpadValue
-    ? Math.round(parseFloat(tenderNumpadValue) * 100)
-    : 0
-  const changeDuePence =
-    tenderedCashPence > totalDuePence ? tenderedCashPence - totalDuePence : 0
-
-  // Real-time synchronization to Customer-Facing Display (CFD)
-  useEffect(() => {
-    broadcastCFDState({
-      lines: cartLines,
-      subtotalPence,
-      discountPence,
-      totalDuePence,
-      orderType,
-      customerName,
-      buzzerNumber,
-      tableNumber,
-      status: cartLines.length > 0 ? 'ordering' : 'idle',
-    })
-  }, [cartLines, subtotalPence, discountPence, totalDuePence, orderType, customerName, buzzerNumber, tableNumber])
-
-  // Global Keyboard Shortcuts: Ctrl+K or / search, F2 search, F4 cash, F5 card,
-  // F6 split, F8 send to kitchen, F9 hold. Ignored while a modal or input has focus.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && document.activeElement?.tagName !== 'INPUT')) {
-        e.preventDefault()
-        setIsFastSearchOpen(true)
-        playPOSTouchTone('tap')
-        return
-      }
-      if (!e.key.startsWith('F') || e.ctrlKey || e.altKey || e.metaKey) return
-      const modalOpen = document.querySelector('.fixed.inset-0.z-50, [role="dialog"]') !== null
-      if (modalOpen) return
-      const actions: Record<string, () => void> = {
-        F2: () => setIsFastSearchOpen(true),
-        F4: () => handleCompletePayment('cash'),
-        F5: () => handleCompletePayment('card'),
-        F6: () => handleOpenSplitModal(),
-        F8: () => handleSendToKitchen(),
-        F9: () => handleParkTicket(),
-      }
-      const action = actions[e.key]
-      if (!action) return
-      e.preventDefault()
-      action()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  })
-
-  // Time clock badge for the signed-in cashier
   useEffect(() => {
     if (!user) {
       setMyClock(undefined)
@@ -436,8 +296,6 @@ export default function StaffPOSPage() {
     return subscribeTimeclock(() => setMyClock(getActiveTimeclockEntry(user.id)))
   }, [user])
 
-  // Connectivity pill — orders are stored locally first, so the till keeps
-  // working offline; this just tells the cashier cloud sync is paused.
   useEffect(() => {
     const on = () => setIsOnline(true)
     const off = () => setIsOnline(false)
@@ -455,164 +313,87 @@ export default function StaffPOSPage() {
     return () => clearTimeout(id)
   }, [flash])
 
-  // Category Color Theming
-  const getCategoryColor = (catId: string, isSelected: boolean) => {
-    switch (catId) {
-      case 'SPUDS':
-        return isSelected
-          ? 'bg-amber-400 text-ink shadow-lg font-black border-amber-300 ring-2 ring-amber-400'
-          : 'bg-amber-500/15 text-amber-300 border-amber-400/30 hover:bg-amber-500/25'
-      case 'WRAPS':
-        return isSelected
-          ? 'bg-emerald-500 text-ink shadow-lg font-black border-emerald-400 ring-2 ring-emerald-500'
-          : 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30 hover:bg-emerald-500/25'
-      case 'RICE_BOXES':
-        return isSelected
-          ? 'bg-indigo-600 text-white shadow-lg font-black border-indigo-500 ring-2 ring-indigo-500'
-          : 'bg-indigo-500/15 text-indigo-300 border-indigo-400/30 hover:bg-indigo-500/25'
-      case 'PANINIS':
-      case 'BAGUETTES':
-        return isSelected
-          ? 'bg-orange-500 text-white shadow-lg font-black border-orange-400 ring-2 ring-orange-500'
-          : 'bg-orange-500/15 text-orange-300 border-orange-400/30 hover:bg-orange-500/25'
-      case 'SALADS':
-        return isSelected
-          ? 'bg-lime-500 text-ink shadow-lg font-black border-lime-400 ring-2 ring-lime-500'
-          : 'bg-lime-500/15 text-lime-300 border-lime-400/30 hover:bg-lime-500/25'
-      case 'HOT_DRINKS':
-        return isSelected
-          ? 'bg-yellow-700 text-white shadow-lg font-black border-yellow-600 ring-2 ring-yellow-600'
-          : 'bg-yellow-600/15 text-yellow-300 border-yellow-500/30 hover:bg-yellow-600/25'
-      case 'COLD_DRINKS':
-        return isSelected
-          ? 'bg-sky-500 text-ink shadow-lg font-black border-sky-400 ring-2 ring-sky-500'
-          : 'bg-sky-500/15 text-sky-300 border-sky-400/30 hover:bg-sky-500/25'
-      case 'SNACKS':
-        return isSelected
-          ? 'bg-rose-500 text-white shadow-lg font-black border-rose-400 ring-2 ring-rose-500'
-          : 'bg-rose-500/15 text-rose-300 border-rose-400/30 hover:bg-rose-500/25'
-      default:
-        return isSelected
-          ? 'bg-white text-ink shadow-lg font-black border-white'
-          : 'bg-white/10 text-white border-white/10 hover:bg-white/20'
+  const handlePinSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!pinInput.trim()) return
+    const res = loginWithPin(pinInput)
+    if (res.ok) {
+      setPinInput('')
+      setPinError(null)
+    } else {
+      setPinError(res.message)
     }
   }
 
-  const handleItemClick = (product: Product) => {
-    playPOSTouchTone('tap')
-    if (['HOT_DRINKS', 'COLD_DRINKS', 'SNACKS'].includes(product.category) && !product.extras?.length) {
-      handleQuickAdd(product.name, product.price, product.id, product.category)
-      return
-    }
+  // ------------------------------------------------------------------ money
+  const subtotalPence = useMemo(() => cartLines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0), [cartLines])
+  const discountPence = useMemo(() => {
+    let disc = 0
+    if (discountPercent > 0) disc += Math.round((subtotalPence * discountPercent) / 100)
+    if (discountFixedPence > 0) disc += discountFixedPence
+    return Math.min(disc, subtotalPence)
+  }, [subtotalPence, discountPercent, discountFixedPence])
+  // Tips are not VATable and sit on top of the discounted goods total.
+  const totalDuePence = Math.max(0, subtotalPence - discountPence) + tipPence
+  const vatIncludedPence = useMemo(
+    () => computeVat({ lines: cartLines, discount: discountPence, eatIn: orderType === 'eat_in' }).vat,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cartLines, discountPence, orderType, products],
+  )
+  const showVat = isVatRegistered()
+  const itemCount = cartLines.reduce((n, l) => n + l.qty, 0)
 
-    setCustomizingProduct(product)
-    setSelectedButter('salted')
-    setConversationalMods({})
-    setSelectedSauces([])
-    setIsMealDealCombo(false)
-    setSpeedTags([])
-    setSelectedStation(product.category === 'SPUDS' ? 'spuds' : product.category === 'WRAPS' || product.category === 'PANINIS' ? 'grill' : 'drinks')
-    setIsRushTicket(false)
-  }
-
-  const handleQuickAdd = (name: string, pricePence: number, id: string, cat: string) => {
-    playPOSTouchTone('tap')
-    const lineId = `${id}-${Date.now()}`
-    const newLine: CartLine = {
-      lineId,
-      productId: id,
-      name,
-      base: pricePence,
-      meal: false,
-      extras: [],
-      sauces: [],
-      image: '',
-      category: cat,
-      qty: 1,
-      station: cat === 'SPUDS' ? 'spuds' : cat === 'WRAPS' || cat === 'PANINIS' ? 'grill' : 'drinks',
-    }
-    setCartLines((prev) => [...prev, newLine])
-    setSelectedLineId(lineId)
-  }
-
-  const handleConfirmCustomizer = () => {
-    if (!customizingProduct) return
-    playPOSTouchTone('action')
-
-    // Toast-Style Conversational Modifiers
-    const convList: CartLineModifier[] = []
-
-    // Butter Modifiers
-    if (selectedButter === 'none') {
-      convList.push({ name: 'Butter', type: 'no' })
-    } else if (selectedButter === 'garlic') {
-      convList.push({ name: 'Garlic Butter', type: 'regular' })
-    } else if (selectedButter === 'vegan') {
-      convList.push({ name: 'Vegan Spread', type: 'regular' })
-    }
-
-    // Ingredient Conversational Mods
-    Object.entries(conversationalMods).forEach(([name, modType]) => {
-      convList.push({
-        name,
-        type: modType,
-        pricePence: modType === 'extra' ? 100 : 0,
-      })
+  // Customer-facing display mirrors the ticket.
+  useEffect(() => {
+    broadcastCFDState({
+      lines: cartLines,
+      subtotalPence,
+      discountPence,
+      totalDuePence,
+      orderType,
+      customerName,
+      buzzerNumber,
+      tableNumber,
+      status: paying ? 'tender' : cartLines.length > 0 ? 'ordering' : 'idle',
     })
+  }, [cartLines, subtotalPence, discountPence, totalDuePence, orderType, customerName, buzzerNumber, tableNumber, paying])
 
-    const noteCombined = [
-      isRushTicket ? '🔥 RUSH ORDER' : null,
-      ...speedTags,
-      customItemNote.trim(),
-    ].filter(Boolean).join(', ')
-
-    const newLine: CartLine = {
-      lineId: `${customizingProduct.id}-${Date.now()}`,
-      productId: customizingProduct.id,
-      name: customizingProduct.name,
-      base: customizingProduct.price,
-      meal: isMealDealCombo,
-      mealDrink: isMealDealCombo ? selectedMealDrink : undefined,
-      mealSnack: isMealDealCombo ? selectedMealSnack : undefined,
-      extras: [],
-      sauces: selectedSauces,
-      image: customizingProduct.image,
-      category: customizingProduct.category,
-      notes: noteCombined || undefined,
-      qty: 1,
-      conversationalModifiers: convList,
-      station: selectedStation,
-      isRush: isRushTicket,
+  // -------------------------------------------------------------- keyboard
+  // Ctrl+K or / search, F2 search, F4/F5 pay, F8 send to kitchen, F9 hold.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const typing = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
+      if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && !typing)) {
+        if (document.querySelector('[role="dialog"]')) return
+        e.preventDefault()
+        setIsFastSearchOpen(true)
+        return
+      }
+      if (!e.key.startsWith('F') || e.ctrlKey || e.altKey || e.metaKey) return
+      if (document.querySelector('[role="dialog"]') || paying) return
+      const actions: Record<string, () => void> = {
+        F2: () => setIsFastSearchOpen(true),
+        F4: () => openPayment('payment'),
+        F5: () => openPayment('payment'),
+        F8: () => handleSendToKitchen(),
+        F9: () => handleHoldTicket(),
+      }
+      const action = actions[e.key]
+      if (!action) return
+      e.preventDefault()
+      action()
     }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  })
 
-    setCartLines((prev) => [...prev, newLine])
-    setSelectedLineId(newLine.lineId!)
-    setCustomizingProduct(null)
-  }
-
-  const handleUpdateLineQty = (lineId: string, delta: number) => {
-    playPOSTouchTone('numpad')
-    setCartLines((prev) =>
-      prev
-        .map((l) => {
-          if (l.lineId === lineId) {
-            const next = l.qty + delta
-            return next > 0 ? { ...l, qty: next } : null
-          }
-          return l
-        })
-        .filter(Boolean) as CartLine[]
-    )
-  }
-
-  // Manager Authorization Helper
+  // ----------------------------------------------------------- manager PIN
   const requireManagerAuth = (title: string, desc: string, onSuccess: (mgrName: string) => void) => {
     if (isManagerOrAdmin(user?.role)) {
       onSuccess(user?.name || 'Authorized Manager')
       logAuditEvent(user?.name || 'Manager', 'manager.override', title, desc)
       return
     }
-
     setManagerActionTitle(title)
     setManagerActionDescription(desc)
     setManagerPinInput('')
@@ -625,85 +406,107 @@ export default function StaffPOSPage() {
     setIsManagerAuthModalOpen(true)
   }
 
-  const handleVoidSelectedLine = () => {
-    if (!selectedLineId) return
-    const lineToVoid = cartLines.find((l) => l.lineId === selectedLineId)
-    const lineDesc = lineToVoid ? `${lineToVoid.qty}x ${lineToVoid.name}` : 'Line Item'
+  // ----------------------------------------------------------------- items
+  const isSoldOut = (p: Product) => isProductSoldOut(p, stockOverrides)
 
-    requireManagerAuth('Void Line Item', `Authorize voiding of item: ${lineDesc}`, (mgrName) => {
-      playPOSTouchTone('action')
-      setCartLines((prev) => prev.filter((l) => l.lineId !== selectedLineId))
-      setSelectedLineId(null)
-      logAuditEvent(mgrName, 'pos.void_line', lineDesc, `Line voided by ${mgrName}`)
-    })
-  }
-
-  const handleClearAllTicket = () => {
-    if (cartLines.length === 0) return
-    if (settlingOrder) {
-      const check = settlingOrder
-      requireManagerAuth('Void Open Check', `Void #${check.shortId} (${gbp(check.payment.total)}) — sent to kitchen, never paid`, (mgrName) => {
-        cancelOrder(check.id, `Till void by ${mgrName}`)
-        resetTicket()
-        setFlash(`Check #${check.shortId} voided`)
-      })
+  const addSimpleItem = (product: Product) => {
+    playPOSTouchTone('tap')
+    // Same plain item again (a second Coke) just bumps the quantity, like EPOS.
+    const existing = cartLines.find(
+      (l) =>
+        l.productId === product.id &&
+        l.extras.length === 0 &&
+        l.sauces.length === 0 &&
+        !l.meal &&
+        !l.notes &&
+        !l.conversationalModifiers?.length &&
+        typeof l.priceOverridePence !== 'number' &&
+        !settlingOrder?.lines.some((sent) => sent.lineId === l.lineId),
+    )
+    if (existing) {
+      setCartLines((prev) => prev.map((l) => (l.lineId === existing.lineId ? { ...l, qty: l.qty + 1 } : l)))
+      setSelectedLineId(existing.lineId)
       return
     }
-    requireManagerAuth('Void Entire Ticket', `Authorize full void of active ticket (${cartLines.length} items, ${gbp(subtotalPence)})`, (mgrName) => {
-      playPOSTouchTone('action')
-      setCartLines([])
-      setDiscountPercent(0)
-      setDiscountFixedPence(0)
-      setCustomerName('')
-      setBuzzerNumber('')
-      setTableNumber('')
-      setTenderNumpadValue('')
-      setSelectedLineId(null)
-      resetCFDState()
-      logAuditEvent(mgrName, 'pos.void_ticket', 'Entire Ticket Voided', `Ticket cleared with ${cartLines.length} items totaling ${gbp(subtotalPence)}`)
-    })
+    const lineId = `${product.id}-${Date.now()}`
+    setCartLines((prev) => [
+      ...prev,
+      {
+        lineId,
+        productId: product.id,
+        name: product.name,
+        base: product.price,
+        extras: [],
+        sauces: [],
+        meal: false,
+        image: product.image,
+        category: product.category,
+        qty: 1,
+        station: stationFor(product.category),
+      },
+    ])
+    setSelectedLineId(lineId)
   }
 
-  const handleParkTicket = () => {
-    if (cartLines.length === 0 || settlingOrder) return
-    playPOSTouchTone('action')
-    const newParked = {
-      id: `pk-${Date.now()}`,
-      customer: customerName.trim() || `Customer #${parkedOrders.length + 1}`,
-      buzzer: buzzerNumber.trim() || undefined,
-      table: tableNumber.trim() || undefined,
-      lines: [...cartLines],
-      type: orderType,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  const handleItemClick = (product: Product) => {
+    if (isSoldOut(product)) {
+      setFlash(`${product.name} is sold out`)
+      return
     }
-    setParkedOrders((prev) => [newParked, ...prev])
-    setCartLines([])
-    setCustomerName('')
-    setBuzzerNumber('')
-    setTableNumber('')
-    setDiscountPercent(0)
-    setDiscountFixedPence(0)
-    setTenderNumpadValue('')
-    setSelectedLineId(null)
-    resetCFDState()
+    if (paying) return
+    if (hasOptions(product)) {
+      playPOSTouchTone('tap')
+      setWizard({ product })
+    } else {
+      addSimpleItem(product)
+    }
+  }
+  const handleItemClickRef = useRef(handleItemClick)
+  handleItemClickRef.current = handleItemClick
+
+  const handleWizardConfirm = (line: Omit<CartLine, 'lineId'>) => {
+    const editId = wizard?.editLineId
+    if (editId) {
+      setCartLines((prev) => prev.map((l) => (l.lineId === editId ? { ...line, lineId: editId } : l)))
+      setSelectedLineId(editId)
+    } else {
+      const lineId = `${line.productId}-${Date.now()}`
+      setCartLines((prev) => [...prev, { ...line, lineId }])
+      setSelectedLineId(lineId)
+    }
+    setWizard(null)
   }
 
-  const handleResumeParkedTicket = (parkedId: string) => {
-    const item = parkedOrders.find((p) => p.id === parkedId)
-    if (!item) return
-    playPOSTouchTone('action')
-    setCartLines(item.lines)
-    setCustomerName(item.customer)
-    if (item.buzzer) setBuzzerNumber(item.buzzer)
-    if (item.table) setTableNumber(item.table)
-    setOrderType(item.type)
-    setParkedOrders((prev) => prev.filter((p) => p.id !== parkedId))
-    setIsParkedModalOpen(false)
+  const isSentLine = (lineId: string) => Boolean(settlingOrder?.lines.some((l) => l.lineId === lineId))
+
+  const handleUpdateLineQty = (lineId: string, delta: number) => {
+    playPOSTouchTone('numpad')
+    // Never below 1 here: taking an item off goes through Delete (logged as a void).
+    setCartLines((prev) => prev.map((l) => (l.lineId === lineId ? { ...l, qty: Math.max(1, l.qty + delta) } : l)))
+  }
+
+  const handleDeleteSelectedLine = () => {
+    if (!selectedLineId) return
+    const line = cartLines.find((l) => l.lineId === selectedLineId)
+    if (!line) return
+    if (isSentLine(line.lineId)) {
+      setLineVoidTarget(line)
+      return
+    }
+    const lineDesc = `${line.qty}x ${line.name}`
+    requireManagerAuth('Delete item', `Remove ${lineDesc} from the ticket`, (mgrName) => {
+      playPOSTouchTone('action')
+      setCartLines((prev) => prev.filter((l) => l.lineId !== line.lineId))
+      setSelectedLineId(null)
+      recordTillVoid({ kind: 'line', staff: actor, approvedBy: mgrName, item: lineDesc, qty: line.qty, value: lineUnitPrice(line) * line.qty, reason: 'Removed before payment' })
+      logAuditEvent(mgrName, 'pos.void_line', lineDesc, `Line removed by ${mgrName}`)
+    })
   }
 
   /** Every path that ends a ticket funnels through here so nothing is left over for the next customer. */
   const resetTicket = () => {
     setIsTicketSheetOpen(false)
+    setPaying(null)
     setCartLines([])
     setCustomerName('')
     setAttachedCustomer(null)
@@ -711,63 +514,97 @@ export default function StaffPOSPage() {
     setTableNumber('')
     setDiscountPercent(0)
     setDiscountFixedPence(0)
-    setTenderNumpadValue('')
+    setDiscountReason('')
     setTipPence(0)
     setSelectedLineId(null)
     setSettlingOrder(null)
+    setOrderType('takeaway')
     resetCFDState()
   }
 
-  /** Common tail for every successful tender: last-order memory, CFD, receipt, and the sale-complete screen. */
-  const finishSale = (order: Order, changeDue: number, tenderLabel: string) => {
-    setLastCompletedTillOrder(order)
-    setLastOrder(order)
-    broadcastCFDState({ status: 'paid', completedOrderShortId: order.shortId, changeDuePence: changeDue, tenderMethod: tenderLabel })
-    if (tillSettings.autoPrintTillReceipt) {
-      recordReceiptDelivery(order.id, 'print', undefined, user?.name || 'Staff Cashier')
-      setReceiptOrder(order)
+  const handleVoidTicket = () => {
+    if (cartLines.length === 0) return
+    if (settlingOrder) {
+      const check = settlingOrder
+      requireManagerAuth('Void open order', `Void #${check.shortId} (${gbp(check.payment.total)}) — sent to kitchen, never paid`, (mgrName) => {
+        const res = cancelOrder(check.id, `Till void by ${mgrName}`)
+        if (res.ok) {
+          recordTillVoid({
+            kind: 'check',
+            staff: actor,
+            approvedBy: mgrName,
+            item: `#${check.shortId}: ${check.lines.map((l) => `${l.qty}x ${l.name}`).join(', ')}`,
+            qty: check.lines.reduce((n, l) => n + l.qty, 0),
+            value: check.payment.total,
+            reason: 'Voided at the till',
+            orderShortId: check.shortId,
+          })
+        }
+        resetTicket()
+        setFlash(res.ok ? `#${check.shortId} voided` : res.message)
+      })
+      return
     }
-    resetTicket()
-    setIsCashConfirmModalOpen(false)
-    setIsCardTerminalModalOpen(false)
-    setIsSplitModalOpen(false)
-    setIsBillSplitModalOpen(false)
-    setSaleComplete({ order, changeDuePence: changeDue, tenderLabel })
+    requireManagerAuth('Delete ticket', `Clear the whole ticket (${itemCount} items, ${gbp(subtotalPence)})`, (mgrName) => {
+      playPOSTouchTone('action')
+      recordTillVoid({
+        kind: 'ticket',
+        staff: actor,
+        approvedBy: mgrName,
+        item: cartLines.map((l) => `${l.qty}x ${l.name}`).join(', '),
+        qty: itemCount,
+        value: subtotalPence,
+        reason: 'Ticket cleared before payment',
+      })
+      logAuditEvent(mgrName, 'pos.void_ticket', 'Entire Ticket Voided', `Ticket cleared with ${cartLines.length} items totaling ${gbp(subtotalPence)}`)
+      resetTicket()
+    })
   }
 
-  /**
-   * Toast "Send": fire the ticket to the KDS now and take payment when the food
-   * is handed over. The check sits in Open Checks until it is settled or voided.
-   */
-  const handleSendToKitchen = () => {
+  const handleHoldTicket = () => {
     if (cartLines.length === 0 || settlingOrder) return
     playPOSTouchTone('action')
-    const actor = user?.name || 'Staff Cashier'
-    const orderTitle = customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway')
-    const sent = createManualCounterOrder(
-      {
-        customerName: orderTitle,
-        customerPhone: attachedCustomer?.phone || '01296 423456',
-        customerEmail: attachedCustomer?.email,
-        fulfilment: 'pickup',
-        lines: cartLines,
-        paymentMethod: 'in_store',
-        paymentStatus: 'pending_store',
-        discount: discountPence,
-        buzzerNumber: buzzerNumber.trim() || undefined,
-        tableNumber: tableNumber.trim() || undefined,
-        notes: `[POS TILL #01] ${orderType.toUpperCase()} • OPEN CHECK • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
-        source: orderType === 'phone' ? 'PHONE' : 'TILL',
-      },
-      actor,
-    )
-    if (tillSettings.autoPrintTillReceipt) setReceiptOrder(sent)
+    holdTicket({
+      customer: customerName.trim() || `Customer ${heldTickets.length + 1}`,
+      lines: cartLines,
+      type: orderType,
+      heldBy: actor,
+      buzzer: buzzerNumber.trim() || undefined,
+      table: tableNumber.trim() || undefined,
+      discountPercent: discountPercent || undefined,
+      discountFixedPence: discountFixedPence || undefined,
+    })
     resetTicket()
-    setFlash(`Sent #${sent.shortId} to kitchen — pay at collection (Open Checks)`)
+    setFlash('Ticket held — recall it from Orders › Held')
   }
 
-  /** Load an open check into the ticket so the normal tender buttons settle it. */
+  /** Clears the way for something else to be loaded: an unsent ticket is held, not lost. */
+  const parkCurrentTicket = () => {
+    if (cartLines.length > 0 && !settlingOrder) handleHoldTicket()
+    else if (settlingOrder) resetTicket()
+  }
+
+  const handleRecallHeld = (ticket: HeldTicket) => {
+    parkCurrentTicket()
+    const taken = takeHeldTicket(ticket.id)
+    if (!taken) {
+      setFlash('That ticket was already recalled on another tab.')
+      return
+    }
+    playPOSTouchTone('action')
+    setCartLines(taken.lines)
+    setCustomerName(taken.customer)
+    setBuzzerNumber(taken.buzzer || '')
+    setTableNumber(taken.table || '')
+    setOrderType(taken.type)
+    setDiscountPercent(taken.discountPercent || 0)
+    setDiscountFixedPence(taken.discountFixedPence || 0)
+    setOrdersTab(null)
+  }
+
+  /** Load an unpaid order (open check, or a website order paid on collection) and go straight to payment. */
   const handleSettleOpenCheck = (order: Order) => {
+    parkCurrentTicket()
     playPOSTouchTone('action')
     setCartLines(order.lines)
     setCustomerName(order.customer.name)
@@ -775,18 +612,19 @@ export default function StaffPOSPage() {
     setTableNumber(order.customer.tableNumber || '')
     setDiscountPercent(0)
     setDiscountFixedPence(order.payment.discount || 0)
-    setTipPence(0)
-    setTenderNumpadValue('')
+    setDiscountReason(order.payment.promoCode || '')
+    setTipPence(order.payment.tip || 0)
     setSelectedLineId(null)
-    setOrderType(order.source === 'PHONE' ? 'phone' : order.kitchenNotes?.includes('EAT_IN') ? 'eat_in' : 'takeaway')
+    setOrderType(order.source === 'PHONE' ? 'phone' : /EAT[_ ]IN/i.test(order.kitchenNotes || '') ? 'eat_in' : 'takeaway')
     setSettlingOrder(order)
-    setIsOpenChecksOpen(false)
+    setOrdersTab(null)
+    setPaying('payment')
   }
 
   /** Void a line that was already fired to the kitchen: reason + manager, stock goes back. */
   const handleVoidOpenCheckLine = (line: CartLine, reason: string) => {
     if (!settlingOrder) return
-    requireManagerAuth('Void Sent Item', `${line.qty}x ${line.name} on #${settlingOrder.shortId} — ${reason}`, (mgrName) => {
+    requireManagerAuth('Void sent item', `${line.qty}x ${line.name} on #${settlingOrder.shortId} — ${reason}`, (mgrName) => {
       const pending = cartLines.filter((l) => !settlingOrder.lines.some((sent) => sent.lineId === l.lineId))
       const res = voidOpenOrderLine(settlingOrder.id, line.lineId, reason, mgrName, pending)
       if (!res.ok || !res.order) {
@@ -794,6 +632,16 @@ export default function StaffPOSPage() {
         setLineVoidTarget(null)
         return
       }
+      recordTillVoid({
+        kind: 'line',
+        staff: actor,
+        approvedBy: mgrName,
+        item: `${line.qty}x ${line.name}`,
+        qty: line.qty,
+        value: lineUnitPrice(line) * line.qty,
+        reason,
+        orderShortId: settlingOrder.shortId,
+      })
       setSettlingOrder(res.order)
       setCartLines((prev) => prev.filter((l) => l.lineId !== line.lineId))
       setSelectedLineId(null)
@@ -824,388 +672,264 @@ export default function StaffPOSPage() {
     setIsCustomerLookupOpen(false)
   }
 
-  const handleNumpadPress = (char: string) => {
-    playPOSTouchTone('numpad')
-    if (char === 'C') {
-      setTenderNumpadValue('')
-    } else if (char === '.') {
-      if (!tenderNumpadValue.includes('.')) {
-        setTenderNumpadValue((prev) => (prev ? prev + '.' : '0.'))
-      }
-    } else {
-      setTenderNumpadValue((prev) => prev + char)
-    }
-  }
-
-  const handleSetQuickCash = (amountPounds: number) => {
-    playPOSTouchTone('numpad')
-    setTenderNumpadValue(amountPounds.toFixed(2))
-  }
-
-  // Safe Payment Initiation (Routes to confirmation modal)
-  const handleCompletePayment = (method: 'cash' | 'card') => {
-    if (cartLines.length === 0) return
-    playPOSTouchTone('tap')
-
-    if (method === 'cash') {
-      if (!tenderNumpadValue || parseFloat(tenderNumpadValue) <= 0) {
-        setTenderNumpadValue((totalDuePence / 100).toFixed(2))
-      }
-      setIsCashConfirmModalOpen(true)
-    } else if (method === 'card') {
-      setCardTerminalStep(tillSettings.tipPrompt && tipPence === 0 ? 'tip' : 'waiting')
-      setIsCardTerminalModalOpen(true)
-    }
-  }
-
-  // Safe Single Tender Finalization (Executed after confirmation)
-  const executeFinalizePayment = (method: 'cash' | 'card') => {
-    if (cartLines.length === 0) return
-    playPOSTouchTone('action')
-
-    const actor = user?.name || 'Staff Cashier'
-    const orderTitle = customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway')
-
-    // Settling an open check re-uses the order that was fired earlier.
-    const newOrder = settlingOrder
-      ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod: method, actor })
-      : createManualCounterOrder(
-          {
-            customerName: orderTitle,
-            customerPhone: attachedCustomer?.phone || '01296 423456',
-            customerEmail: attachedCustomer?.email,
-            fulfilment: 'pickup',
-            lines: cartLines,
-            paymentMethod: method,
-            paymentStatus: 'paid',
-            discount: discountPence,
-            tip: tipPence,
-            buzzerNumber: buzzerNumber.trim() || undefined,
-            tableNumber: tableNumber.trim() || undefined,
-            notes: `[POS TILL #01] ${orderType.toUpperCase()} • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
-            source: orderType === 'phone' ? 'PHONE' : 'TILL',
-          },
-          actor
-        )
-    if (!newOrder) {
-      setFlash('That check has already been settled on another till.')
-      resetTicket()
-      setIsCashConfirmModalOpen(false)
-      setIsCardTerminalModalOpen(false)
-      return
-    }
-
-    recordTillSale({
-      paymentMethod: method,
-      totalPence: totalDuePence,
-      discountPence: discountPence > 0 ? discountPence : undefined,
-      orderId: newOrder.shortId,
-      staffName: actor,
-    })
-
-    finishSale(newOrder, method === 'cash' ? changeDuePence : 0, method === 'cash' ? '💵 Cash' : '💳 Card')
-  }
-
-  // Split Payment Handlers (e.g. Some online/card and rest cash)
-  const handleOpenSplitModal = () => {
-    if (cartLines.length === 0) return
-    playPOSTouchTone('tap')
-    const half = (totalDuePence / 200).toFixed(2)
-    const remainder = ((totalDuePence - Math.round(parseFloat(half) * 100)) / 100).toFixed(2)
-    setSplitCashInput(half)
-    setSplitCardInput(remainder)
-    setSplitOnlineInput('0.00')
-    setSplitCustomerCashGiven(half)
-    setIsSplitModalOpen(true)
-    broadcastCFDState({ status: 'tender', tenderMethod: 'Split Tender' })
-  }
-
-  const handleCompleteSplitPayment = () => {
-    if (cartLines.length === 0) return
-    playPOSTouchTone('action')
-
-    const cashPence = Math.round(parseFloat(splitCashInput || '0') * 100)
-    const cardPence = Math.round(parseFloat(splitCardInput || '0') * 100)
-    const onlinePence = Math.round(parseFloat(splitOnlineInput || '0') * 100)
-    const sumPence = cashPence + cardPence + onlinePence
-
-    if (Math.abs(sumPence - totalDuePence) > 1) {
-      alert(`Split totals (£${(sumPence / 100).toFixed(2)}) must equal the total due (£${(totalDuePence / 100).toFixed(2)}).`)
-      return
-    }
-
-    const actor = user?.name || 'Staff Cashier'
-    const orderTitle = customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway')
-
-    const splitDetails = [
-      cashPence > 0 ? { method: 'cash' as const, amount: cashPence } : null,
-      cardPence > 0 ? { method: 'card' as const, amount: cardPence } : null,
-      onlinePence > 0 ? { method: 'online' as const, amount: onlinePence } : null,
-    ].filter(Boolean) as Array<{ method: 'cash' | 'card' | 'online'; amount: number }>
-
-    const partsSummary = [
-      cashPence > 0 ? `Cash £${(cashPence / 100).toFixed(2)}` : null,
-      cardPence > 0 ? `Card £${(cardPence / 100).toFixed(2)}` : null,
-      onlinePence > 0 ? `Online £${(onlinePence / 100).toFixed(2)}` : null,
-    ].filter(Boolean).join(' + ')
-
-    const newOrder = settlingOrder
-      ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod: 'split', splitDetails, actor })
-      : createManualCounterOrder(
-          {
-            customerName: orderTitle,
-            customerPhone: attachedCustomer?.phone || '01296 423456',
-            customerEmail: attachedCustomer?.email,
-            fulfilment: 'pickup',
-            lines: cartLines,
-            paymentMethod: 'split',
-            paymentStatus: 'paid',
-            discount: discountPence,
-            tip: tipPence,
-            buzzerNumber: buzzerNumber.trim() || undefined,
-            tableNumber: tableNumber.trim() || undefined,
-            notes: `[SPLIT TENDER: ${partsSummary}] • Cashier: ${actor}${buzzerNumber ? ` • Buzzer #${buzzerNumber}` : ''}${tableNumber ? ` • Table #${tableNumber}` : ''}`,
-            splitDetails,
-            source: orderType === 'phone' ? 'PHONE' : 'TILL',
-          },
-          actor
-        )
-    if (!newOrder) {
-      setFlash('That check has already been settled on another till.')
-      resetTicket()
-      setIsSplitModalOpen(false)
-      return
-    }
-
-    recordTillSale({
-      paymentMethod: 'split',
-      totalPence: totalDuePence,
-      discountPence: discountPence > 0 ? discountPence : undefined,
-      orderId: newOrder.shortId,
-      staffName: actor,
-      splitCashPence: cashPence,
-      splitCardPence: cardPence,
-      splitOnlinePence: onlinePence,
-    })
-
-    const splitChange = parseFloat(splitCustomerCashGiven) > cashPence / 100 ? Math.round((parseFloat(splitCustomerCashGiven) - cashPence / 100) * 100) : 0
-    finishSale(newOrder, splitChange, '🔀 Split Tender')
-  }
-
-  // Toast-Style Comps & Manager Discounts (Manager PIN required for > 20%)
-  const handleApplyComp = (percent: number, customReason?: string) => {
-    const applyLogic = (mgrName: string) => {
-      playPOSTouchTone('comp')
-      if (percent === 100) {
-        setDiscountPercent(0)
-        setDiscountFixedPence(subtotalPence)
-        const reasonUsed = customReason || compReason || '100% Manager Courtesy'
-        setCustomerName((prev) => (prev ? `${prev} (COMP: ${reasonUsed})` : `COMP: ${reasonUsed}`))
-      } else {
-        setDiscountFixedPence(0)
-        setDiscountPercent(percent)
-      }
-      setIsCompsModalOpen(false)
-      logAuditEvent(mgrName, 'pos.discount', `${percent}% Discount Applied`, `Reason: ${customReason || compReason || 'Courtesy'}`)
-    }
-
-    if (percent > 20) {
-      requireManagerAuth('Manual Discount Override', `Authorize ${percent}% discount on order totaling ${gbp(subtotalPence)}`, (mgrName) => {
-        applyLogic(mgrName)
-      })
-    } else {
-      applyLogic(user?.name || 'Staff Cashier')
-    }
-  }
-
-  const handleClearDiscounts = () => {
-    playPOSTouchTone('action')
-    setDiscountPercent(0)
-    setDiscountFixedPence(0)
-    setIsCompsModalOpen(false)
-  }
-
-  // Toast/Square Even Split Bill Handler
-  const evenSplitPortionPence = Math.round(totalDuePence / Math.max(1, evenSplitWays))
-
-  const handlePayEvenSplitPortion = (method: 'cash' | 'card') => {
-    if (cartLines.length === 0) return
-    playPOSTouchTone('action')
-    const nextStep = evenSplitPaidSteps + 1
-    setEvenSplitPaidSteps(nextStep)
-
-    const actor = user?.name || 'Staff Cashier'
-    const portionPence = nextStep === evenSplitWays
-      ? totalDuePence - evenSplitPortionPence * (evenSplitWays - 1)
-      : evenSplitPortionPence
-
-    recordTillSale({
-      paymentMethod: method,
-      totalPence: portionPence,
-      orderId: `SPLIT-${nextStep}/${evenSplitWays}`,
-      staffName: actor,
-      splitCashPence: method === 'cash' ? portionPence : 0,
-      splitCardPence: method === 'card' ? portionPence : 0,
-    })
-
-    if (nextStep >= evenSplitWays) {
-      // Completed all split portions! Finalize order
-      const newOrder = settlingOrder
-        ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod: 'split', actor })
-        : createManualCounterOrder(
-            {
-              customerName: customerName.trim() || `Split Bill (${evenSplitWays}-Way)`,
-              customerPhone: attachedCustomer?.phone || '01296 423456',
-              customerEmail: attachedCustomer?.email,
-              fulfilment: 'pickup',
-              lines: cartLines,
-              paymentMethod: 'split',
-              paymentStatus: 'paid',
-              discount: discountPence,
-              tip: tipPence,
-              buzzerNumber: buzzerNumber.trim() || undefined,
-              tableNumber: tableNumber.trim() || undefined,
-              notes: `[EVEN SPLIT BILL ${evenSplitWays}-WAY] • Cashier: ${actor}`,
-              source: orderType === 'phone' ? 'PHONE' : 'TILL',
-            },
-            actor
-          )
-      setEvenSplitPaidSteps(0)
-      if (!newOrder) {
-        setFlash('That check has already been settled on another till.')
-        resetTicket()
-        setIsBillSplitModalOpen(false)
-        return
-      }
-      finishSale(newOrder, 0, `➗ ${evenSplitWays}-Way Split`)
-    }
-  }
-
-  // Toast Split by Items Handler
-  const handleCreateSplitTicketFromSelected = () => {
-    if (selectedSplitLineIds.length === 0) return
-    playPOSTouchTone('action')
-
-    const linesToMove = cartLines.filter((l) => selectedSplitLineIds.includes(l.lineId))
-    const remainingLines = cartLines.filter((l) => !selectedSplitLineIds.includes(l.lineId))
-
-    // Park the remaining lines so cashier can complete the split lines right now
-    const newParked = {
-      id: `pk-${Date.now()}`,
-      customer: `${customerName || 'Guest 2'} (Remaining Items)`,
-      buzzer: buzzerNumber || undefined,
-      table: tableNumber || undefined,
-      lines: remainingLines,
-      type: orderType,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    }
-    setParkedOrders((prev) => [newParked, ...prev])
-
-    // Set active ticket to just the selected split lines
-    setCartLines(linesToMove)
-    setCustomerName(`${customerName || 'Guest 1'} (Split Ticket)`)
-    setSelectedSplitLineIds([])
-    setIsBillSplitModalOpen(false)
-  }
-
-  // Fast Search Select
-  const handleFastSearchSelect = (product: Product) => {
-    playPOSTouchTone('tap')
-    handleItemClick(product)
-    setIsFastSearchOpen(false)
-    setFastSearchInput('')
-  }
-
-  // Manual Float Handlers (Allows any amount, touch numpad, increments, direct typing)
-  const handleFloatNumpadPress = (val: string) => {
-    playPOSTouchTone('tap')
-    if (!hasManuallyEditedFloat) {
-      setHasManuallyEditedFloat(true)
-      if (val === '.') {
-        setStartingFloatString('0.')
-      } else {
-        setStartingFloatString(val)
-      }
-      return
-    }
-
-    if (val === '.') {
-      if (startingFloatString.includes('.')) return
-      setStartingFloatString((prev) => (prev ? `${prev}.` : '0.'))
-      return
-    }
-
-    if (startingFloatString.includes('.')) {
-      const parts = startingFloatString.split('.')
-      if (parts[1] && parts[1].length >= 2) return
-    }
-
-    if (startingFloatString.replace('.', '').length >= 6) return
-
-    setStartingFloatString((prev) => (prev === '0' ? val : `${prev}${val}`))
-  }
-
-  const handleFloatBackspace = () => {
-    playPOSTouchTone('tap')
-    setHasManuallyEditedFloat(true)
-    setStartingFloatString((prev) => {
-      if (prev.length <= 1) return '0'
-      return prev.slice(0, -1)
-    })
-  }
-
-  const handleFloatClear = () => {
-    playPOSTouchTone('tap')
-    setHasManuallyEditedFloat(true)
-    setStartingFloatString('0')
-  }
-
-  const handleFloatAddIncrement = (amount: number) => {
-    playPOSTouchTone('tap')
-    setHasManuallyEditedFloat(true)
-    const current = parseFloat(startingFloatString) || 0
-    const updated = Math.max(0, current + amount)
-    setStartingFloatString(updated.toFixed(2))
-  }
-
-  const handleFloatSetPreset = (amount: number) => {
-    playPOSTouchTone('tap')
-    setHasManuallyEditedFloat(true)
-    setStartingFloatString(amount.toFixed(2))
-  }
-
-  const handleOpenShift = () => {
-    playPOSTouchTone('action')
-    const parsed = parseFloat(startingFloatString)
-    const floatVal = isNaN(parsed) || parsed < 0 ? 0 : parsed
-    const floatPence = Math.round(floatVal * 100)
-    openTillShift(user?.name || 'Staff Cashier', floatPence)
-  }
-
   const handleAddCustomLineItem = (name: string, pricePence: number, station: 'spuds' | 'grill' | 'drinks') => {
     playPOSTouchTone('action')
     const lineId = `custom-${Date.now()}`
-    const newLine: CartLine = {
-      lineId,
-      productId: `custom-${Date.now()}`,
-      name: name.trim() || 'Custom Food Item',
-      base: pricePence,
-      meal: false,
-      extras: [],
-      sauces: [],
-      image: '',
-      category: 'CUSTOM',
-      qty: 1,
-      station: station,
-      notes: 'Manual Custom Item',
-    }
-    setCartLines((prev) => [...prev, newLine])
+    setCartLines((prev) => [
+      ...prev,
+      {
+        lineId,
+        productId: lineId,
+        name: name.trim() || 'Misc item',
+        base: pricePence,
+        meal: false,
+        extras: [],
+        sauces: [],
+        image: '',
+        category: 'CUSTOM',
+        qty: 1,
+        station,
+        notes: 'Misc item',
+      },
+    ])
     setSelectedLineId(lineId)
     setIsCustomItemModalOpen(false)
   }
 
-  // Favourites = the owner's "popular" flags plus whatever has actually sold most
-  // in the last 30 days, so the quick-keys page maintains itself.
+  // ------------------------------------------------------------- discounts
+  const handleApplyComp = (percent: number, reason: string) => {
+    const apply = (by: string) => {
+      playPOSTouchTone('comp')
+      if (percent >= 100) {
+        setDiscountPercent(0)
+        setDiscountFixedPence(subtotalPence)
+      } else {
+        setDiscountFixedPence(0)
+        setDiscountPercent(percent)
+      }
+      setDiscountReason(COMP_SUMMARY(percent, reason))
+      logAuditEvent(by, 'pos.discount', `${percent}% Discount Applied`, `Reason: ${reason}`)
+    }
+    if (percent > 20) requireManagerAuth('Discount', `${percent}% off ${gbp(subtotalPence)} — ${reason}`, apply)
+    else apply(actor)
+  }
+
+  const handleClearDiscount = () => {
+    playPOSTouchTone('action')
+    setDiscountPercent(0)
+    setDiscountFixedPence(0)
+    setDiscountReason('')
+  }
+
+  // ------------------------------------------------------- send / payment
+  const orderNotes = (extra?: string) =>
+    [
+      // "TILL: …" keeps a renamed till out of the kitchen's allergen box (utils/kitchenNotes).
+      `[TILL: ${tillName}] ${orderType.toUpperCase()}`,
+      extra,
+      `Cashier: ${actor}`,
+      buzzerNumber ? `Buzzer #${buzzerNumber}` : null,
+      tableNumber ? `Table #${tableNumber}` : null,
+      discountPence > 0 && discountReason ? `Discount: ${discountReason}` : null,
+    ]
+      .filter(Boolean)
+      .join(' • ')
+
+  /**
+   * Toast "Send" / EPOS "Order": fire the ticket to the kitchen now, take payment
+   * on collection. It waits in Orders › Open until settled or voided.
+   */
+  const handleSendToKitchen = () => {
+    if (cartLines.length === 0 || settlingOrder) return
+    playPOSTouchTone('action')
+    const sent = createManualCounterOrder(
+      {
+        customerName: customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway'),
+        customerPhone: attachedCustomer?.phone || '01296 423456',
+        customerEmail: attachedCustomer?.email,
+        fulfilment: 'pickup',
+        lines: cartLines,
+        paymentMethod: 'in_store',
+        paymentStatus: 'pending_store',
+        discount: discountPence,
+        buzzerNumber: buzzerNumber.trim() || undefined,
+        tableNumber: tableNumber.trim() || undefined,
+        notes: orderNotes('OPEN CHECK'),
+        source: orderType === 'phone' ? 'PHONE' : 'TILL',
+      },
+      actor,
+    )
+    if (tillSettings.autoPrintTillReceipt) setReceiptOrder(sent)
+    resetTicket()
+    setFlash(`Sent #${sent.shortId} to the kitchen — take payment from Orders › Open`)
+  }
+
+  const openPayment = (tab: PaymentTab = 'payment') => {
+    if (cartLines.length === 0) return
+    playPOSTouchTone('tap')
+    setIsTicketSheetOpen(false)
+    setPaying(tab)
+  }
+
+  /** Common tail for every completed sale: last-order memory, CFD, receipt, and the sale-complete screen. */
+  const finishSale = (order: Order, changeDue: number, tenderLabel: string) => {
+    setLastCompletedTillOrder(order)
+    setLastOrder(order)
+    broadcastCFDState({ status: 'paid', completedOrderShortId: order.shortId, changeDuePence: changeDue, tenderMethod: tenderLabel })
+    if (tillSettings.autoPrintTillReceipt) {
+      recordReceiptDelivery(order.id, 'print', undefined, actor)
+      setReceiptOrder(order)
+    }
+    resetTicket()
+    setSaleComplete({ order, changeDuePence: changeDue, tenderLabel })
+  }
+
+  const completePayment = (tenders: Tender[], changeDue: number) => {
+    if (cartLines.length === 0) return
+    const cash = tenders.filter((t) => t.method === 'cash').reduce((n, t) => n + t.amount, 0)
+    const card = tenders.filter((t) => t.method === 'card').reduce((n, t) => n + t.amount, 0)
+    const other = tenders.filter((t) => t.method === 'other').reduce((n, t) => n + t.amount, 0)
+    const single = tenders.length === 1 && tenders[0].method !== 'other'
+    const paymentMethod: PaymentMethod = tenders.length === 0 ? 'complimentary' : single ? (tenders[0].method as 'cash' | 'card') : 'split'
+    const now = new Date().toISOString()
+    const splitDetails: SplitTenderPortion[] | undefined =
+      paymentMethod === 'split' ? tenders.map((t) => ({ method: t.method === 'other' ? 'online' : t.method, amount: t.amount, paidAt: now })) : undefined
+
+    const order = settlingOrder
+      ? settleOpenOrder(settlingOrder.id, { lines: cartLines, discount: discountPence, tip: tipPence, paymentMethod, splitDetails, actor })
+      : createManualCounterOrder(
+          {
+            customerName: customerName.trim() || (orderType === 'eat_in' ? 'Dine In Customer' : 'Counter Takeaway'),
+            customerPhone: attachedCustomer?.phone || '01296 423456',
+            customerEmail: attachedCustomer?.email,
+            fulfilment: 'pickup',
+            lines: cartLines,
+            paymentMethod,
+            paymentStatus: 'paid',
+            discount: discountPence,
+            tip: tipPence,
+            buzzerNumber: buzzerNumber.trim() || undefined,
+            tableNumber: tableNumber.trim() || undefined,
+            notes: orderNotes(),
+            splitDetails,
+            source: orderType === 'phone' ? 'PHONE' : 'TILL',
+          },
+          actor,
+        )
+    if (!order) {
+      setFlash('That order has already been paid on another till.')
+      resetTicket()
+      return
+    }
+
+    recordTillSale({
+      paymentMethod: paymentMethod === 'cash' || paymentMethod === 'card' ? paymentMethod : 'split',
+      totalPence: cash + card + other,
+      discountPence: discountPence > 0 ? discountPence : undefined,
+      orderId: order.shortId,
+      orderUuid: order.id,
+      staffName: actor,
+      splitCashPence: cash,
+      splitCardPence: card,
+      splitOnlinePence: other,
+      tipPence,
+    })
+
+    const label =
+      tenders.length === 0 ? '🎁 No charge' : single ? (tenders[0].method === 'cash' ? '💵 Cash' : '💳 Card') : `🔀 ${[cash && 'Cash', card && 'Card', other && 'Link'].filter(Boolean).join(' + ')}`
+    finishSale(order, changeDue, label)
+  }
+
+  /** Split by item: the ticked lines stay on this bill, the rest becomes a held ticket. */
+  const handleSplitItems = (keepIds: string[]) => {
+    const keep = cartLines.filter((l) => keepIds.includes(l.lineId))
+    const rest = cartLines.filter((l) => !keepIds.includes(l.lineId))
+    if (keep.length === 0 || rest.length === 0) return
+    holdTicket({
+      customer: `${customerName.trim() || 'Guest'} — rest of bill`,
+      lines: rest,
+      type: orderType,
+      heldBy: actor,
+      buzzer: buzzerNumber.trim() || undefined,
+      table: tableNumber.trim() || undefined,
+    })
+    setCartLines(keep)
+    setFlash(`${rest.reduce((n, l) => n + l.qty, 0)} item(s) moved to Held for the next guest`)
+  }
+
+  // ------------------------------------------------------------- reports
+  const buildLiveReport = (s: TillShift) =>
+    buildEndOfDayReport({ shift: s, orders: allOrdersList, products, categories: getCategories(), vatRegistered: isVatRegistered(), kind: 'X' })
+
+  const handleSideMenu = (action: SideMenuAction) => {
+    setIsSideMenuOpen(false)
+    switch (action) {
+      case 'float':
+      case 'petty':
+      case 'tip_out':
+        setCashMovement(action)
+        break
+      case 'no_sale':
+        requireManagerAuth('No sale', 'Open the cash drawer without a sale', () => setIsNoSaleModalOpen(true))
+        break
+      case 'x_read':
+        if (shift) setEodReport({ report: buildLiveReport(shift), autoPrint: false })
+        break
+      case 'close_till':
+        if (cartLines.length > 0 && !settlingOrder) handleHoldTicket()
+        setIsCloseTillOpen(true)
+        break
+      case 'history':
+        setIsHistoryOpen(true)
+        break
+      case 'stock':
+        setIsStockOpen(true)
+        break
+      case 'orders':
+        setOrdersTab('complete')
+        break
+      case 'reprint':
+        if (lastOrder) setReceiptOrder(lastOrder)
+        break
+      case 'timeclock':
+        setIsTimeclockOpen(true)
+        break
+      case 'cfd':
+        window.open('/cfd', 'JustSpudsCFD', 'width=1024,height=650')
+        break
+      case 'settings':
+        requireManagerAuth('Till settings', 'Till name, printer, drawer, sounds and float defaults', () => setIsSettingsModalOpen(true))
+        break
+      case 'shortcuts':
+        setIsShortcutsOpen(true)
+        break
+      case 'lock':
+        logout()
+        break
+    }
+  }
+
+  /** The unpaid ticket as a customer bill (EPOS "Print"). */
+  const printBill = () => {
+    if (cartLines.length === 0) return
+    const now = new Date().toISOString()
+    setReceiptOrder({
+      id: settlingOrder?.id || 'bill-preview',
+      shortId: settlingOrder?.shortId || 'BILL',
+      source: orderType === 'phone' ? 'PHONE' : 'TILL',
+      createdAt: now,
+      status: 'accepted',
+      fulfilment: 'pickup',
+      customer: { name: customerName.trim() || 'Counter customer', phone: attachedCustomer?.phone || '', email: '', buzzerNumber: buzzerNumber || undefined, tableNumber: tableNumber || undefined },
+      lines: cartLines,
+      payment: { method: 'in_store', status: 'pending_store', subtotal: subtotalPence, deliveryFee: 0, serviceFee: 0, tip: tipPence, discount: discountPence, total: totalDuePence },
+      estimatedDeliveryTime: '',
+      etaMinutes: 0,
+      timeline: [],
+    })
+  }
+
+  // ------------------------------------------------------------ menu view
   const favouriteIds = useMemo(() => {
     const since = Date.now() - 30 * 24 * 60 * 60 * 1000
     const sold = new Map<string, number>()
@@ -1213,56 +937,88 @@ export default function StaffPOSPage() {
       if (o.status === 'cancelled' || new Date(o.createdAt).getTime() < since) continue
       for (const l of o.lines) sold.set(l.productId, (sold.get(l.productId) || 0) + l.qty)
     }
-    const top = [...sold.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id]) => id)
+    const top = [...sold.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([id]) => id)
     return new Set([...products.filter((p) => p.popular).map((p) => p.id), ...top])
   }, [allOrdersList, products])
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      if (!isListedInStore(p)) return false
-      const matchCat =
-        selectedCategory === 'ALL' || (selectedCategory === 'FAVOURITES' ? favouriteIds.has(p.id) : p.category === selectedCategory)
-      const matchSearch =
-        !searchQuery.trim() ||
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description?.toLowerCase().includes(searchQuery.toLowerCase())
-      return matchCat && matchSearch
-    })
-  }, [products, selectedCategory, searchQuery, favouriteIds])
+  const storeProducts = useMemo(() => products.filter(isListedInStore), [products])
+  const categories = useMemo(() => getCategories().filter((c) => storeProducts.some((p) => p.category === c.id)), [storeProducts])
+  const browseLabel = browse === 'FAVOURITES' ? 'Favourites' : categories.find((c) => c.id === browse)?.label || ''
 
-  // Authentication PIN Gate
+  const visibleProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (q) return storeProducts.filter((p) => p.name.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q) || p.barcode === q)
+    if (browse === 'HOME') return []
+    if (browse === 'FAVOURITES') return storeProducts.filter((p) => favouriteIds.has(p.id))
+    return storeProducts.filter((p) => p.category === browse)
+  }, [storeProducts, browse, searchQuery, favouriteIds])
+
+  // ------------------------------------------------------------------ float
+  const handleFloatNumpadPress = (val: string) => {
+    playPOSTouchTone('tap')
+    if (!hasManuallyEditedFloat) {
+      setHasManuallyEditedFloat(true)
+      setStartingFloatString(val === '.' ? '0.' : val)
+      return
+    }
+    if (val === '.') {
+      if (startingFloatString.includes('.')) return
+      setStartingFloatString((prev) => (prev ? `${prev}.` : '0.'))
+      return
+    }
+    if (startingFloatString.includes('.')) {
+      const parts = startingFloatString.split('.')
+      if (parts[1] && parts[1].length >= 2) return
+    }
+    if (startingFloatString.replace('.', '').length >= 6) return
+    setStartingFloatString((prev) => (prev === '0' ? val : `${prev}${val}`))
+  }
+  const handleFloatBackspace = () => {
+    playPOSTouchTone('tap')
+    setHasManuallyEditedFloat(true)
+    setStartingFloatString((prev) => (prev.length <= 1 ? '0' : prev.slice(0, -1)))
+  }
+  const handleFloatSetPreset = (amount: number) => {
+    playPOSTouchTone('tap')
+    setHasManuallyEditedFloat(true)
+    setStartingFloatString(amount.toFixed(2))
+  }
+  const handleOpenShift = () => {
+    playPOSTouchTone('action')
+    const parsed = parseFloat(startingFloatString)
+    const floatVal = isNaN(parsed) || parsed < 0 ? 0 : parsed
+    openTillShift(actor, Math.round(floatVal * 100))
+  }
+
+  const reportModals = (
+    <>
+      {eodReport && <EndOfDayReportModal report={eodReport.report} autoPrint={eodReport.autoPrint} onClose={() => setEodReport(null)} />}
+      {isHistoryOpen && <EndOfDayHistoryModal onClose={() => setIsHistoryOpen(false)} />}
+    </>
+  )
+
+  // ======================================================== PIN gate
   if (!isAuthorized) {
     return (
       <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-4 select-none overflow-hidden">
-        {/* Dynamic High-Tech Portal Ambient Engine */}
         <FixedAmbientBackdrop variant="portal" />
         <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
 
         <div className="relative z-10 mb-6 flex items-center gap-3">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition backdrop-blur-md"
-          >
+          <Link to="/" className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition backdrop-blur-md">
             <span>←</span>
             <span>Customer Website</span>
           </Link>
-          <Link
-            to="/staff"
-            className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition backdrop-blur-md"
-          >
+          <Link to="/staff" className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition backdrop-blur-md">
             <span>👨‍🍳</span>
             <span>Kitchen KDS</span>
           </Link>
         </div>
 
         <div className="relative z-10 w-full max-w-sm rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-8 shadow-2xl text-center ring-1 ring-amber-400/20">
-          <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl shadow-glow text-ink">
-            🥔
-          </div>
-          <h1 className="display text-2xl text-white font-bold tracking-tight">EPOS Food Till Station</h1>
-          <p className="font-body text-xs text-white/60 mt-1 mb-6">
-            Enter your Staff PIN to access the cash register &amp; counter till.
-          </p>
+          <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl shadow-glow text-ink">🥔</div>
+          <h1 className="display text-2xl text-white font-bold tracking-tight">{tillName}</h1>
+          <p className="font-body text-xs text-white/60 mt-1 mb-6">Enter your staff PIN to use the till.</p>
 
           <form onSubmit={handlePinSubmit} className="space-y-4">
             <input
@@ -1274,7 +1030,6 @@ export default function StaffPOSPage() {
               autoFocus
               className="w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
             />
-
             <div className="grid grid-cols-3 gap-2 pt-2">
               {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
                 <button
@@ -1289,14 +1044,7 @@ export default function StaffPOSPage() {
                   {num}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={() => {
-                  playPOSTouchTone('tap')
-                  setPinInput('')
-                }}
-                className="rounded-xl border border-red-500/20 bg-red-950/20 py-3 font-body text-xs font-bold text-red-400 hover:bg-red-900/40"
-              >
+              <button type="button" onClick={() => setPinInput('')} className="rounded-xl border border-red-500/20 bg-red-950/20 py-3 font-body text-xs font-bold text-red-400 hover:bg-red-900/40">
                 Clear
               </button>
               <button
@@ -1309,38 +1057,17 @@ export default function StaffPOSPage() {
               >
                 0
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  playPOSTouchTone('tap')
-                  setPinInput((prev) => prev.slice(0, -1))
-                }}
-                className="rounded-xl border border-white/10 bg-white/5 py-3 font-body text-xs font-bold text-white hover:bg-white/15"
-              >
+              <button type="button" onClick={() => setPinInput((prev) => prev.slice(0, -1))} className="rounded-xl border border-white/10 bg-white/5 py-3 font-body text-xs font-bold text-white hover:bg-white/15" aria-label="Delete digit">
                 ⌫
               </button>
             </div>
-
-            {pinError && (
-              <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2.5 font-body text-xs text-red-300">
-                {pinError}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition"
-            >
-              Sign In to Food Till →
+            {pinError && <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2.5 font-body text-xs text-red-300">{pinError}</p>}
+            <button type="submit" className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition">
+              Sign in →
             </button>
-
           </form>
 
-          <button
-            type="button"
-            onClick={() => setIsTimeclockOpen(true)}
-            className="mt-4 w-full rounded-2xl border border-white/15 bg-white/5 py-3 text-xs font-bold text-white/80 hover:bg-white/15 transition"
-          >
+          <button type="button" onClick={() => setIsTimeclockOpen(true)} className="mt-4 w-full rounded-2xl border border-white/15 bg-white/5 py-3 text-xs font-bold text-white/80 hover:bg-white/15 transition">
             ⏱️ Clock in / out only (no till access)
           </button>
         </div>
@@ -1349,43 +1076,32 @@ export default function StaffPOSPage() {
     )
   }
 
-  // Shift Closed Gate - 100% Manual Float (Staff can enter ANY amount)
+  // ======================================================== Opening float gate
   if (!shift || shift.status === 'closed') {
     const parsedFloat = parseFloat(startingFloatString)
     const floatVal = isNaN(parsedFloat) || parsedFloat < 0 ? 0 : parsedFloat
-    const displayFloat = floatVal.toFixed(2)
-
     return (
       <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-3 sm:p-4 select-none overflow-hidden">
-        {/* Dynamic High-Tech Portal Ambient Engine */}
         <FixedAmbientBackdrop variant="portal" />
         <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
 
         <div className="relative z-10 w-full max-w-md rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-5 sm:p-6 shadow-2xl text-center space-y-4 ring-1 ring-amber-400/20">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-400/20 border border-amber-400/40 text-3xl">
-            🔒
-          </div>
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-400/20 border border-amber-400/40 text-3xl">🔒</div>
           <div>
-            <h1 className="display text-2xl font-black text-white tracking-wide">Till Drawer is Locked</h1>
+            <h1 className="display text-2xl font-black text-white tracking-wide">Open the till</h1>
             <p className="font-body text-xs text-white/60 mt-0.5">
-              Terminal: <strong className="text-amber-400">TILL 01</strong> &bull; Cashier: <strong>{user?.name}</strong>
+              <strong className="text-amber-400">{tillName}</strong> &bull; {user?.name}
             </p>
           </div>
 
           <div className="space-y-2.5 text-left bg-black/50 border border-white/10 rounded-2xl p-3.5">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-black uppercase tracking-wider text-amber-300">
-                Opening Cash Float (£):
-              </label>
-              <span className="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                Manual Any Amount
-              </span>
-            </div>
-
-            {/* Readout with manual keyboard typing support */}
+            <label className="block text-xs font-black uppercase tracking-wider text-amber-300" htmlFor="opening-float">
+              Opening float (cash in the drawer)
+            </label>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-2xl font-black text-amber-400">£</span>
               <input
+                id="opening-float"
                 type="text"
                 inputMode="decimal"
                 value={startingFloatString}
@@ -1400,2118 +1116,728 @@ export default function StaffPOSPage() {
                 className="w-full rounded-xl border-2 border-amber-400/50 bg-white/10 pl-9 pr-3 py-2 font-mono text-2xl font-black text-white focus:border-amber-400 focus:outline-none text-right"
               />
             </div>
-
-            {/* Quick Adjust Helpers */}
-            <div className="flex flex-wrap items-center justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase text-white/40">Quick Adjust:</span>
-              <div className="flex flex-wrap gap-1">
-                <button
-                  type="button"
-                  onClick={handleFloatClear}
-                  className="rounded-lg bg-red-950/40 border border-red-500/30 px-2 py-0.5 font-mono text-[10px] font-bold text-red-300 hover:bg-red-900/50 transition"
-                >
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleFloatSetPreset(0)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-white/80 hover:bg-white/15 transition"
-                >
-                  £0 (No Float)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleFloatAddIncrement(5)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
-                >
-                  +£5
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleFloatAddIncrement(10)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
-                >
-                  +£10
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleFloatAddIncrement(20)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
-                >
-                  +£20
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleFloatAddIncrement(50)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
-                >
-                  +£50
-                </button>
-              </div>
-            </div>
-
-            {/* Standard Bank Bag Presets */}
-            <div className="grid grid-cols-4 gap-1.5 pt-1 border-t border-white/5">
-              {[50, 100, 150, 200].map((preset) => (
+            <div className="grid grid-cols-5 gap-1.5">
+              {[0, 30, 50, 100, 150].map((preset) => (
                 <button
                   key={preset}
                   type="button"
                   onClick={() => handleFloatSetPreset(preset)}
-                  className={`rounded-xl py-1 font-mono text-xs font-bold border transition ${
-                    floatVal === preset
-                      ? 'bg-amber-400 text-ink border-amber-400 shadow-glow font-black'
-                      : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/15'
-                  }`}
+                  className={`rounded-xl py-1.5 font-mono text-xs font-bold border transition ${floatVal === preset ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/15'}`}
                 >
                   £{preset}
                 </button>
               ))}
             </div>
-
-            {/* Touch Numpad (1-9, ., 0, ⌫) for Touchscreen Cashiers */}
-            <div className="pt-1.5 border-t border-white/10">
-              <div className="grid grid-cols-3 gap-1.5">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((digit) => (
-                  <button
-                    key={digit}
-                    type="button"
-                    onClick={() => handleFloatNumpadPress(digit)}
-                    className="h-10 rounded-xl bg-white/10 border border-white/15 font-mono text-lg font-black text-white hover:bg-white/20 active:scale-95 transition flex items-center justify-center shadow"
-                  >
-                    {digit}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={handleFloatBackspace}
-                  className="h-10 rounded-xl bg-red-950/40 border border-red-500/30 font-mono text-base font-black text-red-300 hover:bg-red-900/50 active:scale-95 transition flex items-center justify-center shadow"
-                  title="Backspace"
-                >
-                  ⌫
+            <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-white/10">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((digit) => (
+                <button key={digit} type="button" onClick={() => handleFloatNumpadPress(digit)} className="h-10 rounded-xl bg-white/10 border border-white/15 font-mono text-lg font-black text-white hover:bg-white/20 active:scale-95 transition">
+                  {digit}
                 </button>
-              </div>
+              ))}
+              <button type="button" onClick={handleFloatBackspace} className="h-10 rounded-xl bg-red-950/40 border border-red-500/30 font-mono text-base font-black text-red-300 hover:bg-red-900/50 active:scale-95 transition" aria-label="Delete digit">
+                ⌫
+              </button>
             </div>
           </div>
 
           <button
             type="button"
             onClick={handleOpenShift}
-            className="w-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 py-3.5 font-body text-sm font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95 flex items-center justify-center gap-2"
+            className="w-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 py-3.5 font-body text-sm font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95"
           >
-            <span>🔓</span>
-            <span>
-              {floatVal === 0
-                ? 'Open Register With £0.00 (No Float)'
-                : `Open Register With £${displayFloat} Float`}
-            </span>
+            🔓 {floatVal === 0 ? 'Open with no float' : `Open with £${floatVal.toFixed(2)} float`}
           </button>
 
-          <div className="flex justify-between items-center pt-2 border-t border-white/10 text-xs">
+          <div className="flex flex-wrap justify-between items-center gap-2 pt-2 border-t border-white/10 text-xs">
+            <button type="button" onClick={() => setIsHistoryOpen(true)} className="text-amber-300 hover:underline">
+              🗂️ Past end-of-day reports
+            </button>
             <Link to="/staff" className="text-amber-300 hover:underline">
-              Kitchen KDS Display →
+              Kitchen screen →
             </Link>
             <button type="button" onClick={logout} className="text-red-400 hover:underline">
-              Lock Station
+              Lock
             </button>
           </div>
         </div>
+        {reportModals}
       </div>
     )
   }
 
+  // ======================================================== Till
+  const ticketTitle = settlingOrder ? `#${settlingOrder.shortId} • ${settlingOrder.customer.name}` : customerName.trim() || (orderType === 'eat_in' ? 'Eat in' : orderType === 'phone' ? 'Phone order' : 'Takeaway')
+
+  const ticketPanel = (
+    <aside
+      className={`${isTicketSheetOpen ? 'flex' : 'hidden'} lg:flex fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto w-full lg:w-96 xl:w-[420px] bg-slate-900 lg:border-l border-white/10 flex-col shrink-0 shadow-2xl overflow-y-auto overscroll-contain`}
+      aria-label="Till ticket"
+    >
+      <div className="lg:hidden flex items-center justify-between border-b border-white/10 bg-black/60 px-3 py-2 shrink-0">
+        <span className="text-xs font-black uppercase tracking-wider text-white/70">Ticket</span>
+        <button type="button" onClick={() => setIsTicketSheetOpen(false)} className="rounded-xl border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold text-white">
+          ← Back to menu
+        </button>
+      </div>
+
+      {/* Order type, buzzer, table, customer */}
+      <div className="p-2.5 border-b border-white/10 bg-black/40 space-y-2 shrink-0">
+        <div className="flex rounded-xl bg-white/5 p-1 border border-white/10 text-xs">
+          {([
+            ['takeaway', '🛍️ Takeaway'],
+            ['eat_in', '🍽️ Eat in'],
+            ['phone', '📞 Phone'],
+          ] as [OrderType, string][]).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              disabled={paying !== null}
+              onClick={() => setOrderType(id)}
+              className={`flex-1 px-2 py-1.5 rounded-lg font-black whitespace-nowrap transition disabled:opacity-60 ${orderType === id ? 'bg-amber-400 text-ink' : 'text-white/60 hover:text-white'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-12 gap-1.5">
+          <input
+            type="text"
+            value={buzzerNumber}
+            onChange={(e) => setBuzzerNumber(e.target.value)}
+            placeholder="🔔 Buzzer"
+            className="col-span-3 rounded-xl border border-white/10 bg-black/60 px-2 py-1.5 font-mono text-xs font-black text-amber-300 placeholder-white/30 focus:border-amber-400 focus:outline-none"
+            aria-label="Buzzer number"
+          />
+          <input
+            type="text"
+            value={tableNumber}
+            onChange={(e) => setTableNumber(e.target.value)}
+            placeholder="🪑 Table"
+            className="col-span-3 rounded-xl border border-white/10 bg-black/60 px-2 py-1.5 font-mono text-xs font-black text-indigo-300 placeholder-white/30 focus:border-indigo-400 focus:outline-none"
+            aria-label="Table number"
+          />
+          <div className="col-span-6 flex gap-1">
+            <input
+              type="text"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              placeholder="Customer name"
+              className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:border-amber-400 focus:outline-none"
+              aria-label="Customer name"
+            />
+            <button
+              type="button"
+              onClick={() => setIsCustomerLookupOpen(true)}
+              className={`shrink-0 rounded-xl border px-2 text-xs font-bold transition ${attachedCustomer ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300' : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/15'}`}
+              title={attachedCustomer ? `${attachedCustomer.phone} • ${attachedCustomer.visits} visits` : 'Find a customer by phone'}
+              aria-label="Find customer"
+            >
+              👤
+            </button>
+          </div>
+        </div>
+        {attachedCustomer && (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[10px]">
+            <span className="text-emerald-200 truncate">
+              <span className="font-mono">{attachedCustomer.phone}</span> &bull; {attachedCustomer.visits} {attachedCustomer.visits === 1 ? 'visit' : 'visits'} &bull; {gbp(attachedCustomer.lifetimeSpendPence)} spent
+            </span>
+            <button type="button" onClick={() => setAttachedCustomer(null)} className="text-white/50 hover:text-white" aria-label="Remove customer">
+              ✕
+            </button>
+          </div>
+        )}
+        {settlingOrder && (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px]">
+            <span className="text-amber-200">
+              Paying for <span className="font-mono font-black">#{settlingOrder.shortId}</span>
+              {settlingOrder.source === 'WEBSITE' ? ' (website order)' : ''} — taking a sent item off needs a void reason.
+            </span>
+            <button type="button" onClick={resetTicket} className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 font-bold text-white/70 hover:bg-white/15">
+              Put back
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Lines */}
+      <div className="flex-1 min-h-[7rem] p-2.5 overflow-y-auto space-y-1.5 bg-black/20">
+        {cartLines.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-white/40">
+            <span className="text-4xl mb-2">🧾</span>
+            <p className="font-body text-xs font-black uppercase tracking-wider">Add a dish or drink</p>
+            <p className="font-body text-[11px] text-white/50 mt-0.5">Tap a product to add it to the bill</p>
+          </div>
+        ) : (
+          cartLines.map((line) => {
+            const isSelected = selectedLineId === line.lineId
+            const sent = isSentLine(line.lineId)
+            const product = products.find((p) => p.id === line.productId)
+            const editable = !sent && !paying && product && hasOptions(product) && typeof line.priceOverridePence !== 'number'
+            return (
+              <div
+                key={line.lineId}
+                onClick={() => setSelectedLineId(isSelected ? null : line.lineId)}
+                className={`rounded-xl border p-2 text-xs transition cursor-pointer ${isSelected ? 'border-amber-400 bg-amber-400/10 shadow' : 'border-white/10 bg-black/40 hover:border-white/20'}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-black text-white text-[13px] leading-tight">
+                    {line.qty}× {line.name}
+                    {sent && <span className="ml-1.5 rounded bg-white/10 px-1 py-0.5 align-middle text-[9px] font-bold text-white/50">SENT</span>}
+                  </div>
+                  <span className="font-mono font-bold text-amber-300 shrink-0">{gbp(lineUnitPrice(line) * line.qty)}</span>
+                </div>
+                {line.conversationalModifiers && line.conversationalModifiers.length > 0 && (
+                  <div className="pl-3 flex flex-wrap gap-1 mt-1">
+                    {line.conversationalModifiers.map((mod, idx) => (
+                      <span key={idx} className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase tracking-tight ${mod.type === 'no' ? 'bg-rose-500/20 text-rose-200' : 'bg-white/10 text-white/80'}`}>
+                        {modifierText(mod)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {lineExtras(line).map((x) => (
+                  <p key={x.id} className="pl-3 text-[11px] text-white/75 flex justify-between gap-2">
+                    <span>
+                      + {x.count > 1 ? `${x.count}× ` : ''}
+                      {x.label}
+                    </span>
+                    <span className="font-mono text-white/50">{gbp(x.unit * x.count)}</span>
+                  </p>
+                ))}
+                {line.sauces.length > 0 && <p className="pl-3 text-[11px] text-amber-200/80">Sauce: {saucesText(line)}</p>}
+                {line.meal && (
+                  <p className="pl-3 text-[11px] font-bold text-emerald-300 flex justify-between gap-2">
+                    <span>+ Meal: {mealText(line)}</span>
+                    <span className="font-mono text-white/50">{gbp(MEAL_DEAL.price)}</span>
+                  </p>
+                )}
+                {line.notes && <p className="pl-3 text-[11px] italic text-rose-200">* {line.notes}</p>}
+                {typeof line.priceOverridePence === 'number' && <p className="pl-3 text-[11px] font-bold text-sky-300">Price changed to {gbp(line.priceOverridePence)}</p>}
+
+                {isSelected && !paying && (
+                  <div className="mt-2 pt-1.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      <button type="button" disabled={sent} onClick={() => handleUpdateLineQty(line.lineId, -1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 text-white font-bold hover:bg-white/20 disabled:opacity-30" aria-label="One fewer">
+                        −
+                      </button>
+                      <span className="font-mono text-sm font-bold text-white w-6 text-center">{line.qty}</span>
+                      <button type="button" disabled={sent} onClick={() => handleUpdateLineQty(line.lineId, 1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 text-white font-bold hover:bg-white/20 disabled:opacity-30" aria-label="One more">
+                        +
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {editable && (
+                        <button type="button" onClick={() => setWizard({ product: product!, editLineId: line.lineId })} className="rounded-lg px-2 py-1.5 text-[11px] font-bold bg-white/10 text-white/85 hover:bg-white/20">
+                          ✎ Edit
+                        </button>
+                      )}
+                      <button type="button" disabled={sent} onClick={() => setIsLineNoteModalOpen(true)} className="rounded-lg px-2 py-1.5 text-[11px] font-bold bg-white/10 text-white/85 hover:bg-white/20 disabled:opacity-30">
+                        Note
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPriceOverrideLineId(line.lineId)
+                          setPriceOverrideInput((lineUnitPrice(line) / 100).toFixed(2))
+                        }}
+                        className="rounded-lg px-2 py-1.5 text-[11px] font-bold bg-white/10 text-white/85 hover:bg-white/20"
+                        title="Change the price (manager PIN)"
+                      >
+                        £ Price
+                      </button>
+                      <button type="button" onClick={handleDeleteSelectedLine} className="rounded-lg px-2 py-1.5 text-[11px] font-bold bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900">
+                        {sent ? 'Void' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      {/* Totals (EPOS: items, discount / total, due, tax) */}
+      <div className="p-2.5 border-t border-white/10 bg-black/60 space-y-1 text-xs shrink-0">
+        <div className="flex justify-between text-white/70 text-[11px]">
+          <span>Items: {itemCount} &bull; Subtotal</span>
+          <span className="font-mono font-bold">{gbp(subtotalPence)}</span>
+        </div>
+        {discountPence > 0 && (
+          <div className="flex justify-between font-bold text-amber-300 text-[11px] gap-2">
+            <span className="truncate">Discount{discountReason ? ` (${discountReason})` : ''}</span>
+            <span className="font-mono shrink-0">
+              −{gbp(discountPence)}
+              {!paying && (
+                <button type="button" onClick={handleClearDiscount} className="ml-1 text-white/40 hover:text-white" aria-label="Remove discount">
+                  ✕
+                </button>
+              )}
+            </span>
+          </div>
+        )}
+        {tipPence > 0 && (
+          <div className="flex justify-between font-bold text-emerald-300 text-[11px]">
+            <span>Gratuity</span>
+            <span className="font-mono">
+              +{gbp(tipPence)}
+              {!paying && (
+                <button type="button" onClick={() => setTipPence(0)} className="ml-1 text-white/40 hover:text-white" aria-label="Remove gratuity">
+                  ✕
+                </button>
+              )}
+            </span>
+          </div>
+        )}
+        {showVat && (
+          <div className="flex justify-between text-white/40 text-[10px]">
+            <span>VAT included{orderType === 'eat_in' ? ' (eat in)' : ''}</span>
+            <span className="font-mono">{gbp(vatIncludedPence)}</span>
+          </div>
+        )}
+        <div className="flex justify-between items-baseline pt-1 border-t border-white/15">
+          <span className="font-black text-sm text-white uppercase tracking-wider">Total</span>
+          <span className="font-mono text-2xl font-black text-amber-400">{gbp(totalDuePence)}</span>
+        </div>
+      </div>
+
+      {/* EPOS function keys + Delete / Order / Pay */}
+      <div className="p-2 border-t border-white/10 bg-slate-950 space-y-1.5 shrink-0">
+        {!paying && (
+          <div className="grid grid-cols-4 gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+            {(
+              [
+                { icon: '➕', label: 'Misc item', run: () => setIsCustomItemModalOpen(true) },
+                { icon: '🖨️', label: 'Print bill', run: printBill, needsLines: true },
+                { icon: '⏸️', label: 'Hold', run: handleHoldTicket, needsLines: true, disabled: !!settlingOrder },
+                { icon: '🔓', label: 'No sale', run: () => requireManagerAuth('No sale', 'Open the cash drawer without a sale', () => setIsNoSaleModalOpen(true)) },
+                { icon: '🏷️', label: 'Discount', run: () => openPayment('discount'), needsLines: true },
+                { icon: '💝', label: 'Gratuity', run: () => setIsTipOpen(true), needsLines: true },
+                { icon: '🧾', label: 'Petty cash', run: () => setCashMovement('petty') },
+                { icon: '💷', label: 'Adjust float', run: () => setCashMovement('float') },
+              ] as { icon: string; label: string; run: () => void; needsLines?: boolean; disabled?: boolean }[]
+            ).map((k) => (
+              <button
+                key={k.label}
+                type="button"
+                disabled={k.disabled || (k.needsLines && cartLines.length === 0)}
+                onClick={() => {
+                  playPOSTouchTone('tap')
+                  k.run()
+                }}
+                className="flex min-h-[3.25rem] flex-col items-center justify-center gap-0.5 rounded-xl border border-white/10 bg-white/5 px-1 py-1.5 text-white/80 hover:bg-white/10 active:scale-95 disabled:opacity-30"
+              >
+                <span className="text-sm" aria-hidden>{k.icon}</span>
+                <span className="leading-tight text-center">{k.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="grid grid-cols-[1fr_1.2fr_1.5fr] gap-1.5">
+          <button
+            type="button"
+            disabled={cartLines.length === 0 || paying !== null}
+            onClick={handleVoidTicket}
+            className="rounded-xl border border-rose-500/50 bg-rose-950/30 py-3.5 text-xs font-black uppercase tracking-wider text-rose-300 hover:bg-rose-900/50 disabled:opacity-30"
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            disabled={cartLines.length === 0 || !!settlingOrder || paying !== null}
+            onClick={handleSendToKitchen}
+            className="rounded-xl border border-orange-400/60 bg-orange-500/15 py-3.5 text-xs font-black uppercase tracking-wider text-orange-200 hover:bg-orange-500/25 disabled:opacity-30"
+            title="Send to the kitchen now, take payment on collection (F8)"
+          >
+            Order
+          </button>
+          <button
+            type="button"
+            disabled={cartLines.length === 0 || paying !== null}
+            onClick={() => openPayment('payment')}
+            className="rounded-xl bg-blue-500 py-3.5 text-sm font-black uppercase tracking-wider text-white shadow-glow hover:bg-blue-400 disabled:opacity-30"
+            title="Take payment (F4)"
+          >
+            Pay {cartLines.length > 0 ? gbp(totalDuePence) : ''}
+          </button>
+        </div>
+        {lastOrder && !paying && (
+          <button type="button" onClick={() => setReceiptOrder(lastOrder)} className="w-full pt-0.5 text-center text-[11px] font-bold text-amber-300/90 hover:underline">
+            🖨️ Reprint last receipt (#{lastOrder.shortId})
+          </button>
+        )}
+      </div>
+    </aside>
+  )
+
   return (
     // 100dvh, not 100vh: on iPad/phone browsers 100vh runs under the toolbar and hid the Pay row.
     <div className="relative h-screen supports-[height:100dvh]:h-dvh w-full bg-portal-dark text-slate-100 flex flex-col overflow-hidden select-none font-body">
-      {/* High-Tech Terminal Ambient Backdrop */}
       <FixedAmbientBackdrop variant="portal" />
-      {/* 1. TOP EPOS COMMAND & STATUS BAR */}
-      <header className="h-14 border-b border-white/10 bg-slate-900 px-2 sm:px-3 flex items-center justify-between gap-2 shrink-0 z-20">
-        <div className="flex items-center gap-2.5 shrink-0">
-          <div className="flex items-center gap-2 rounded-xl bg-black/60 border border-white/10 px-2.5 py-1">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse shadow-glow" />
-            <span className="font-mono text-xs font-black tracking-wider text-white">TILL 01</span>
-            <span className="text-[10px] text-white/50 font-bold hidden sm:inline">| MARKET SQ</span>
-          </div>
 
-          <div className="hidden xl:flex items-center gap-2 text-xs">
-            <span className="font-bold text-white/80">{user?.name}</span>
-            <span className="text-white/30">&bull;</span>
-            <span className="font-mono text-amber-300 font-bold">SHIFT #{shift.shiftNumber}</span>
-            <span className="text-white/30">&bull;</span>
-            <span className="font-mono text-emerald-400 font-bold">FLOAT {gbp(shift.startingFloat)}</span>
+      {/* Top bar: menu, till, status, orders */}
+      <header className="h-14 border-b border-white/10 bg-slate-900 px-2 sm:px-3 flex items-center justify-between gap-2 shrink-0 z-20">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={() => setIsSideMenuOpen(true)}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/5 text-lg text-white hover:bg-white/15"
+            aria-label="Till menu"
+            aria-haspopup="dialog"
+          >
+            ☰
+          </button>
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 font-mono text-xs font-black tracking-wider text-white">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
+              {tillName.toUpperCase()}
+            </p>
+            <p className="hidden truncate text-[10px] text-white/50 sm:block">
+              {user?.name} • Shift #{shift.shiftNumber} • {currentTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none [&>*]:shrink-0 py-1">
+        <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto scrollbar-none [&>*]:shrink-0 py-1">
           {isOnline ? (
             <SyncStatusPill compact />
           ) : (
-            <span
-              className="inline-flex bg-rose-950/60 border border-rose-500/40 text-rose-300 items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-bold"
-              title="Offline — sales are saved on this till and upload when the connection returns"
-            >
+            <span className="inline-flex bg-rose-950/60 border border-rose-500/40 text-rose-300 items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-bold" title="Offline — sales are saved on this till and upload when the connection returns">
               <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
               OFFLINE
             </span>
           )}
-
           <button
             type="button"
             onClick={() => setIsTimeclockOpen(true)}
-            className={`rounded-xl border px-2.5 py-1 text-xs font-bold transition flex items-center gap-1 ${
+            className={`rounded-xl border px-2.5 py-1.5 text-xs font-bold transition flex items-center gap-1 ${
               myClock ? (isOnBreak(myClock) ? 'border-amber-400/40 bg-amber-500/10 text-amber-300' : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300') : 'border-white/20 bg-white/10 text-white/70 hover:bg-white/20'
             }`}
-            title="Time clock — clock in, break, clock out"
+            title="Time clock"
+            aria-label="Time clock"
           >
             <span>⏱️</span>
             <span className="hidden xl:inline font-mono">{myClock ? (isOnBreak(myClock) ? 'On break' : formatDuration(workedMs(myClock))) : 'Clock in'}</span>
           </button>
-
+          {activeAlerts.length > 0 && (
+            <button type="button" onClick={() => setIsOnlineOrdersModalOpen(true)} className="rounded-xl bg-rose-600 px-3 py-1.5 font-body text-xs font-black text-white shadow-glow hover:bg-rose-500 transition animate-bounce flex items-center gap-1.5">
+              <span>🚨</span>
+              <span>
+                {activeAlerts.length} new online order{activeAlerts.length > 1 ? 's' : ''}
+              </span>
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setIsOpenChecksOpen(true)}
-            className={`rounded-xl border px-2.5 py-1 text-xs font-bold transition flex items-center gap-1.5 ${
-              openChecksCount > 0 ? 'border-amber-400/60 bg-amber-500/15 text-amber-300' : 'border-white/20 bg-white/10 text-white/70 hover:bg-white/20'
-            }`}
-            title="Open checks — sent to kitchen, not yet paid"
+            onClick={() => setOrdersTab(openChecksCount > 0 ? 'open' : heldTickets.length > 0 ? 'held' : 'complete')}
+            className={`rounded-xl border px-2.5 py-1.5 text-xs font-bold transition flex items-center gap-1.5 ${openChecksCount + heldTickets.length > 0 ? 'border-amber-400/60 bg-amber-500/15 text-amber-200' : 'border-white/20 bg-white/10 text-white/80 hover:bg-white/20'}`}
+            title="Held, open and completed orders — receipts and refunds"
           >
             <span>📋</span>
-            <span className="hidden sm:inline">Open Checks</span>
-            {openChecksCount > 0 && <span className="grid h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 font-mono text-[10px] font-black text-ink">{openChecksCount}</span>}
+            <span>Orders</span>
+            {openChecksCount + heldTickets.length > 0 && (
+              <span className="grid h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 font-mono text-[10px] font-black text-ink">{openChecksCount + heldTickets.length}</span>
+            )}
           </button>
-
-          {activeAlerts.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsOnlineOrdersModalOpen(true)}
-              className="rounded-xl bg-rose-600 px-3 py-1 font-body text-xs font-black text-white shadow-glow hover:bg-rose-500 transition animate-bounce flex items-center gap-1.5"
-            >
-              <span>🚨</span>
-              <span>{activeAlerts.length} Online Order{activeAlerts.length > 1 ? 's' : ''} Pending!</span>
-            </button>
-          )}
-
-          {parkedOrders.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsParkedModalOpen(true)}
-              className="rounded-xl bg-purple-600 px-3 py-1 font-body text-xs font-black text-white shadow hover:bg-purple-500 transition flex items-center gap-1"
-            >
-              <span>⏸️</span>
-              <span>Parked ({parkedOrders.length})</span>
-            </button>
-          )}
-
-          <div className="rounded-xl border border-white/10 bg-black/40 px-2.5 py-1 font-mono text-xs font-bold text-amber-300 hidden xl:block">
-            🕒 {currentTime.toLocaleTimeString()}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setIsRecentSalesModalOpen(true)}
-            className="rounded-xl border border-sky-400/40 bg-sky-500/10 px-2.5 py-1 text-xs font-bold text-sky-300 hover:bg-sky-400 hover:text-ink transition flex items-center gap-1"
-            title="Search orders, reprint receipts, or process refunds"
-            aria-label="Orders and refunds"
-          >
-            <span>🧾</span>
-            <span className="hidden md:inline">Orders &amp; Refunds</span>
-          </button>
-
-          <Link
-            to="/staff"
-            className="rounded-xl bg-amber-400 px-3 py-1 font-body text-xs font-black text-ink shadow hover:bg-amber-300 transition flex items-center gap-1"
-            aria-label="Kitchen display"
-          >
+          <Link to="/staff" className="rounded-xl bg-amber-400 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-amber-300 transition flex items-center gap-1" aria-label="Kitchen display">
             <span>👨‍🍳</span>
             <span className="hidden sm:inline">KDS</span>
           </Link>
-
-          <button
-            type="button"
-            onClick={() => setIsToolsMenuOpen((v) => !v)}
-            className={`rounded-xl border px-2.5 py-1 text-xs font-bold transition flex items-center gap-1 ${
-              isToolsMenuOpen ? 'border-amber-400 bg-amber-400 text-ink' : 'border-white/20 bg-white/10 text-white hover:bg-white/20'
-            }`}
-            aria-haspopup="menu"
-            aria-expanded={isToolsMenuOpen}
-            title="Float in/out, no sale, X-report, close shift, till settings"
-          >
-            <span aria-hidden>☰</span>
-            <span className="hidden sm:inline">More</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={logout}
-            className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50"
-            title="Lock terminal"
-            aria-label="Lock terminal"
-          >
+          <button type="button" onClick={logout} className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50" title="Lock till" aria-label="Lock till">
             🔒
           </button>
         </div>
       </header>
 
-      {/* "More" menu: rendered outside the header's scroll strip so it is never clipped. */}
-      {isToolsMenuOpen && (
-        <>
-          <div className="fixed inset-0 z-[55]" onClick={() => setIsToolsMenuOpen(false)} aria-hidden />
-          <div
-            role="menu"
-            aria-label="Till tools"
-            className="fixed right-2 top-14 z-[56] w-[min(18rem,calc(100vw-1rem))] max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-2 shadow-2xl"
-          >
-            <div className="px-2.5 pb-2 pt-1 text-[11px] text-white/60">
-              <p className="font-bold text-white">{user?.name}</p>
-              <p className="font-mono">
-                Shift #{shift.shiftNumber} &bull; Float {gbp(shift.startingFloat)} &bull; {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </p>
-            </div>
-            {(
-              [
-                { icon: '💵', label: 'Float in / out', hint: 'Petty cash paid in or out', run: () => setIsPayInOutModalOpen(true) },
-                {
-                  icon: '🔓',
-                  label: 'No sale (open drawer)',
-                  hint: 'Manager PIN',
-                  run: () =>
-                    requireManagerAuth('No Sale Drawer Kick', 'Authorize manual cash drawer opening without a sale', () => {
-                      setIsNoSaleModalOpen(true)
-                    }),
-                },
-                { icon: '📊', label: 'X-Report', hint: 'Mid-shift reading, shift stays open', run: () => setIsXReportOpen(true) },
-                {
-                  icon: '📋',
-                  label: 'Close shift (Z-Report)',
-                  hint: 'Count the drawer and end the day',
-                  danger: true,
-                  run: () => {
-                    // Unpaid checks would vanish from the books if the shift closed over them.
-                    if (openChecksCount > 0) {
-                      setFlash(`${openChecksCount} open check${openChecksCount > 1 ? 's' : ''} still unpaid — settle or void them before closing the shift.`)
-                      setIsOpenChecksOpen(true)
-                      return
-                    }
-                    setClosingDenoms({ ...EMPTY_DENOMINATIONS })
-                    setIsZReportOpen(true)
-                  },
-                },
-                {
-                  icon: '⚙️',
-                  label: 'Till settings',
-                  hint: 'Printer, drawer, sounds, lock — manager PIN',
-                  run: () =>
-                    requireManagerAuth('Till Settings', 'Printer, drawer, sounds and float defaults', () => {
-                      setIsSettingsModalOpen(true)
-                    }),
-                },
-              ] as { icon: string; label: string; hint: string; danger?: boolean; run: () => void }[]
-            ).map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setIsToolsMenuOpen(false)
-                  item.run()
-                }}
-                className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition ${
-                  item.danger ? 'text-rose-300 hover:bg-rose-950/60' : 'text-white hover:bg-white/10'
-                }`}
-              >
-                <span className="text-base" aria-hidden>{item.icon}</span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-bold">{item.label}</span>
-                  <span className="block text-[11px] text-white/50">{item.hint}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* 2. MAIN EPOS 3-PANEL WORKSPACE */}
       <div className="flex-1 flex overflow-hidden">
-        {/* PANEL A: VERTICAL CATEGORY SPEED BUTTONS */}
-        <aside className="hidden lg:flex w-44 xl:w-48 bg-slate-900 border-r border-white/10 flex-col shrink-0 p-2 space-y-1.5 overflow-y-auto scrollbar-none">
-          <button
-            type="button"
-            onClick={() => setSelectedCategory('ALL')}
-            className={`w-full py-3 px-2 rounded-xl text-xs font-black uppercase tracking-wider text-center border transition ${
-              selectedCategory === 'ALL'
-                ? 'bg-amber-400 text-ink shadow-glow border-amber-300'
-                : 'bg-white/5 text-white/80 border-white/10 hover:bg-white/10'
-            }`}
-          >
-            ★ All Items
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSelectedCategory('FAVOURITES')}
-            className={`w-full py-3 px-2 rounded-xl text-xs font-black uppercase tracking-wider text-center border transition ${
-              selectedCategory === 'FAVOURITES'
-                ? 'bg-rose-400 text-ink shadow-glow border-rose-300'
-                : 'bg-rose-500/10 text-rose-300 border-rose-400/30 hover:bg-rose-500/20'
-            }`}
-            title="Popular items plus the best sellers of the last 30 days"
-          >
-            ❤️ Favourites
-          </button>
-
-          {CATEGORIES.map((cat) => {
-            const isSelected = selectedCategory === cat.id
-            return (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`w-full py-3 px-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-left border transition flex items-center justify-between ${getCategoryColor(
-                  cat.id,
-                  isSelected
-                )}`}
-              >
-                <span className="truncate">{cat.label}</span>
-                {isSelected && <span className="text-[10px]">▶</span>}
-              </button>
-            )
-          })}
-
-          {/* Speed Fast Keys (1-Tap Drinks & Crisps) */}
-          <div className="pt-3 border-t border-white/10 space-y-1">
-            <p className="text-[9px] font-black uppercase tracking-widest text-white/40 px-1">Speed Fast Keys</p>
-            {FAST_BAR_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleQuickAdd(item.name, item.price, item.id, item.cat)}
-                className="w-full rounded-lg bg-black/40 border border-white/10 p-1.5 text-left hover:border-amber-400 transition flex items-center justify-between text-[11px]"
-              >
-                <span className="truncate text-white font-bold">{item.name}</span>
-                <span className="font-mono text-amber-300 font-bold shrink-0">{gbp(item.price)}</span>
-              </button>
-            ))}
-
-            {/* Manual Custom Amount Ring-Up */}
-            <button
-              type="button"
-              onClick={() => {
-                playPOSTouchTone('tap')
-                setIsCustomItemModalOpen(true)
-              }}
-              className="w-full mt-2 rounded-xl bg-purple-600/30 border border-purple-400/40 p-2 text-left hover:bg-purple-600 hover:text-white transition flex items-center justify-between text-xs group"
-              title="Add any custom item or amount"
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm">➕</span>
-                <span className="text-purple-200 group-hover:text-white font-black uppercase text-[11px]">Manual Item</span>
-              </div>
-              <span className="font-mono text-amber-300 font-bold text-[10px]">Custom £</span>
-            </button>
-          </div>
-        </aside>
-
-        {/* PANEL B: TOUCH ITEM GRID & SPEED SPUD BUILDER */}
-        <section className="flex-1 flex flex-col min-w-0 bg-slate-950">
-          {/* Tablet / phone: categories as a swipeable strip */}
-          <div className="lg:hidden flex gap-1.5 overflow-x-auto scrollbar-none px-2 pt-2 pb-1 shrink-0 [&>button]:shrink-0">
-            <button
-              type="button"
-              onClick={() => setSelectedCategory('ALL')}
-              className={`rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider border transition ${
-                selectedCategory === 'ALL' ? 'bg-amber-400 text-ink border-amber-300' : 'bg-white/5 text-white/80 border-white/10'
-              }`}
-            >
-              ★ All
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedCategory('FAVOURITES')}
-              className={`rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider border transition ${
-                selectedCategory === 'FAVOURITES' ? 'bg-rose-400 text-ink border-rose-300' : 'bg-rose-500/10 text-rose-300 border-rose-400/30'
-              }`}
-            >
-              ❤️ Favourites
-            </button>
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider border transition ${getCategoryColor(cat.id, selectedCategory === cat.id)}`}
-              >
-                {cat.label}
-              </button>
-            ))}
-            {FAST_BAR_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleQuickAdd(item.name, item.price, item.id, item.cat)}
-                className="rounded-full border border-white/10 bg-black/40 px-3 py-1.5 text-[11px] font-bold text-white"
-              >
-                {item.name} <span className="font-mono text-amber-300">{gbp(item.price)}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="p-2.5 border-b border-white/10 bg-slate-900/50 flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                const baseSpud = products.find((p) => p.id === 'spud-just-a') || products[0]
-                if (baseSpud) handleItemClick(baseSpud)
-              }}
-              className="shrink-0 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 py-2.5 px-4 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap"
-            >
-              <span className="text-base" aria-hidden>🥔</span>
-              <span className="hidden 2xl:inline">Build Custom Jacket Potato</span>
-              <span className="2xl:hidden">Build a Spud</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                playPOSTouchTone('tap')
-                setIsCustomItemModalOpen(true)
-              }}
-              className="rounded-xl bg-purple-600/30 border border-purple-400/50 py-2.5 px-3 font-body text-xs font-black uppercase tracking-wider text-purple-200 hover:bg-purple-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1.5 shrink-0 shadow whitespace-nowrap"
-              title="Add any custom item and price directly to this order"
-            >
-              <span className="text-sm" aria-hidden>➕</span>
-              <span className="hidden 2xl:inline">Manual Item /</span>
-              <span>Custom £</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                playPOSTouchTone('tap')
-                setIsBarcodeModalOpen(true)
-              }}
-              className="rounded-xl bg-sky-600/20 border border-sky-400/40 py-2.5 px-3 font-body text-xs font-bold text-sky-300 hover:bg-sky-600 hover:text-white transition active:scale-95 flex items-center justify-center gap-1 shrink-0"
-              title="Quick Barcode or SKU Scanner"
-              aria-label="Barcode or SKU"
-            >
-              <span aria-hidden>📟</span>
-              <span className="hidden 2xl:inline">Barcode / SKU</span>
-            </button>
-
-            {/* Fills what is left of the row; drops to its own line on phones. */}
-            <div className="min-w-[8rem] flex-1 basis-full sm:basis-0">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="🔍 Search menu or SKU..."
-                className="w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-white placeholder-white/40 focus:border-amber-400 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {/* Tiles size to the space actually left between the category rail and the ticket. */}
-          <div className="flex-1 p-3 pb-24 lg:pb-3 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2.5 auto-rows-max content-start">
-            {filteredProducts.map((prod) => {
-              const soldOut = isOutOfStock(prod) || prod.available === false
-              const isLowStock = !soldOut && typeof prod.stockQuantity === 'number' && prod.stockQuantity <= (prod.lowStockThreshold || 5)
-
-              return (
+        {/* Products — or, while paying, the payment screen in their place (EPOS) */}
+        {paying ? (
+          <PaymentScreen
+            key={settlingOrder?.id || 'ticket'}
+            className="fixed inset-0 z-[45] lg:static lg:z-auto flex-1"
+            initialTab={paying}
+            title={ticketTitle}
+            subtotalPence={subtotalPence}
+            discountPence={discountPence}
+            discountLabel={discountReason}
+            tipPence={tipPence}
+            vatPence={vatIncludedPence}
+            showVat={showVat}
+            lines={cartLines}
+            tipPromptEnabled={tillSettings.tipPrompt}
+            splitItemsDisabledReason={settlingOrder ? 'This order was already sent to the kitchen as one ticket — split it by guest instead.' : undefined}
+            onSetTip={setTipPence}
+            onApplyComp={handleApplyComp}
+            onClearDiscount={handleClearDiscount}
+            onSplitItems={handleSplitItems}
+            onComplete={completePayment}
+            onClose={() => setPaying(null)}
+          />
+        ) : (
+          <section className="flex-1 flex flex-col min-w-0 bg-slate-950">
+            {/* Breadcrumb + search (EPOS: HOME › JUST SPUDS) */}
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-slate-900/60 px-2.5 py-2">
+              <nav className="flex min-w-0 items-center gap-1.5 text-xs font-black uppercase tracking-wider" aria-label="Menu path">
                 <button
-                  key={prod.id}
                   type="button"
-                  disabled={soldOut}
-                  onClick={() => handleItemClick(prod)}
-                  className={`rounded-2xl border p-3 text-left transition flex flex-col justify-between min-h-[115px] group shadow-md ${
-                    soldOut
-                      ? 'border-red-500/20 bg-slate-900/40 opacity-60 cursor-not-allowed'
-                      : 'border-white/15 bg-slate-900 hover:border-amber-400 hover:bg-slate-800 active:scale-95'
+                  onClick={() => {
+                    setBrowse('HOME')
+                    setSearchQuery('')
+                  }}
+                  className={`rounded-lg px-2.5 py-1.5 ${browse === 'HOME' && !searchQuery ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
+                >
+                  Home
+                </button>
+                {(browse !== 'HOME' || searchQuery) && (
+                  <>
+                    <span className="text-white/30" aria-hidden>
+                      ›
+                    </span>
+                    <span className="truncate text-amber-300">{searchQuery ? `“${searchQuery}”` : browseLabel}</span>
+                  </>
+                )}
+              </nav>
+              <div className="ml-auto flex min-w-[10rem] flex-1 items-center gap-1.5 sm:flex-none sm:w-64">
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="🔍 Search the menu"
+                  className="w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-white placeholder-white/40 focus:border-amber-400 focus:outline-none"
+                  aria-label="Search the menu"
+                />
+                <button type="button" onClick={() => setIsBarcodeModalOpen(true)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/5 text-sm hover:bg-white/15" title="Barcode / SKU" aria-label="Barcode or SKU">
+                  📟
+                </button>
+              </div>
+            </div>
+
+            {/* Quick category strip — one tap between categories */}
+            <div className="flex shrink-0 gap-1.5 overflow-x-auto scrollbar-none px-2.5 py-2 [&>button]:shrink-0">
+              {[{ id: 'FAVOURITES', label: '★ Favourites' }, ...categories].map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setBrowse(c.id)
+                    setSearchQuery('')
+                  }}
+                  className={`rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition ${
+                    browse === c.id && !searchQuery ? 'border-amber-300 bg-amber-400 text-ink' : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
                   }`}
                 >
-                  <div>
-                    <div className="flex items-start justify-between gap-1">
-                      <h3 className={`font-body text-xs font-black line-clamp-2 ${soldOut ? 'text-white/50' : 'text-white group-hover:text-amber-300'}`}>
-                        {prod.name}
-                      </h3>
-                      {prod.vegetarian && (
-                        <span className="text-[10px] shrink-0" title="Vegetarian">🌿</span>
-                      )}
-                    </div>
-                    <p className="font-body text-[10px] text-white/50 line-clamp-1 mt-0.5">
-                      {prod.description}
-                    </p>
-
-                    {/* Stock & Channel Tags */}
-                    <div className="mt-1.5 flex items-center gap-1 flex-wrap">
-                      {soldOut ? (
-                        <span className="rounded bg-red-950/90 border border-red-500/60 px-1.5 py-0.2 text-[9px] font-black text-red-300 tracking-wider">
-                          SOLD OUT
-                        </span>
-                      ) : isLowStock ? (
-                        <span className="rounded bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.2 text-[9px] font-bold text-amber-300">
-                          ⚠️ Low: {prod.stockQuantity}
-                        </span>
-                      ) : (
-                        <span className="text-[9px] text-white/40 font-mono">
-                          Stock: {prod.stockQuantity ?? 45}
-                        </span>
-                      )}
-
-                      {prod.channelVisibility === 'in_store_only' && (
-                        <span className="rounded bg-purple-950/60 border border-purple-500/30 px-1 py-0.2 text-[8px] font-bold text-purple-300">
-                          Store Only
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between">
-                    <span className="font-mono text-sm font-black text-amber-300">
-                      {gbp(prod.price)}
-                    </span>
-                    <span
-                      className={`rounded-lg px-2 py-0.5 text-[10px] font-bold transition ${
-                        soldOut
-                          ? 'bg-red-950/40 text-red-400'
-                          : 'bg-white/10 text-white group-hover:bg-amber-400 group-hover:text-ink'
-                      }`}
-                    >
-                      {soldOut ? 'Out' : '+ Add'}
-                    </span>
-                  </div>
+                  {c.label}
                 </button>
-              )
-            })}
-          </div>
-        </section>
+              ))}
+            </div>
 
-        {/* Tablet / phone: sticky total bar that opens the ticket sheet */}
-        {!isTicketSheetOpen && (
+            <div className="flex-1 overflow-y-auto overscroll-contain p-2.5 pb-24 lg:pb-3">
+              {browse === 'HOME' && !searchQuery ? (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5">
+                  {[{ id: 'FAVOURITES', label: '★ Favourites' }, ...categories].map((c) => {
+                    const count = c.id === 'FAVOURITES' ? storeProducts.filter((p) => favouriteIds.has(p.id)).length : storeProducts.filter((p) => p.category === c.id).length
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          playPOSTouchTone('tap')
+                          setBrowse(c.id)
+                        }}
+                        className={`flex min-h-[96px] flex-col justify-between rounded-2xl border bg-gradient-to-br p-3 text-left shadow-md transition hover:brightness-125 active:scale-95 ${
+                          CATEGORY_TILE[c.id] || 'from-white/15 to-white/5 border-white/20 text-white'
+                        }`}
+                      >
+                        <span className="text-sm font-black uppercase tracking-wider leading-tight">{c.label}</span>
+                        <span className="text-[11px] font-bold opacity-70">
+                          {count} item{count === 1 ? '' : 's'}
+                        </span>
+                      </button>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomItemModalOpen(true)}
+                    className="flex min-h-[96px] flex-col justify-between rounded-2xl border border-dashed border-purple-400/50 bg-purple-500/10 p-3 text-left text-purple-100 hover:bg-purple-500/20 active:scale-95"
+                  >
+                    <span className="text-sm font-black uppercase tracking-wider">➕ Misc item</span>
+                    <span className="text-[11px] font-bold opacity-70">Any name, any price</span>
+                  </button>
+                </div>
+              ) : visibleProducts.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-white/15 p-10 text-center text-xs text-white/45">{searchQuery ? 'Nothing on the menu matches that.' : 'No items in this category yet.'}</p>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2.5 auto-rows-max content-start">
+                  {visibleProducts.map((prod) => {
+                    const soldOut = isSoldOut(prod)
+                    const low = !soldOut && typeof prod.stockQuantity === 'number' && prod.stockQuantity <= (prod.lowStockThreshold ?? 5)
+                    return (
+                      <button
+                        key={prod.id}
+                        type="button"
+                        disabled={soldOut}
+                        onClick={() => handleItemClick(prod)}
+                        className={`relative flex min-h-[96px] flex-col justify-between rounded-2xl border p-3 text-left shadow-md transition ${
+                          soldOut ? 'cursor-not-allowed border-red-500/20 bg-slate-900/40 opacity-55' : 'border-white/15 bg-slate-900 hover:border-amber-400 hover:bg-slate-800 active:scale-95'
+                        }`}
+                      >
+                        <span className={`line-clamp-2 text-[13px] font-black leading-tight ${soldOut ? 'text-white/50' : 'text-white'}`}>{prod.name}</span>
+                        <span className="mt-2 flex items-end justify-between gap-1">
+                          <span className="font-mono text-sm font-black text-amber-300">{gbp(prod.price)}</span>
+                          {soldOut ? (
+                            <span className="rounded bg-red-950/90 border border-red-500/60 px-1.5 text-[9px] font-black text-red-300">SOLD OUT</span>
+                          ) : low ? (
+                            <span className="rounded bg-amber-500/20 border border-amber-400/50 px-1.5 text-[9px] font-bold text-amber-300">{prod.stockQuantity} left</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Tablet / phone: total bar that opens the ticket sheet */}
+        {!isTicketSheetOpen && !paying && (
           <div className="lg:hidden fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-slate-900/95 backdrop-blur px-3 py-2 flex items-center gap-2 shadow-2xl">
-            <button
-              type="button"
-              onClick={() => setIsTicketSheetOpen(true)}
-              className="flex-1 flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-left"
-              aria-label="View ticket"
-            >
+            <button type="button" onClick={() => setIsTicketSheetOpen(true)} className="flex-1 flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-left" aria-label="View ticket">
               <span className="text-xs font-bold text-white">
-                🧾 {cartLines.reduce((n, l) => n + l.qty, 0)} item{cartLines.reduce((n, l) => n + l.qty, 0) === 1 ? '' : 's'}
-                {settlingOrder && <span className="ml-1 text-amber-300">• settling #{settlingOrder.shortId}</span>}
+                🧾 {itemCount} item{itemCount === 1 ? '' : 's'}
+                {settlingOrder && <span className="ml-1 text-amber-300">• #{settlingOrder.shortId}</span>}
               </span>
               <span className="font-mono text-lg font-black text-amber-300">{gbp(totalDuePence)}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setIsTicketSheetOpen(true)}
-              disabled={cartLines.length === 0}
-              className="rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-ink shadow-glow disabled:opacity-40"
-            >
-              Pay →
+            <button type="button" onClick={() => openPayment('payment')} disabled={cartLines.length === 0} className="rounded-xl bg-blue-500 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-white shadow-glow disabled:opacity-40">
+              Pay
             </button>
           </div>
         )}
 
-        {/* PANEL C: EPOS RECEIPT TAPE & NUMPAD CONSOLE */}
-        <aside
-          className={`${isTicketSheetOpen ? 'flex' : 'hidden'} lg:flex fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto w-full lg:w-96 xl:w-[420px] bg-slate-900 lg:border-l border-white/10 flex-col shrink-0 shadow-2xl overflow-y-auto overscroll-contain`}
-          aria-label="Till ticket"
-        >
-          <div className="lg:hidden flex items-center justify-between border-b border-white/10 bg-black/60 px-3 py-2 shrink-0">
-            <span className="text-xs font-black uppercase tracking-wider text-white/70">Ticket</span>
-            <button
-              type="button"
-              onClick={() => setIsTicketSheetOpen(false)}
-              className="rounded-xl border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold text-white"
-            >
-              ← Back to menu
-            </button>
-          </div>
-          <div className="p-2.5 border-b border-white/10 bg-black/40 space-y-2 shrink-0">
-            <div className="flex flex-wrap items-center justify-between gap-1.5">
-              <div className="flex rounded-xl bg-white/5 p-1 border border-white/10 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setOrderType('takeaway')}
-                  className={`px-2 xl:px-3 py-1 rounded-lg font-black whitespace-nowrap transition ${
-                    orderType === 'takeaway' ? 'bg-amber-400 text-ink shadow-glow' : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  🛍️ Takeaway
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOrderType('eat_in')}
-                  className={`px-2 xl:px-3 py-1 rounded-lg font-black whitespace-nowrap transition ${
-                    orderType === 'eat_in' ? 'bg-amber-400 text-ink shadow-glow' : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  🍽️ Eat In
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOrderType('phone')}
-                  className={`px-2 xl:px-3 py-1 rounded-lg font-black whitespace-nowrap transition ${
-                    orderType === 'phone' ? 'bg-amber-400 text-ink shadow-glow' : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  📞 Phone
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={handleParkTicket}
-                  disabled={cartLines.length === 0 || !!settlingOrder}
-                  className="rounded-xl border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-white/80 hover:bg-white/15 disabled:opacity-30"
-                  title="Park ticket to serve next customer (F9)"
-                >
-                  ⏸️ Hold
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearAllTicket}
-                  disabled={cartLines.length === 0}
-                  className="rounded-xl border border-red-500/20 bg-red-950/20 px-2.5 py-1 text-xs font-bold text-red-400 hover:bg-red-900/40 disabled:opacity-30"
-                  title="Void entire ticket"
-                >
-                  Void
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-12 gap-1.5">
-              <div className="col-span-4 relative">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs">🔔</span>
-                <input
-                  type="text"
-                  value={buzzerNumber}
-                  onChange={(e) => setBuzzerNumber(e.target.value)}
-                  placeholder="Buzzer #"
-                  className="w-full rounded-xl border border-white/10 bg-black/60 pl-7 pr-2 py-1.5 font-mono text-xs font-black text-amber-300 placeholder-white/30 focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-              <div className="col-span-3 relative">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs">🪑</span>
-                <input
-                  type="text"
-                  value={tableNumber}
-                  onChange={(e) => setTableNumber(e.target.value)}
-                  placeholder="Tbl #"
-                  className="w-full rounded-xl border border-white/10 bg-black/60 pl-7 pr-2 py-1.5 font-mono text-xs font-black text-indigo-300 placeholder-white/30 focus:border-indigo-400 focus:outline-none"
-                />
-              </div>
-              <div className="col-span-5 flex gap-1">
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Guest name..."
-                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:border-amber-400 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => setIsCustomerLookupOpen(true)}
-                  className={`shrink-0 rounded-xl border px-2 text-xs font-bold transition ${attachedCustomer ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300' : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/15'}`}
-                  title={attachedCustomer ? `${attachedCustomer.phone} • ${attachedCustomer.visits} visits` : 'Attach customer (phone lookup)'}
-                  aria-label="Attach customer"
-                >
-                  👤
-                </button>
-              </div>
-            </div>
-
-            {attachedCustomer && (
-              <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[10px]">
-                <span className="text-emerald-200 truncate">
-                  <span className="font-mono">{attachedCustomer.phone}</span> &bull; {attachedCustomer.visits} {attachedCustomer.visits === 1 ? 'visit' : 'visits'} &bull; {gbp(attachedCustomer.lifetimeSpendPence)} lifetime
-                </span>
-                <button type="button" onClick={() => setAttachedCustomer(null)} className="text-white/50 hover:text-white" aria-label="Detach customer">✕</button>
-              </div>
-            )}
-
-            {settlingOrder && (
-              <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px]">
-                <span className="text-amber-200">
-                  Settling open check <span className="font-mono font-black">#{settlingOrder.shortId}</span> — add items freely; removing a sent item needs a void reason.
-                </span>
-                <button type="button" onClick={resetTicket} className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 font-bold text-white/70 hover:bg-white/15">
-                  Put back
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Digital Receipt Journal — keeps a usable height; on short screens the
-              whole sheet scrolls instead, so the pay buttons are never cut off. */}
-          <div className="flex-1 min-h-[7rem] p-2.5 overflow-y-auto space-y-1.5 bg-black/20">
-            {cartLines.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-white/40">
-                <span className="text-4xl mb-2">🧾</span>
-                <p className="font-body text-xs font-black uppercase tracking-wider">Till Ticket is Empty</p>
-                <p className="font-body text-[11px] text-white/50 mt-0.5">Tap menu items on left to build order</p>
-              </div>
-            ) : (
-              cartLines.map((line) => {
-                const isSelected = selectedLineId === line.lineId
-                return (
-                  <div
-                    key={line.lineId}
-                    onClick={() => setSelectedLineId(line.lineId!)}
-                    className={`rounded-xl border p-2 text-xs transition cursor-pointer ${
-                      isSelected
-                        ? 'border-amber-400 bg-amber-400/10 shadow'
-                        : 'border-white/10 bg-black/40 hover:border-white/20'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-1">
-                      <div className="font-black text-white text-[13px]">
-                        <span>{line.qty}x {line.name}</span>
-                      </div>
-                      <span className="font-mono font-bold text-amber-300">
-                        {gbp(lineUnitPrice(line) * line.qty)}
-                      </span>
-                    </div>
-
-                    {/* Toast-Style Conversational Modifiers */}
-                    {line.conversationalModifiers && line.conversationalModifiers.length > 0 && (
-                      <div className="pl-3 flex flex-wrap gap-1 mt-1">
-                        {line.conversationalModifiers.map((mod, idx) => (
-                          <span
-                            key={idx}
-                            className={`px-1.5 py-0.5 text-[9px] rounded font-bold uppercase tracking-tight ${
-                              mod.type === 'extra'
-                                ? 'bg-amber-400/25 text-amber-300 border border-amber-400/40 font-black'
-                                : mod.type === 'no'
-                                ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40 line-through font-bold'
-                                : mod.type === 'lite'
-                                ? 'bg-sky-500/25 text-sky-300 border border-sky-500/40'
-                                : mod.type === 'side'
-                                ? 'bg-purple-500/25 text-purple-300 border border-purple-500/40'
-                                : 'bg-white/10 text-white/70'
-                            }`}
-                          >
-                            {mod.type === 'extra' && '+ '}
-                            {mod.type === 'no' && 'NO '}
-                            {mod.type === 'lite' && 'LITE '}
-                            {mod.name}
-                            {mod.type === 'side' && ' (SIDE)'}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Kitchen Station & Rush Indicators */}
-                    {(line.station || line.isRush) && (
-                      <div className="pl-3 flex items-center gap-1 mt-0.5 text-[9px]">
-                        {line.station && (
-                          <span className="font-black uppercase text-white/40 px-1 py-0.2 rounded bg-white/5">
-                            {line.station}
-                          </span>
-                        )}
-                        {line.isRush && (
-                          <span className="font-black uppercase text-rose-400 animate-pulse">
-                            🔥 RUSH
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {line.extras && line.extras.length > 0 && (
-                      <div className="pl-3 text-[10px] text-white/70 space-y-0.5 mt-0.5">
-                        {line.extras.map((ext, idx) => (
-                          <p key={idx}>↳ {ext}</p>
-                        ))}
-                      </div>
-                    )}
-                    {line.sauces && line.sauces.length > 0 && (
-                      <p className="pl-3 text-[10px] text-amber-300/80">
-                        ↳ Sauce: {line.sauces.join(', ')}
-                      </p>
-                    )}
-                    {line.meal && (
-                      <p className="pl-3 text-[10px] font-bold text-emerald-400">
-                        ↳ Combo Deal (+£1.80)
-                      </p>
-                    )}
-                    {line.notes && (
-                      <p className="pl-3 text-[10px] italic text-rose-300">
-                        * Note: {line.notes}
-                      </p>
-                    )}
-                    {typeof line.priceOverridePence === 'number' && (
-                      <p className="pl-3 text-[10px] font-bold text-sky-300">↳ Price override {gbp(line.priceOverridePence)}</p>
-                    )}
-
-                    {isSelected && (
-                      <div className="mt-2 pt-1.5 border-t border-white/10 flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); handleUpdateLineQty(line.lineId!, -1) }}
-                            className="grid h-6 w-6 place-items-center rounded bg-white/10 text-white font-bold hover:bg-white/20"
-                          >
-                            -
-                          </button>
-                          <span className="font-mono text-xs font-bold text-white w-5 text-center">
-                            {line.qty}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); handleUpdateLineQty(line.lineId!, 1) }}
-                            className="grid h-6 w-6 place-items-center rounded bg-white/10 text-white font-bold hover:bg-white/20"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); setIsLineNoteModalOpen(true) }}
-                            className="rounded px-2 py-0.5 text-[10px] font-bold bg-white/10 text-white/80 hover:bg-white/20"
-                          >
-                            + Note
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setPriceOverrideLineId(line.lineId)
-                              setPriceOverrideInput((lineUnitPrice(line) / 100).toFixed(2))
-                            }}
-                            className="rounded px-2 py-0.5 text-[10px] font-bold bg-white/10 text-white/80 hover:bg-white/20"
-                            title="Manager price override"
-                          >
-                            £ Price
-                          </button>
-                          {settlingOrder && settlingOrder.lines.some((l) => l.lineId === line.lineId) ? (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); setLineVoidTarget(line) }}
-                              className="rounded px-2 py-0.5 text-[10px] font-bold bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900"
-                              title="Item already sent to kitchen — void with reason"
-                            >
-                              Void
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleVoidSelectedLine() }}
-                              className="rounded px-2 py-0.5 text-[10px] font-bold bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900"
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )
-              })
-            )}
-          </div>
-
-          {/* Running Totals & VAT Breakdown */}
-          <div className="p-2.5 border-t border-white/10 bg-black/60 space-y-1 text-xs shrink-0">
-            <div className="flex justify-between text-white/70 text-[11px]">
-              <span>Items: {cartLines.reduce((a, b) => a + b.qty, 0)} &bull; Subtotal</span>
-              <span className="font-mono font-bold">{gbp(subtotalPence)}</span>
-            </div>
-            {discountPence > 0 && (
-              <div className="flex justify-between font-bold text-amber-300 text-[11px]">
-                <span>Discount Applied</span>
-                <span className="font-mono">-{gbp(discountPence)}</span>
-              </div>
-            )}
-            {tipPence > 0 && (
-              <div className="flex justify-between font-bold text-emerald-300 text-[11px]">
-                <span>Tip</span>
-                <span className="font-mono">+{gbp(tipPence)} <button type="button" onClick={() => setTipPence(0)} className="ml-1 text-white/40 hover:text-white" aria-label="Remove tip">✕</button></span>
-              </div>
-            )}
-            {showVat && (
-              <div className="flex justify-between text-white/40 text-[10px]">
-                <span>VAT included{orderType === 'eat_in' ? ' (eat in)' : ''}</span>
-                <span className="font-mono">{gbp(vatIncludedPence)}</span>
-              </div>
-            )}
-            <div className="flex justify-between items-baseline pt-1 border-t border-white/15">
-              <span className="font-black text-sm text-white uppercase tracking-wider">Total Due</span>
-              <span className="font-mono text-2xl font-black text-amber-400">
-                {gbp(totalDuePence)}
-              </span>
-            </div>
-          </div>
-
-          {/* Change Display Bar */}
-          {tenderedCashPence > 0 && (
-            <div
-              className={`p-2 text-center text-xs font-black border-t transition shrink-0 ${
-                tenderedCashPence >= totalDuePence
-                  ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
-                  : 'bg-rose-950/80 border-rose-500/50 text-rose-300'
-              }`}
-            >
-              {tenderedCashPence >= totalDuePence ? (
-                <div className="flex justify-between items-center px-2">
-                  <span>Tendered: {gbp(tenderedCashPence)}</span>
-                  <span className="text-sm">CHANGE DUE: {gbp(changeDuePence)}</span>
-                </div>
-              ) : (
-                <span>Underpaid by {gbp(totalDuePence - tenderedCashPence)}</span>
-              )}
-            </div>
-          )}
-
-          {/* ON-SCREEN TENDER NUMPAD, FAST CASH & MULTI-TENDER BAR */}
-          <div className="p-2 border-t border-white/10 bg-slate-950 space-y-1.5 shrink-0">
-            {/* Fast Cash Row */}
-            <div className="grid grid-cols-4 gap-1 text-xs">
-              <button
-                type="button"
-                onClick={() => setTenderNumpadValue((totalDuePence / 100).toFixed(2))}
-                className="rounded-lg bg-white/10 py-1.5 font-mono text-[11px] font-black text-white hover:bg-white/20 active:scale-95"
-              >
-                Exact
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSetQuickCash(10)}
-                className="rounded-lg bg-emerald-500/20 border border-emerald-500/40 py-1.5 font-mono text-[11px] font-black text-emerald-300 hover:bg-emerald-500/30 active:scale-95"
-              >
-                £10
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSetQuickCash(20)}
-                className="rounded-lg bg-emerald-500/20 border border-emerald-500/40 py-1.5 font-mono text-[11px] font-black text-emerald-300 hover:bg-emerald-500/30 active:scale-95"
-              >
-                £20
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSetQuickCash(50)}
-                className="rounded-lg bg-emerald-500/20 border border-emerald-500/40 py-1.5 font-mono text-[11px] font-black text-emerald-300 hover:bg-emerald-500/30 active:scale-95"
-              >
-                £50
-              </button>
-            </div>
-
-            {/* Touch Numpad */}
-            <div className="grid grid-cols-6 gap-1 text-xs font-mono">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.', 'C'].map((char) => (
-                <button
-                  key={char}
-                  type="button"
-                  onClick={() => handleNumpadPress(char)}
-                  className={`rounded-lg py-1.5 font-bold transition active:scale-95 ${
-                    char === 'C'
-                      ? 'bg-red-950/40 border border-red-500/30 text-red-300 hover:bg-red-900/40'
-                      : 'bg-white/5 border border-white/10 text-white hover:bg-white/15'
-                  }`}
-                >
-                  {char}
-                </button>
-              ))}
-            </div>
-
-            {/* SEND (pay later) + 3 Primary Tender Action Buttons: CASH, CARD, SPLIT PAY */}
-            <div className="grid grid-cols-4 gap-1.5 pt-1">
-              <button
-                type="button"
-                disabled={cartLines.length === 0 || !!settlingOrder}
-                onClick={handleSendToKitchen}
-                className="rounded-xl bg-orange-500 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-ink shadow-glow hover:bg-orange-400 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-                title="Fire to kitchen now, take payment at collection (F8)"
-              >
-                <span className="text-base">🍳</span>
-                <span>SEND</span>
-              </button>
-
-              {/* CASH TENDER BUTTON */}
-              <button
-                type="button"
-                disabled={cartLines.length === 0}
-                onClick={() => handleCompletePayment('cash')}
-                title="Cash tender (F4)"
-                className="rounded-xl bg-emerald-500 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-ink shadow-glow hover:bg-emerald-400 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-              >
-                <span className="text-base">💵</span>
-                <span>CASH &amp; POP</span>
-              </button>
-
-              {/* CARD TENDER BUTTON */}
-              <button
-                type="button"
-                disabled={cartLines.length === 0}
-                onClick={() => handleCompletePayment('card')}
-                title="Card tender (F5)"
-                className="rounded-xl bg-blue-500 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-white shadow-glow hover:bg-blue-400 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-              >
-                <span className="text-base">💳</span>
-                <span>CARD / SUMUP</span>
-              </button>
-
-              {/* SPLIT PAY BUTTON */}
-              <button
-                type="button"
-                disabled={cartLines.length === 0}
-                onClick={handleOpenSplitModal}
-                className="rounded-xl bg-purple-600 py-3 px-1 font-body text-[11px] font-black uppercase tracking-wider text-white shadow-glow hover:bg-purple-500 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-                title="Split bill: some online/card and rest cash (F6)"
-              >
-                <span className="text-base">🔀</span>
-                <span>SPLIT PAY</span>
-              </button>
-            </div>
-
-            {/* Toast POS Fast Utility Strip */}
-            <div className="grid grid-cols-4 gap-1.5 pt-1.5 border-t border-white/10 text-[11px] font-bold">
-              <button
-                type="button"
-                disabled={cartLines.length === 0}
-                onClick={() => { playPOSTouchTone('tap'); setIsBillSplitModalOpen(true) }}
-                className="rounded-xl bg-indigo-500/20 border border-indigo-500/40 py-2 px-1 text-indigo-300 hover:bg-indigo-500/30 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-                title="Split bill evenly (2-way, 3-way, 4-way) or by item"
-              >
-                <span className="text-sm">➗</span>
-                <span>Split Bill</span>
-              </button>
-              <button
-                type="button"
-                disabled={cartLines.length === 0}
-                onClick={() => { playPOSTouchTone('tap'); setIsCompsModalOpen(true) }}
-                className="rounded-xl bg-amber-500/20 border border-amber-500/40 py-2 px-1 text-amber-300 hover:bg-amber-500/30 transition active:scale-95 disabled:opacity-30 flex flex-col items-center justify-center gap-0.5"
-                title="Manager Comps & Discounts"
-              >
-                <span className="text-sm">🏷️</span>
-                <span>Comps</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  playPOSTouchTone('tap')
-                  window.open('/cfd', 'JustSpudsCFD', 'width=1024,height=650')
-                }}
-                className="rounded-xl bg-teal-500/20 border border-teal-500/40 py-2 px-1 text-teal-300 hover:bg-teal-500/30 transition active:scale-95 flex flex-col items-center justify-center gap-0.5"
-                title="Launch Customer Facing Display (CFD) in secondary window"
-              >
-                <span className="text-sm">📺</span>
-                <span>CFD Screen</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => { playPOSTouchTone('tap'); setIsFastSearchOpen(true) }}
-                className="rounded-xl bg-white/10 border border-white/15 py-2 px-1 text-white/80 hover:bg-white/20 transition active:scale-95 flex flex-col items-center justify-center gap-0.5"
-                title="Search menu (Ctrl+K or /)"
-              >
-                <span className="text-sm">🔍</span>
-                <span>Find (/)</span>
-              </button>
-            </div>
-
-            {/* Reprint Bar */}
-            {lastOrder && (
-              <div className="pt-1 flex items-center justify-between text-[10px]">
-                <button
-                  type="button"
-                  onClick={() => setReceiptOrder(lastOrder)}
-                  className="text-amber-300 hover:underline flex items-center gap-1 font-bold"
-                >
-                  <span>🖨️</span>
-                  <span>Reprint Last Ticket (#{lastOrder.shortId})</span>
-                </button>
-                {discountPence > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearDiscounts}
-                    className="text-rose-400 underline font-bold"
-                  >
-                    Clear Discount
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </aside>
+        {ticketPanel}
       </div>
 
-      {/* MODAL: SPLIT PAYMENT (SOME ONLINE/CARD & REST CASH) */}
-      {isSplitModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-lg rounded-3xl border border-purple-500/50 bg-slate-900 p-6 shadow-2xl space-y-5 text-white font-body">
-            <div className="flex items-start justify-between border-b border-white/10 pb-3">
-              <div>
-                <span className="rounded-md bg-purple-500 px-2 py-0.5 text-[10px] font-black uppercase text-white">
-                  Multi-Tender
-                </span>
-                <h3 className="display text-xl font-black text-white mt-1">Split Payment</h3>
-                <p className="text-xs text-white/60">Pay part with Online / Card and the rest with Cash</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSplitModalOpen(false)}
-                className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Total Due & Remaining Balance Display */}
-            <div className="grid grid-cols-2 gap-3 text-center">
-              <div className="rounded-2xl bg-black/40 p-3 border border-white/10">
-                <p className="text-[10px] uppercase font-bold text-white/60">Total Order Amount</p>
-                <p className="font-mono text-2xl font-black text-amber-400">{gbp(totalDuePence)}</p>
-              </div>
-
-              {(() => {
-                const cashP = Math.round(parseFloat(splitCashInput || '0') * 100)
-                const cardP = Math.round(parseFloat(splitCardInput || '0') * 100)
-                const onlineP = Math.round(parseFloat(splitOnlineInput || '0') * 100)
-                const allocated = cashP + cardP + onlineP
-                const remaining = totalDuePence - allocated
-                const isBalanced = Math.abs(remaining) < 1
-
-                return (
-                  <div
-                    className={`rounded-2xl p-3 border transition ${
-                      isBalanced
-                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
-                        : remaining > 0
-                        ? 'bg-purple-950/60 border-purple-500/40 text-purple-300'
-                        : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
-                    }`}
-                  >
-                    <p className="text-[10px] uppercase font-bold text-white/60">
-                      {isBalanced ? 'Status' : remaining > 0 ? 'Remaining to Allocate' : 'Over-Allocated'}
-                    </p>
-                    <p className="font-mono text-2xl font-black">
-                      {isBalanced ? '✓ 100% Balanced' : gbp(Math.abs(remaining))}
-                    </p>
-                  </div>
-                )
-              })()}
-            </div>
-
-            {/* Quick Split Presets */}
-            <div className="space-y-2 pt-1">
-              {/* Online + Cash Presets (Some Online, Rest Cash) */}
-              <div>
-                <span className="text-[10px] uppercase font-bold text-purple-300 block mb-1">
-                  🌐 Some Online + 💵 Rest Cash Presets:
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const half = (totalDuePence / 200).toFixed(2)
-                      const remainder = ((totalDuePence - Math.round(parseFloat(half) * 100)) / 100).toFixed(2)
-                      setSplitOnlineInput(half)
-                      setSplitCashInput(remainder)
-                      setSplitCardInput('0.00')
-                      setSplitCustomerCashGiven(remainder)
-                    }}
-                    className="rounded-xl border border-purple-500/40 bg-purple-500/10 py-1.5 px-3 text-xs font-bold text-purple-200 hover:bg-purple-500/20 active:scale-95"
-                  >
-                    🌐 50% Online / 💵 50% Cash
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const onlinePortion = 5
-                      const rest = Math.max(0, (totalDuePence - 500) / 100).toFixed(2)
-                      setSplitOnlineInput(onlinePortion.toFixed(2))
-                      setSplitCashInput(rest)
-                      setSplitCardInput('0.00')
-                      setSplitCustomerCashGiven(rest)
-                    }}
-                    className="rounded-xl border border-purple-500/40 bg-purple-500/10 py-1.5 px-3 text-xs font-bold text-purple-200 hover:bg-purple-500/20 active:scale-95"
-                  >
-                    🌐 £5 Online / 💵 Rest Cash
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const onlinePortion = 10
-                      const rest = Math.max(0, (totalDuePence - 1000) / 100).toFixed(2)
-                      setSplitOnlineInput(onlinePortion.toFixed(2))
-                      setSplitCashInput(rest)
-                      setSplitCardInput('0.00')
-                      setSplitCustomerCashGiven(rest)
-                    }}
-                    className="rounded-xl border border-purple-500/40 bg-purple-500/10 py-1.5 px-3 text-xs font-bold text-purple-200 hover:bg-purple-500/20 active:scale-95"
-                  >
-                    🌐 £10 Online / 💵 Rest Cash
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cashPortion = 5
-                      const rest = Math.max(0, (totalDuePence - 500) / 100).toFixed(2)
-                      setSplitCashInput(cashPortion.toFixed(2))
-                      setSplitOnlineInput(rest)
-                      setSplitCardInput('0.00')
-                      setSplitCustomerCashGiven('5.00')
-                    }}
-                    className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-1.5 px-3 text-xs font-bold text-emerald-200 hover:bg-emerald-500/20 active:scale-95"
-                  >
-                    💵 £5 Cash / 🌐 Rest Online
-                  </button>
-                </div>
-              </div>
-
-              {/* Cash + Card Presets */}
-              <div>
-                <span className="text-[10px] uppercase font-bold text-blue-300 block mb-1">
-                  💵 Cash + 💳 Card Presets:
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const half = (totalDuePence / 200).toFixed(2)
-                      const remainder = ((totalDuePence - Math.round(parseFloat(half) * 100)) / 100).toFixed(2)
-                      setSplitCashInput(half)
-                      setSplitCardInput(remainder)
-                      setSplitOnlineInput('0.00')
-                      setSplitCustomerCashGiven(half)
-                    }}
-                    className="rounded-xl border border-white/10 bg-white/5 py-1.5 px-3 text-xs font-bold text-white hover:bg-white/15 active:scale-95"
-                  >
-                    50% Cash / 50% Card
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cashPortion = 5
-                      const rest = Math.max(0, (totalDuePence - 500) / 100).toFixed(2)
-                      setSplitCashInput(cashPortion.toFixed(2))
-                      setSplitCardInput(rest)
-                      setSplitOnlineInput('0.00')
-                      setSplitCustomerCashGiven('5.00')
-                    }}
-                    className="rounded-xl border border-white/10 bg-white/5 py-1.5 px-3 text-xs font-bold text-white hover:bg-white/15 active:scale-95"
-                  >
-                    £5 Cash / Rest Card
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cashPortion = 10
-                      const rest = Math.max(0, (totalDuePence - 1000) / 100).toFixed(2)
-                      setSplitCashInput(cashPortion.toFixed(2))
-                      setSplitCardInput(rest)
-                      setSplitOnlineInput('0.00')
-                      setSplitCustomerCashGiven('10.00')
-                    }}
-                    className="rounded-xl border border-white/10 bg-white/5 py-1.5 px-3 text-xs font-bold text-white hover:bg-white/15 active:scale-95"
-                  >
-                    £10 Cash / Rest Card
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Split Tender Inputs */}
-            <div className="space-y-3">
-              {/* 1. Cash Portion */}
-              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase text-emerald-300 flex items-center gap-1.5">
-                    <span>💵</span>
-                    <span>1. Cash Portion (£):</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const card = parseFloat(splitCardInput || '0')
-                      const online = parseFloat(splitOnlineInput || '0')
-                      const rem = Math.max(0, (totalDuePence - Math.round((card + online) * 100)) / 100).toFixed(2)
-                      setSplitCashInput(rem)
-                      setSplitCustomerCashGiven(rem)
-                    }}
-                    className="text-[10px] text-emerald-400 underline font-bold"
-                  >
-                    Set as Remainder
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[10px] text-white/50 block font-bold">Charge to Cash:</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm font-bold text-emerald-400">£</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={splitCashInput}
-                        onChange={(e) => {
-                          setSplitCashInput(e.target.value)
-                          if (!splitCustomerCashGiven) setSplitCustomerCashGiven(e.target.value)
-                        }}
-                        className="w-full rounded-xl border border-white/10 bg-black/60 pl-8 pr-3 py-2 font-mono text-base font-bold text-white focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-white/50 block font-bold">Customer Handed In:</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm font-bold text-emerald-400">£</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={splitCustomerCashGiven}
-                        onChange={(e) => setSplitCustomerCashGiven(e.target.value)}
-                        placeholder="e.g. 10.00"
-                        className="w-full rounded-xl border border-white/10 bg-black/60 pl-8 pr-3 py-2 font-mono text-base font-bold text-white focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Cash Change Due */}
-                {(() => {
-                  const reqCash = parseFloat(splitCashInput || '0')
-                  const handedIn = parseFloat(splitCustomerCashGiven || '0')
-                  const change = handedIn > reqCash ? handedIn - reqCash : 0
-                  return change > 0 ? (
-                    <p className="text-xs font-black text-emerald-400 pt-1">
-                      Cash Change Due: <strong>{gbp(Math.round(change * 100))}</strong>
-                    </p>
-                  ) : null
-                })()}
-              </div>
-
-              {/* 2. Card Portion */}
-              <div className="rounded-2xl border border-blue-500/30 bg-blue-950/20 p-3 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase text-blue-300 flex items-center gap-1.5">
-                    <span>💳</span>
-                    <span>2. Card Portion (SumUp / Contactless) (£):</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cash = parseFloat(splitCashInput || '0')
-                      const online = parseFloat(splitOnlineInput || '0')
-                      const rem = Math.max(0, (totalDuePence - Math.round((cash + online) * 100)) / 100).toFixed(2)
-                      setSplitCardInput(rem)
-                    }}
-                    className="text-[10px] text-blue-400 underline font-bold"
-                  >
-                    Set as Remainder
-                  </button>
-                </div>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm font-bold text-blue-400">£</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={splitCardInput}
-                    onChange={(e) => setSplitCardInput(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-black/60 pl-8 pr-3 py-2 font-mono text-base font-bold text-white focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* 3. Online Link / QR Portion (Optional) */}
-              <div className="rounded-2xl border border-purple-500/30 bg-purple-950/20 p-3 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase text-purple-300 flex items-center gap-1.5">
-                    <span>🌐</span>
-                    <span>3. Online / App / Payment Link (£):</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cash = parseFloat(splitCashInput || '0')
-                      const card = parseFloat(splitCardInput || '0')
-                      const rem = Math.max(0, (totalDuePence - Math.round((cash + card) * 100)) / 100).toFixed(2)
-                      setSplitOnlineInput(rem)
-                    }}
-                    className="text-[10px] text-purple-400 underline font-bold"
-                  >
-                    Set as Remainder
-                  </button>
-                </div>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm font-bold text-purple-400">£</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={splitOnlineInput}
-                    onChange={(e) => setSplitOnlineInput(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full rounded-xl border border-white/10 bg-black/60 pl-8 pr-3 py-2 font-mono text-base font-bold text-white focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Complete Split Tender Button */}
-            {(() => {
-              const cashP = Math.round(parseFloat(splitCashInput || '0') * 100)
-              const cardP = Math.round(parseFloat(splitCardInput || '0') * 100)
-              const onlineP = Math.round(parseFloat(splitOnlineInput || '0') * 100)
-              const allocated = cashP + cardP + onlineP
-              const isBalanced = Math.abs(allocated - totalDuePence) < 1
-
-              return (
-                <button
-                  type="button"
-                  disabled={!isBalanced || cartLines.length === 0}
-                  onClick={handleCompleteSplitPayment}
-                  className="w-full rounded-full bg-purple-600 py-4 font-body text-xs font-black uppercase tracking-wider text-white shadow-glow hover:bg-purple-500 transition active:scale-95 disabled:opacity-40 flex items-center justify-center gap-2"
-                >
-                  <span>✓</span>
-                  <span>Complete Split Tender &amp; Pop Cash Drawer</span>
-                </button>
-              )
-            })()}
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: FOOD STORE MODIFIER WIZARD */}
-      {customizingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-3 bg-black/85 backdrop-blur-md">
-          {/* Header and "Add To Ticket" stay put; only the options scroll. */}
-          <div className="flex w-full max-w-2xl max-h-[calc(100vh-1.5rem)] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-3xl border border-white/20 bg-slate-900 shadow-2xl text-white font-body">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-5 pb-3 pt-5">
-              <div>
-                <span className="rounded-md bg-amber-400 px-2 py-0.5 text-[10px] font-black uppercase text-ink">
-                  {customizingProduct.category}
-                </span>
-                <h3 className="display text-xl font-black text-white mt-1">{customizingProduct.name}</h3>
-                <p className="text-xs text-white/60">{customizingProduct.description}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCustomizingProduct(null)}
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/10 text-white/60 hover:text-white"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
-            {/* STEP 1: BUTTER SELECTION */}
-            {customizingProduct.category === 'SPUDS' && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-black uppercase tracking-wider text-amber-300">
-                  1. Butter Choice:
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {([
-                    { id: 'salted', label: '🧈 Real Butter' },
-                    { id: 'garlic', label: '🧄 Garlic Butter' },
-                    { id: 'vegan', label: '🌱 Flora Vegan' },
-                    { id: 'none', label: '🚫 No Butter' },
-                  ] as { id: ButterChoice; label: string }[]).map((b) => (
-                    <button
-                      key={b.id}
-                      type="button"
-                      onClick={() => setSelectedButter(b.id)}
-                      className={`rounded-xl py-2.5 px-2 text-xs font-bold border text-center transition ${
-                        selectedButter === b.id
-                          ? 'bg-amber-400 text-ink border-amber-400 shadow-glow font-black'
-                          : 'bg-white/5 text-white border-white/10 hover:bg-white/15'
-                      }`}
-                    >
-                      {b.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* STEP 2: CONVERSATIONAL MODIFIERS MATRIX (Toast / Square style) */}
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <div>
-                  <label className="text-xs font-black uppercase tracking-wider text-amber-300">
-                    2. Conversational Modifiers (Fillings &amp; Toppings):
-                  </label>
-                  <p className="text-[10px] text-white/50">1-tap standard, extra (+£1), hold (NO), light, or side</p>
-                </div>
-                <span className="text-[11px] text-amber-400 font-mono font-bold">
-                  {Object.keys(conversationalMods).length} customized
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                {[
-                  { id: 'Mature Cheddar Cheese', icon: '🧀' },
-                  { id: 'Heinz Baked Beans', icon: '🥫' },
-                  { id: 'Signature 3-Cheese Blend', icon: '🧀' },
-                  { id: 'Tuna Sweetcorn Mayo', icon: '🐟' },
-                  { id: 'Chilli Con Carne', icon: '🥩' },
-                  { id: 'Homemade Coleslaw', icon: '🥗' },
-                  { id: 'Crispy Fried Onions', icon: '🧅' },
-                  { id: 'Spicy Jalapeños', icon: '🌶️' },
-                  { id: 'Black Sliced Olives', icon: '🫒' },
-                ].map(({ id: topping, icon }) => {
-                  const currentMod = conversationalMods[topping]
-                  return (
-                    <div
-                      key={topping}
-                      className={`flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-xl border transition gap-2 ${
-                        currentMod
-                          ? 'bg-amber-400/10 border-amber-400/50'
-                          : 'bg-white/5 border-white/10 hover:bg-white/10'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-[150px]">
-                        <span>{icon}</span>
-                        <span className="text-xs font-bold text-white">{topping}</span>
-                      </div>
-
-                      {/* 1-Tap Toast Modifier Chips */}
-                      <div className="flex items-center gap-1 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            playPOSTouchTone('tap')
-                            setConversationalMods((prev) => {
-                              const next = { ...prev }
-                              if (next[topping] === 'regular') delete next[topping]
-                              else next[topping] = 'regular'
-                              return next
-                            })
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
-                            currentMod === 'regular'
-                              ? 'bg-emerald-500 text-ink border-emerald-400 font-black shadow'
-                              : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/15'
-                          }`}
-                        >
-                          Regular
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            playPOSTouchTone('tap')
-                            setConversationalMods((prev) => {
-                              const next = { ...prev }
-                              if (next[topping] === 'extra') delete next[topping]
-                              else next[topping] = 'extra'
-                              return next
-                            })
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
-                            currentMod === 'extra'
-                              ? 'bg-amber-400 text-ink border-amber-400 font-black shadow-glow'
-                              : 'bg-white/5 text-amber-300/80 border-amber-400/30 hover:bg-amber-400/20'
-                          }`}
-                        >
-                          +Extra (+£1)
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            playPOSTouchTone('tap')
-                            setConversationalMods((prev) => {
-                              const next = { ...prev }
-                              if (next[topping] === 'no') delete next[topping]
-                              else next[topping] = 'no'
-                              return next
-                            })
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
-                            currentMod === 'no'
-                              ? 'bg-rose-500 text-white border-rose-400 font-black shadow'
-                              : 'bg-white/5 text-rose-300/70 border-white/10 hover:bg-rose-500/20'
-                          }`}
-                        >
-                          NO
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            playPOSTouchTone('tap')
-                            setConversationalMods((prev) => {
-                              const next = { ...prev }
-                              if (next[topping] === 'lite') delete next[topping]
-                              else next[topping] = 'lite'
-                              return next
-                            })
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
-                            currentMod === 'lite'
-                              ? 'bg-sky-500 text-white border-sky-400 font-black shadow'
-                              : 'bg-white/5 text-sky-300/70 border-white/10 hover:bg-sky-500/20'
-                          }`}
-                        >
-                          Lite
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            playPOSTouchTone('tap')
-                            setConversationalMods((prev) => {
-                              const next = { ...prev }
-                              if (next[topping] === 'side') delete next[topping]
-                              else next[topping] = 'side'
-                              return next
-                            })
-                          }}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
-                            currentMod === 'side'
-                              ? 'bg-purple-500 text-white border-purple-400 font-black shadow'
-                              : 'bg-white/5 text-purple-300/70 border-white/10 hover:bg-purple-500/20'
-                          }`}
-                        >
-                          Side
-                        </button>
-
-                        {currentMod && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              playPOSTouchTone('tap')
-                              setConversationalMods((prev) => {
-                                const next = { ...prev }
-                                delete next[topping]
-                                return next
-                              })
-                            }}
-                            className="text-white/40 hover:text-white px-1 text-xs"
-                            title="Reset topping"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* STEP 3: HOUSE SAUCES */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-black uppercase tracking-wider text-amber-300">
-                3. House Sauces (Complimentary):
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  'House Spud Special',
-                  'Garlic Herb Mayo',
-                  'Sweet Hickory BBQ',
-                  'Fire Sriracha Chilli',
-                  'Sweet Chilli',
-                  'Cool Mint Raita',
-                ].map((s) => {
-                  const isChecked = selectedSauces.includes(s)
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => {
-                        playPOSTouchTone('tap')
-                        setSelectedSauces((prev) =>
-                          isChecked ? prev.filter((x) => x !== s) : [...prev, s]
-                        )
-                      }}
-                      className={`rounded-lg px-2.5 py-1 text-xs font-bold border transition ${
-                        isChecked
-                          ? 'bg-amber-400 text-ink border-amber-400 font-black shadow'
-                          : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/15'
-                      }`}
-                    >
-                      {s} {isChecked && '✓'}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* STEP 4: MEAL DEAL UPGRADE */}
-            {customizingProduct.mealEligible && (
-              <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <p className="font-black text-xs text-amber-300">Combo Deal Upgrade (+£1.80)</p>
-                  <p className="text-[10px] text-white/60">Adds cold drink can + crisps/snack to this order</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={isMealDealCombo}
-                    onChange={(e) => setIsMealDealCombo(e.target.checked)}
-                    className="h-5 w-5 rounded border-white/20 text-amber-400 focus:ring-amber-400"
-                  />
-                  <span className="text-xs font-bold">{isMealDealCombo ? 'Deal Added ✓' : 'Add Deal'}</span>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 5: KITCHEN STATION ROUTING & RUSH TICKET */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-wider text-white/60">
-                  Kitchen Station Routing:
-                </label>
-                <div className="grid grid-cols-3 gap-1">
-                  {([
-                    { id: 'spuds', label: '🥔 Oven' },
-                    { id: 'grill', label: '🔥 Grill' },
-                    { id: 'drinks', label: '🥤 Bar' },
-                  ] as { id: KitchenStation; label: string }[]).map((st) => (
-                    <button
-                      key={st.id}
-                      type="button"
-                      onClick={() => {
-                        playPOSTouchTone('tap')
-                        setSelectedStation(st.id)
-                      }}
-                      className={`rounded-lg py-1.5 text-[11px] font-bold border text-center transition ${
-                        selectedStation === st.id
-                          ? 'bg-amber-400 text-ink border-amber-400 font-black shadow'
-                          : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                      }`}
-                    >
-                      {st.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-wider text-white/60">
-                  Kitchen Priority:
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('tap')
-                    setIsRushTicket((prev) => !prev)
-                  }}
-                  className={`w-full rounded-lg py-1.5 text-[11px] font-bold border transition flex items-center justify-center gap-1.5 ${
-                    isRushTicket
-                      ? 'bg-rose-600 text-white border-rose-500 font-black shadow animate-pulse'
-                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                  }`}
-                >
-                  <span>🔥</span>
-                  <span>{isRushTicket ? 'RUSH TICKET (PRIORITY)' : 'Standard Queue'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* STEP 6: KITCHEN SPEED TAGS */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black uppercase tracking-wider text-white/60">
-                Quick Prep Flags:
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {['Extra Crispy Skin', 'Well Done', 'Light Butter', 'Separate Box', 'Fork & Napkins Only'].map((tag) => {
-                  const isTagged = speedTags.includes(tag)
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => {
-                        playPOSTouchTone('tap')
-                        setSpeedTags((prev) =>
-                          isTagged ? prev.filter((t) => t !== tag) : [...prev, tag]
-                        )
-                      }}
-                      className={`rounded-lg px-2 py-1 text-[11px] font-bold border transition ${
-                        isTagged
-                          ? 'bg-emerald-500 text-ink border-emerald-400 font-black'
-                          : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/15'
-                      }`}
-                    >
-                      {tag} {isTagged && '✓'}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            </div>
-
-            {/* CONFIRM & ADD TO TICKET — pinned, so a plain spud is one tap */}
-            <div className="shrink-0 border-t border-white/10 bg-slate-900 p-4">
-            {(() => {
-              const extraCount = Object.values(conversationalMods).filter((m) => m === 'extra').length
-              const lineTotalPence = customizingProduct.price + extraCount * 100 + (isMealDealCombo ? 180 : 0)
-              return (
-                <button
-                  type="button"
-                  onClick={handleConfirmCustomizer}
-                  className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition active:scale-95 flex items-center justify-center gap-2"
-                >
-                  <span>✓</span>
-                  <span>Add To Ticket &bull; {gbp(lineTotalPence)}</span>
-                </button>
-              )
-            })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: X-REPORT (MID-DAY SHIFT READING WITHOUT CLOSING) */}
-      {isXReportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-3xl border border-amber-400/40 bg-slate-900 p-6 shadow-2xl space-y-5 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">📊</span>
-                <div>
-                  <h3 className="display text-base font-black text-white">Mid-Day X-Report (Reading)</h3>
-                  <p className="text-[10px] text-white/60">Shift #{shift.shiftNumber} &bull; Does not close register</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => setIsXReportOpen(false)} className="text-white/60 hover:text-white">✕</button>
-            </div>
-
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between p-2 rounded-xl bg-black/40">
-                <span className="text-white/70">Starting Cash Float:</span>
-                <span className="font-mono font-bold">{gbp(shift.startingFloat)}</span>
-              </div>
-              <div className="flex justify-between p-2 rounded-xl bg-black/40">
-                <span className="text-white/70">In-Store Cash Sales ({shift.inStoreOrdersCount} orders):</span>
-                <span className="font-mono font-bold text-emerald-400">+{gbp(shift.cashSalesTotal)}</span>
-              </div>
-              <div className="flex justify-between p-2 rounded-xl bg-black/40">
-                <span className="text-white/70">In-Store Card Sales:</span>
-                <span className="font-mono font-bold text-blue-400">{gbp(shift.cardSalesTotal)}</span>
-              </div>
-              <div className="flex justify-between p-2 rounded-xl bg-black/40">
-                <span className="text-white/70">Online Website Orders ({shift.onlineOrdersCount} orders):</span>
-                <span className="font-mono font-bold">{gbp(shift.onlineOrdersTotal)}</span>
-              </div>
-              <div className="flex justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-400/40 text-sm">
-                <span className="font-black text-white">Expected Cash in Till:</span>
-                <span className="font-mono font-black text-amber-400">{gbp(shift.expectedCash)}</span>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  triggerBrowserPrint()
-                }}
-                className="flex-1 rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink hover:bg-amber-300"
-              >
-                🖨️ Print X-Report Docket
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsXReportOpen(false)}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs font-bold text-white hover:bg-white/15"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Z-REPORT (END OF DAY REGISTER CLOSE & CASH RECONCILIATION) */}
-      {isZReportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-3 bg-black/90 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-lg rounded-3xl border border-rose-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div>
-                <h3 className="display text-lg font-black text-white">End of Day Z-Report Close</h3>
-                <p className="text-xs text-white/60">Reconcile cash drawer for Shift #{shift.shiftNumber}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsZReportOpen(false)
-                  setBlindCountingConfirmed(false)
-                }}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 text-center">
-              <div className="rounded-2xl bg-black/50 p-3 border border-white/10">
-                <p className="text-[10px] uppercase font-bold text-white/60">Expected Cash</p>
-                {tillSettings.blindShiftClose && !blindCountingConfirmed ? (
-                  <div>
-                    <p className="font-mono text-base font-black text-amber-400">🔒 BLIND CLOSE</p>
-                    <p className="text-[9px] text-white/50">Masked for audit compliance</p>
-                  </div>
-                ) : (
-                  <p className="font-mono text-xl font-black text-amber-400">{gbp(shift.expectedCash)}</p>
-                )}
-              </div>
-              <div className="rounded-2xl bg-black/50 p-3 border border-white/10">
-                <p className="text-[10px] uppercase font-bold text-white/60">Counted Cash</p>
-                <p className="font-mono text-xl font-black text-emerald-400">
-                  {gbp(calculateDenominationsTotal(closingDenoms))}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <p className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                Physical Cash Drawer Count:
-              </p>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {([
-                  { key: 'note50', label: '£50 Notes' },
-                  { key: 'note20', label: '£20 Notes' },
-                  { key: 'note10', label: '£10 Notes' },
-                  { key: 'note5', label: '£5 Notes' },
-                  { key: 'coin2', label: '£2 Coins' },
-                  { key: 'coin1', label: '£1 Coins' },
-                  { key: 'coin50p', label: '50p Coins' },
-                  { key: 'coin20p', label: '20p Coins' },
-                  { key: 'coin10p', label: '10p Coins' },
-                ] as { key: keyof CashDenominations; label: string }[]).map(({ key, label }) => (
-                  <div key={key} className="rounded-xl border border-white/10 bg-white/5 p-2">
-                    <span className="text-[10px] text-white/60 font-bold block">{label}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={closingDenoms[key] || ''}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value) || 0
-                        setClosingDenoms((prev) => ({ ...prev, [key]: val }))
-                      }}
-                      className="w-full bg-transparent font-mono text-base font-bold text-white focus:outline-none"
-                      placeholder="0"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Blind Close Verification Banner / Button */}
-            {tillSettings.blindShiftClose && !blindCountingConfirmed ? (
-              <div className="space-y-2">
-                <div className="rounded-2xl bg-amber-500/10 border border-amber-400/30 p-3 text-center text-xs text-amber-200">
-                  🛡️ <strong>Blind Shift Close Mode Active:</strong> Expected cash and discrepancy will be calculated after you submit your physical denomination count.
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('action')
-                    setBlindCountingConfirmed(true)
-                  }}
-                  className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition"
-                >
-                  🔒 Submit Physical Count &amp; Reveal Reconciliation →
-                </button>
-              </div>
-            ) : (
-              <>
-                {(() => {
-                  const counted = calculateDenominationsTotal(closingDenoms)
-                  const diff = counted - shift.expectedCash
-                  const isBalanced = Math.abs(diff) < 1
-                  return (
-                    <div
-                      className={`rounded-2xl p-3 text-center border text-xs font-black ${
-                        isBalanced
-                          ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
-                          : diff > 0
-                          ? 'bg-amber-950/60 border-amber-500/40 text-amber-300'
-                          : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
-                      }`}
-                    >
-                      {isBalanced && '✓ Register is Exactly Balanced (£0.00 variance)'}
-                      {!isBalanced && diff > 0 && `⚠️ Till is Over: +${gbp(diff)}`}
-                      {!isBalanced && diff < 0 && `⚠️ Till is Short: -${gbp(Math.abs(diff))}`}
-                    </div>
-                  )
-                })()}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const { closedShift } = closeTillShift(
-                      user?.name || 'Store Manager',
-                      closingDenoms,
-                      closingNotes
-                    )
-                    setCompletedZReport(closedShift)
-                    setIsZReportOpen(false)
-                    setBlindCountingConfirmed(false)
-                  }}
-                  className="w-full rounded-full bg-rose-500 py-3.5 font-body text-xs font-black uppercase tracking-wider text-white shadow-glow hover:bg-rose-400 transition"
-                >
-                  Lock Till &amp; Print Final Z-Report →
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: NO SALE / POP CASH DRAWER */}
-      {isNoSaleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <h3 className="font-bold text-sm text-white">🔓 No Sale / Open Drawer</h3>
-              <button type="button" onClick={() => setIsNoSaleModalOpen(false)} className="text-white/60 hover:text-white">✕</button>
-            </div>
-            <p className="text-xs text-white/60">Select audit reason for popping the cash drawer:</p>
-            <div className="space-y-2">
-              {[
-                'Making change for customer',
-                'Checking drawer cash float',
-                'Coin float refill from safe',
-                'Inspection / Manager audit',
-              ].map((reason) => (
-                <button
-                  key={reason}
-                  type="button"
-                  onClick={() => {
-                    performNoSaleDrawerKick(user?.name || 'Cashier', reason)
-                    setIsNoSaleModalOpen(false)
-                  }}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left text-xs font-bold text-white hover:bg-amber-400 hover:text-ink transition"
-                >
-                  {reason}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {flash && (
-        <div className="pointer-events-none fixed bottom-5 left-1/2 z-40 -translate-x-1/2 rounded-full border border-emerald-400/40 bg-slate-900/95 px-4 py-2 text-xs font-bold text-emerald-300 shadow-2xl backdrop-blur" role="status">
-          ✓ {flash}
+        <div className="pointer-events-none fixed bottom-20 left-1/2 z-[70] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full border border-emerald-400/40 bg-slate-900/95 px-4 py-2 text-center text-xs font-bold text-emerald-300 shadow-2xl backdrop-blur lg:bottom-5" role="status">
+          {flash}
         </div>
       )}
 
-      {isSettingsModalOpen && (
-        <TillSettingsModal onClose={() => setIsSettingsModalOpen(false)} actor={user?.name || 'Manager'} />
-      )}
+      {/* ---------------------------------------------------- screens & pop-ups */}
+      {wizard && <ItemOptionsWizard product={wizard.product} initial={wizard.editLineId ? cartLines.find((l) => l.lineId === wizard.editLineId) : undefined} onClose={() => setWizard(null)} onConfirm={handleWizardConfirm} />}
 
-      {isOpenChecksOpen && (
-        <OpenChecksModal
-          onClose={() => setIsOpenChecksOpen(false)}
+      {ordersTab && (
+        <OrdersScreen
+          initialTab={ordersTab}
+          actor={actor}
+          onClose={() => setOrdersTab(null)}
+          onRecallHeld={handleRecallHeld}
           onSettle={handleSettleOpenCheck}
           onReprint={(o) => setReceiptOrder(o)}
           requireManagerAuth={requireManagerAuth}
+          onFlash={setFlash}
         />
       )}
+
+      {isSideMenuOpen && (
+        <TillSideMenu
+          tillName={tillName}
+          userName={actor}
+          shiftNumber={shift.shiftNumber}
+          floatPence={shift.startingFloat}
+          canReprint={Boolean(lastOrder)}
+          isManager={isManagerOrAdmin(user?.role)}
+          onAction={handleSideMenu}
+          onClose={() => setIsSideMenuOpen(false)}
+        />
+      )}
+
+      {cashMovement && <CashMovementModal kind={cashMovement} staffName={actor} onClose={() => setCashMovement(null)} onDone={setFlash} />}
+
+      {isStockOpen && <StockModal onClose={() => setIsStockOpen(false)} actor={actor} requireManagerAuth={requireManagerAuth} />}
+
+      {isCloseTillOpen && (
+        <CloseTillScreen
+          shift={shift}
+          userName={actor}
+          blindClose={tillSettings.blindShiftClose}
+          heldCount={heldTickets.length}
+          openChecksDue={getOpenChecksDueToday()}
+          onBack={() => setIsCloseTillOpen(false)}
+          onOpenOrders={(tab) => setOrdersTab(tab)}
+          onShowReport={(report) => setEodReport({ report, autoPrint: false })}
+          onShowHistory={() => setIsHistoryOpen(true)}
+          onClosed={(closed) => {
+            setIsCloseTillOpen(false)
+            setEodReport({ report: closed.report || reportForShift(closed), autoPrint: true })
+          }}
+        />
+      )}
+
+      {reportModals}
+
+      {isShortcutsOpen && (
+        <SimpleDialog title="Keyboard shortcuts" onClose={() => setIsShortcutsOpen(false)}>
+          <ul className="space-y-1.5 text-sm">
+            {[
+              ['F4 / F5', 'Take payment'],
+              ['F8', 'Order — send to the kitchen, pay later'],
+              ['F9', 'Hold the ticket'],
+              ['F2, / or Ctrl+K', 'Search the menu'],
+              ['Enter (payment)', 'Cash for the amount shown'],
+              ['Esc', 'Back / close'],
+            ].map(([k, v]) => (
+              <li key={k} className="flex justify-between gap-3">
+                <span className="font-mono text-amber-300">{k}</span>
+                <span className="text-white/75 text-right">{v}</span>
+              </li>
+            ))}
+          </ul>
+        </SimpleDialog>
+      )}
+
+      {isTipOpen && (
+        <TipDialog
+          current={tipPence}
+          onClose={() => setIsTipOpen(false)}
+          onSet={(p) => {
+            setTipPence(p)
+            setIsTipOpen(false)
+          }}
+        />
+      )}
+
+      {isNoSaleModalOpen && (
+        <SimpleDialog title="🔓 No sale — open drawer" onClose={() => setIsNoSaleModalOpen(false)}>
+          <p className="text-xs text-white/60">Why is the drawer being opened?</p>
+          <div className="mt-3 space-y-2">
+            {['Making change for a customer', 'Checking the float', 'Coin refill from the safe', 'Manager check'].map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                onClick={() => {
+                  performNoSaleDrawerKick(actor, reason)
+                  setIsNoSaleModalOpen(false)
+                  setFlash(`Drawer opened — ${reason}`)
+                }}
+                className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left text-xs font-bold text-white hover:bg-amber-400 hover:text-ink transition"
+              >
+                {reason}
+              </button>
+            ))}
+          </div>
+        </SimpleDialog>
+      )}
+
+      {isSettingsModalOpen && <TillSettingsModal onClose={() => setIsSettingsModalOpen(false)} actor={actor} />}
 
       {saleComplete && (
         <SaleCompleteModal
           order={saleComplete.order}
           changeDuePence={saleComplete.changeDuePence}
           tenderLabel={saleComplete.tenderLabel}
-          actor={user?.name || 'Staff Cashier'}
+          actor={actor}
           autoPrinted={tillSettings.autoPrintTillReceipt}
           onPrint={(o) => setReceiptOrder(o)}
           onNewSale={() => {
@@ -3525,11 +1851,10 @@ export default function StaffPOSPage() {
       )}
 
       {isTimeclockOpen && <TimeclockModal onClose={() => setIsTimeclockOpen(false)} user={user} />}
-
       {isCustomerLookupOpen && <CustomerLookupModal onClose={() => setIsCustomerLookupOpen(false)} onAttach={handleAttachCustomer} />}
 
       {priceOverrideLineId && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Change price">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -3538,10 +1863,12 @@ export default function StaffPOSPage() {
             className="w-full max-w-xs rounded-3xl border border-sky-400/40 bg-slate-900 p-5 shadow-2xl space-y-3 text-white font-body"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <h3 className="font-bold text-sm">£ Price Override</h3>
-              <button type="button" onClick={() => setPriceOverrideLineId(null)} className="text-white/60 hover:text-white" aria-label="Close price override">✕</button>
+              <h3 className="font-bold text-sm">£ Change price</h3>
+              <button type="button" onClick={() => setPriceOverrideLineId(null)} className="text-white/60 hover:text-white" aria-label="Close">
+                ✕
+              </button>
             </div>
-            <p className="text-[11px] text-white/60">New unit price for {cartLines.find((l) => l.lineId === priceOverrideLineId)?.name}. Manager PIN required.</p>
+            <p className="text-[11px] text-white/60">New price each for {cartLines.find((l) => l.lineId === priceOverrideLineId)?.name}. Manager PIN required.</p>
             <div className="flex items-center gap-2 font-mono">
               <span className="text-white/60">£</span>
               <input
@@ -3556,440 +1883,122 @@ export default function StaffPOSPage() {
               />
             </div>
             <button type="submit" className="w-full rounded-xl bg-sky-400 py-2.5 text-xs font-black uppercase tracking-wider text-ink hover:bg-sky-300">
-              Apply override →
+              Apply →
             </button>
           </form>
         </div>
       )}
 
       {lineVoidTarget && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-sm rounded-3xl border border-rose-500/40 bg-slate-900 p-5 shadow-2xl space-y-3 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <h3 className="font-bold text-sm">Void sent item</h3>
-              <button type="button" onClick={() => setLineVoidTarget(null)} className="text-white/60 hover:text-white" aria-label="Close void">✕</button>
-            </div>
-            <p className="text-[11px] text-white/60">
-              {lineVoidTarget.qty}x {lineVoidTarget.name} has already gone to the kitchen. Pick a reason — a manager PIN confirms it and stock is returned.
-            </p>
-            <div className="space-y-1.5">
-              {['Customer changed mind', 'Wrong item rung up', 'Kitchen unable to make', 'Quality issue / remake', 'Duplicate line'].map((reason) => (
-                <button
-                  key={reason}
-                  type="button"
-                  onClick={() => handleVoidOpenCheckLine(lineVoidTarget, reason)}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 p-2.5 text-left text-xs font-bold text-white hover:bg-rose-400 hover:text-ink transition"
-                >
-                  {reason}
-                </button>
-              ))}
-            </div>
+        <SimpleDialog title="Void sent item" onClose={() => setLineVoidTarget(null)}>
+          <p className="text-[11px] text-white/60">
+            {lineVoidTarget.qty}× {lineVoidTarget.name} has already gone to the kitchen. Pick a reason — a manager PIN confirms it and stock is returned.
+          </p>
+          <div className="mt-3 space-y-1.5">
+            {['Customer changed mind', 'Wrong item rung up', 'Kitchen unable to make', 'Quality issue / remake', 'Duplicate line'].map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                onClick={() => handleVoidOpenCheckLine(lineVoidTarget, reason)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 p-2.5 text-left text-xs font-bold text-white hover:bg-rose-400 hover:text-ink transition"
+              >
+                {reason}
+              </button>
+            ))}
           </div>
-        </div>
+        </SimpleDialog>
       )}
 
-      {/* MODAL: PAY IN / PAY OUT (PETTY CASH) */}
-      {isPayInOutModalOpen && (
-        <PayInOutModal
-          isOpen={isPayInOutModalOpen}
-          onClose={() => setIsPayInOutModalOpen(false)}
-          staffName={user?.name || 'Cashier'}
-        />
-      )}
-
-      {/* MODAL: PARKED (HELD) TICKETS */}
-      {isParkedModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-3xl border border-purple-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <h3 className="font-bold text-sm text-white">Held Tickets ({parkedOrders.length})</h3>
-              <button type="button" onClick={() => setIsParkedModalOpen(false)} className="text-white/60 hover:text-white">✕</button>
-            </div>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {parkedOrders.map((p) => (
-                <div key={p.id} className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center justify-between gap-2">
-                  <div>
-                    <p className="font-bold text-xs text-white">{p.customer}</p>
-                    <p className="text-[10px] text-white/50">{p.lines.length} items &bull; {p.type} &bull; Held at {p.time}</p>
-                  </div>
+      {isOnlineOrdersModalOpen && (
+        <SimpleDialog title="🚨 New online orders" onClose={() => setIsOnlineOrdersModalOpen(false)} wide>
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {activeAlerts.map((alert) => (
+              <div key={alert.orderId} className="rounded-2xl border border-white/10 bg-black/40 p-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="rounded-md bg-amber-400 px-1.5 py-0.5 font-mono text-[10px] font-black text-ink">#{alert.shortId}</span>
+                  <p className="font-bold text-xs text-white mt-1">
+                    {alert.customerName} ({gbp(alert.total)})
+                  </p>
+                  <p className="text-[10px] text-white/60">{alert.itemsSummary}</p>
+                </div>
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => handleResumeParkedTicket(p.id)}
-                    className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-black text-ink hover:bg-amber-300"
+                    onClick={() => {
+                      const accepted = updateOrderStatus(alert.orderId, 'accepted')
+                      dismissOrderAlert(alert.orderId)
+                      if (accepted) setReceiptOrder(accepted)
+                    }}
+                    className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-ink hover:bg-emerald-400 shadow"
                   >
-                    Recall →
+                    🖨️ Accept &amp; print
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dismissOrderAlert(alert.orderId)}
+                    className="rounded-xl border border-white/10 bg-white/5 px-2 py-2 text-xs text-white/60 hover:text-white"
+                    title="Stops the alarm for this order; it stays in the kitchen queue"
+                  >
+                    🔕 Silence
                   </button>
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: ONLINE ORDERS PENDING QUEUE */}
-      {isOnlineOrdersModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-lg rounded-3xl border border-rose-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🚨</span>
-                <h3 className="font-bold text-sm text-white">Incoming Online Orders Queue</h3>
               </div>
-              <button type="button" onClick={() => setIsOnlineOrdersModalOpen(false)} className="text-white/60 hover:text-white">✕</button>
-            </div>
-
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {activeAlerts.map((alert) => (
-                <div key={alert.orderId} className="rounded-2xl border border-white/10 bg-black/40 p-3 flex items-center justify-between gap-3">
-                  <div>
-                    <span className="rounded-md bg-amber-400 px-1.5 py-0.5 font-mono text-[10px] font-black text-ink">
-                      #{alert.shortId}
-                    </span>
-                    <p className="font-bold text-xs text-white mt-1">{alert.customerName} ({gbp(alert.total)})</p>
-                    <p className="text-[10px] text-white/60">{alert.itemsSummary}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Open the ticket in the receipt modal rather than calling
-                        // window.print() directly — that printed the till screen.
-                        const accepted = updateOrderStatus(alert.orderId, 'accepted')
-                        dismissOrderAlert(alert.orderId)
-                        if (accepted) setReceiptOrder(accepted)
-                      }}
-                      className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-ink hover:bg-emerald-400 shadow"
-                    >
-                      🖨️ Accept &amp; Print
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => dismissOrderAlert(alert.orderId)}
-                      className="rounded-xl border border-white/10 bg-white/5 px-2 py-2 text-xs text-white/60 hover:text-white"
-                      title="Stops the alarm for this order; it stays in the kitchen queue"
-                    >
-                      🔕 Silence
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+            ))}
           </div>
-        </div>
+        </SimpleDialog>
       )}
 
-      {/* LINE NOTE MODAL */}
       {isLineNoteModalOpen && selectedLineId && (
         <LineNoteModal
-          isOpen={isLineNoteModalOpen}
           onClose={() => setIsLineNoteModalOpen(false)}
           initialNote={cartLines.find((l) => l.lineId === selectedLineId)?.notes || ''}
           onSave={(note) => {
-            setCartLines((prev) =>
-              prev.map((l) => (l.lineId === selectedLineId ? { ...l, notes: note || undefined } : l))
-            )
+            setCartLines((prev) => prev.map((l) => (l.lineId === selectedLineId ? { ...l, notes: note || undefined } : l)))
             setIsLineNoteModalOpen(false)
           }}
         />
       )}
 
-      {/* PRINT THERMAL RECEIPT MODAL */}
-      {receiptOrder && (
-        <ThermalReceipt
-          order={receiptOrder}
-          onClose={() => setReceiptOrder(null)}
-        />
-      )}
+      {receiptOrder && <ThermalReceipt order={receiptOrder} onClose={() => setReceiptOrder(null)} />}
 
-      {/* COMPLETED Z-REPORT MODAL */}
-      {completedZReport && (
-        <ZReportReceipt
-          shift={completedZReport}
-          onClose={() => setCompletedZReport(null)}
-        />
-      )}
-
-      {/* MODAL: BILL SPLITTING (TOAST / SQUARE STYLE: EVEN SPLIT OR BY ITEMS) */}
-      {isBillSplitModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-3 bg-black/90 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-lg rounded-3xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">➗</span>
-                <div>
-                  <h3 className="display text-lg font-black text-white">Bill Splitting Suite</h3>
-                  <p className="text-xs text-white/60">Total Due: <strong className="text-amber-400 font-mono">{gbp(totalDuePence)}</strong></p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsBillSplitModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* TAB 1: EVEN SPLIT (Sequential Guest Payments) */}
-            <div className="space-y-3 rounded-2xl bg-black/40 border border-white/10 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase text-amber-300">1. Even Split by Guests</span>
-                <span className="text-[10px] text-white/60">Step {evenSplitPaidSteps} of {evenSplitWays} paid</span>
-              </div>
-
-              {/* Number of Ways Selector */}
-              <div className="grid grid-cols-4 gap-2">
-                {[2, 3, 4, 5].map((ways) => (
-                  <button
-                    key={ways}
-                    type="button"
-                    onClick={() => {
-                      playPOSTouchTone('tap')
-                      setEvenSplitWays(ways)
-                      setEvenSplitPaidSteps(0)
-                    }}
-                    className={`py-2 rounded-xl text-xs font-black border transition ${
-                      evenSplitWays === ways
-                        ? 'bg-amber-400 text-ink border-amber-400 shadow-glow'
-                        : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/15'
-                    }`}
-                  >
-                    {ways}-Way Split
-                  </button>
-                ))}
-              </div>
-
-              <div className="rounded-xl bg-amber-400/10 border border-amber-400/30 p-3 text-center">
-                <p className="text-[11px] text-amber-200">Each Guest Portion:</p>
-                <p className="font-mono text-2xl font-black text-amber-300">{gbp(evenSplitPortionPence)}</p>
-                <p className="text-[10px] text-white/50 mt-1">
-                  Remaining after this: {gbp(Math.max(0, totalDuePence - evenSplitPortionPence * (evenSplitPaidSteps + 1)))}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handlePayEvenSplitPortion('cash')}
-                  className="rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-ink hover:bg-emerald-400 shadow active:scale-95 transition"
-                >
-                  💵 Pay Portion #{evenSplitPaidSteps + 1} Cash
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handlePayEvenSplitPortion('card')}
-                  className="rounded-xl bg-blue-500 py-3 text-xs font-black uppercase text-white hover:bg-blue-400 shadow active:scale-95 transition"
-                >
-                  💳 Pay Portion #{evenSplitPaidSteps + 1} Card
-                </button>
-              </div>
-            </div>
-
-            {/* TAB 2: SPLIT BY ITEMS (Branch lines to separate ticket) */}
-            <div className="space-y-3 rounded-2xl bg-black/40 border border-white/10 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase text-sky-300">2. Split by Items / Seat</span>
-                <span className="text-[10px] text-white/60">
-                  {selectedSplitLineIds.length} item{selectedSplitLineIds.length === 1 ? '' : 's'} selected
-                </span>
-              </div>
-              <p className="text-[10px] text-white/60">Select items to branch out onto a separate ticket for independent payment:</p>
-
-              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                {cartLines.map((line) => {
-                  const isChecked = selectedSplitLineIds.includes(line.lineId!)
-                  return (
-                    <div
-                      key={line.lineId}
-                      onClick={() => {
-                        playPOSTouchTone('tap')
-                        setSelectedSplitLineIds((prev) =>
-                          isChecked ? prev.filter((id) => id !== line.lineId) : [...prev, line.lineId!]
-                        )
-                      }}
-                      className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition text-xs ${
-                        isChecked
-                          ? 'bg-sky-500/20 border-sky-400 text-sky-200'
-                          : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {}}
-                          className="h-4 w-4 rounded border-white/20 text-sky-400"
-                        />
-                        <span className="font-bold">{line.qty}x {line.name}</span>
-                      </div>
-                      <span className="font-mono font-bold">{gbp(lineUnitPrice(line) * line.qty)}</span>
-                    </div>
-                  )
-                })}
-              </div>
-
-              <button
-                type="button"
-                disabled={selectedSplitLineIds.length === 0 || selectedSplitLineIds.length === cartLines.length}
-                onClick={handleCreateSplitTicketFromSelected}
-                className={`w-full rounded-full py-3 text-xs font-black uppercase tracking-wider transition ${
-                  selectedSplitLineIds.length > 0 && selectedSplitLineIds.length < cartLines.length
-                    ? 'bg-sky-400 text-ink hover:bg-sky-300 shadow-glow'
-                    : 'bg-white/10 text-white/30 cursor-not-allowed'
-                }`}
-              >
-                🔀 Branch Selected ({selectedSplitLineIds.length}) to New Ticket →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: COMPS & MANAGER DISCOUNTS */}
-      {isCompsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-sm rounded-3xl border border-purple-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🏷️</span>
-                <h3 className="display text-base font-black text-white">Comps &amp; Discounts</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsCompsModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-wider text-white/60 block mb-1">
-                Mandatory Audit Reason:
-              </label>
-              <select
-                value={compReason}
-                onChange={(e) => setCompReason(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-400"
-              >
-                <option value="Spillage / Food Remake" className="bg-slate-900">Spillage / Food Remake</option>
-                <option value="Customer Courtesy / Service Delay" className="bg-slate-900">Customer Courtesy / Service Delay</option>
-                <option value="VIP / Owner Courtesy" className="bg-slate-900">VIP / Owner Courtesy</option>
-                <option value="Staff Meal Allowance" className="bg-slate-900">Staff Meal Allowance</option>
-                <option value="Waste / Texture or Quality Issue" className="bg-slate-900">Waste / Texture or Quality Issue</option>
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleApplyComp(10)}
-                className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-left hover:bg-emerald-500/20 transition"
-              >
-                <span className="text-xs font-black text-emerald-300 block">10% NHS / Blue</span>
-                <span className="text-[10px] text-white/60">Community discount</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleApplyComp(20)}
-                className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 text-left hover:bg-blue-500/20 transition"
-              >
-                <span className="text-xs font-black text-blue-300 block">20% Regulars</span>
-                <span className="text-[10px] text-white/60">Local business/student</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleApplyComp(50)}
-                className="rounded-xl border border-purple-500/30 bg-purple-500/10 p-3 text-left hover:bg-purple-500/20 transition"
-              >
-                <span className="text-xs font-black text-purple-300 block">50% Staff Meal</span>
-                <span className="text-[10px] text-white/60">Shift break allowance</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleApplyComp(100)}
-                className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-left hover:bg-rose-500/20 transition"
-              >
-                <span className="text-xs font-black text-rose-300 block">100% Full Comp</span>
-                <span className="text-[10px] text-white/60">Manager courtesy (Free)</span>
-              </button>
-            </div>
-
-            {(discountPercent > 0 || discountFixedPence > 0) && (
-              <button
-                type="button"
-                onClick={handleClearDiscounts}
-                className="w-full rounded-xl border border-rose-500/30 bg-rose-500/10 py-2.5 text-xs font-black text-rose-300 hover:bg-rose-500/20 transition"
-              >
-                ✕ Remove Active Discounts
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: UNIVERSAL FAST SEARCH (Ctrl+K or /) */}
       {isFastSearchOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto pt-16 px-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Find an item" onKeyDown={(e) => e.key === 'Escape' && setIsFastSearchOpen(false)}>
           <div className="w-full max-w-xl rounded-3xl border border-amber-400/50 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🔍</span>
-                <div>
-                  <h3 className="font-black text-sm text-white">Universal Item Fast Search</h3>
-                  <p className="text-[10px] text-white/60">Press ESC or click item to instantly add to ticket</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsFastSearchOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
+              <h3 className="font-black text-sm text-white">🔍 Find an item</h3>
+              <button type="button" onClick={() => setIsFastSearchOpen(false)} className="text-white/60 hover:text-white" aria-label="Close">
                 ✕
               </button>
             </div>
-
             <input
               type="text"
               autoFocus
               value={fastSearchInput}
               onChange={(e) => setFastSearchInput(e.target.value)}
-              placeholder="Type potato, topping, drink, or panini (e.g. 'chilli', 'coke', 'tuna')..."
+              placeholder="Type spud, coke, tuna…"
               className="w-full rounded-2xl border border-amber-400/40 bg-black/50 px-4 py-3 text-sm font-bold text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
-
             <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
-              {products
+              {storeProducts
                 .filter((p) => {
                   const q = fastSearchInput.toLowerCase().trim()
-                  if (!q) return true
-                  return (
-                    p.name.toLowerCase().includes(q) ||
-                    p.category.toLowerCase().includes(q) ||
-                    p.description.toLowerCase().includes(q)
-                  )
+                  return !q || p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
                 })
-                .slice(0, 10)
+                .slice(0, 12)
                 .map((product) => (
                   <button
                     key={product.id}
                     type="button"
-                    onClick={() => handleFastSearchSelect(product)}
-                    className="w-full flex items-center justify-between p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-amber-400 hover:text-ink transition text-left group"
+                    disabled={isSoldOut(product)}
+                    onClick={() => {
+                      handleItemClick(product)
+                      setIsFastSearchOpen(false)
+                      setFastSearchInput('')
+                    }}
+                    className="w-full flex items-center justify-between gap-2 p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-amber-400 hover:text-ink transition text-left disabled:opacity-40"
                   >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded bg-black/40 px-1.5 py-0.5 text-[9px] font-black uppercase text-amber-300 group-hover:text-ink group-hover:bg-amber-300/30">
-                          {product.category}
-                        </span>
-                        <span className="text-xs font-black">{product.name}</span>
-                      </div>
-                      <p className="text-[10px] text-white/50 group-hover:text-ink/80 line-clamp-1">{product.description}</p>
-                    </div>
-                    <span className="font-mono text-xs font-black">{gbp(product.price)}</span>
+                    <span className="text-xs font-black">{product.name}</span>
+                    <span className="font-mono text-xs font-black">{isSoldOut(product) ? 'Sold out' : gbp(product.price)}</span>
                   </button>
                 ))}
             </div>
@@ -3997,249 +2006,32 @@ export default function StaffPOSPage() {
         </div>
       )}
 
-      {/* SAFE TENDER: CASH CONFIRMATION MODAL */}
-      {isCashConfirmModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-3xl border border-emerald-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">💵</span>
-                <div>
-                  <h3 className="font-black text-base text-white">Confirm Cash Tender</h3>
-                  <p className="text-xs text-white/60">Ensure change is counted accurately before completing</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsCashConfirmModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl bg-black/50 border border-white/10 p-3 text-center">
-                <span className="text-[10px] font-bold uppercase text-white/50 block">Total Due</span>
-                <span className="font-mono text-2xl font-black text-amber-400">{gbp(totalDuePence)}</span>
-              </div>
-              <div className="rounded-2xl bg-black/50 border border-white/10 p-3 text-center">
-                <span className="text-[10px] font-bold uppercase text-white/50 block">Cash Tendered</span>
-                <span className="font-mono text-2xl font-black text-white">{gbp(tenderedCashPence)}</span>
-              </div>
-            </div>
-
-            {/* Change Due Display */}
-            <div
-              className={`rounded-2xl p-4 text-center border font-black ${
-                tenderedCashPence >= totalDuePence
-                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
-                  : 'bg-rose-950/70 border-rose-500/50 text-rose-300'
-              }`}
-            >
-              <span className="text-xs uppercase tracking-wider block">
-                {tenderedCashPence >= totalDuePence ? 'Change to Give Customer:' : 'Underpaid by:'}
-              </span>
-              <span className="font-mono text-3xl font-black block mt-1">
-                {tenderedCashPence >= totalDuePence ? gbp(changeDuePence) : gbp(totalDuePence - tenderedCashPence)}
-              </span>
-            </div>
-
-            {/* Quick Cash Presets */}
-            <div className="grid grid-cols-4 gap-1.5 pt-1">
-              {[
-                { label: 'Exact', val: (totalDuePence / 100).toFixed(2) },
-                { label: '£10', val: '10.00' },
-                { label: '£20', val: '20.00' },
-                { label: '£50', val: '50.00' },
-              ].map((b) => (
-                <button
-                  key={b.label}
-                  type="button"
-                  onClick={() => setTenderNumpadValue(b.val)}
-                  className="rounded-xl border border-white/10 bg-white/5 py-2 font-mono text-xs font-bold text-white hover:bg-white/15"
-                >
-                  {b.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsCashConfirmModalOpen(false)}
-                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/70 hover:bg-white/15"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={tenderedCashPence < totalDuePence}
-                onClick={() => executeFinalizePayment('cash')}
-                className="flex-[2] rounded-xl bg-emerald-500 py-3.5 text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-emerald-400 disabled:opacity-40 transition active:scale-95"
-              >
-                ✓ Complete Cash Tender &amp; Open Drawer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SAFE TENDER: SECURE CARD TERMINAL SIMULATION (SumUp / Stripe) */}
-      {isCardTerminalModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-sm rounded-3xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2 text-left">
-                <span className="text-xl">💳</span>
-                <div>
-                  <h3 className="font-bold text-sm text-white">Card Reader #01</h3>
-                  <p className="text-[10px] text-emerald-400 font-mono">● Online (SumUp / Stripe EMV)</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsCardTerminalModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="rounded-2xl bg-black/60 border border-white/10 p-5 space-y-2">
-              <span className="text-[10px] font-bold uppercase text-white/50 block">Amount Due to Charge</span>
-              <span className="font-mono text-3xl font-black text-amber-400 block">{gbp(totalDuePence)}</span>
-              <span className="text-[10px] text-white/40 block">Zero raw card data stored • Encrypted EMV</span>
-            </div>
-
-            {/* Simulated Reader Interaction */}
-            <div className="py-3">
-              {cardTerminalStep === 'tip' && (
-                <div className="space-y-3">
-                  <p className="font-bold text-sm text-white">Add a tip?</p>
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {[0, 50, 100, 200].map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => {
-                          playPOSTouchTone('tap')
-                          setTipPence(t)
-                          setCardTerminalStep('waiting')
-                        }}
-                        className={`rounded-xl border py-3 text-sm font-black transition ${t === 0 ? 'border-white/15 bg-white/5 text-white/70 hover:bg-white/15' : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-400 hover:text-ink'}`}
-                      >
-                        {t === 0 ? 'None' : gbp(t)}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-white/40">Tips go to the team and are recorded separately from sales.</p>
-                </div>
-              )}
-
-              {cardTerminalStep === 'waiting' && (
-                <div className="space-y-3 animate-pulse">
-                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-blue-500/20 border border-blue-400/40 text-3xl">
-                    📶
-                  </div>
-                  <p className="font-bold text-sm text-white">Please Tap, Insert or Swipe Card</p>
-                  <p className="text-xs text-white/60">Supports Contactless, Apple Pay, Google Pay &amp; Chip</p>
-                </div>
-              )}
-
-              {cardTerminalStep === 'processing' && (
-                <div className="space-y-3">
-                  <div className="mx-auto h-12 w-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
-                  <p className="font-bold text-sm text-blue-300">Authorising Transaction with Bank...</p>
-                  <p className="text-[10px] text-white/50">Simulating external payment gateway</p>
-                </div>
-              )}
-
-              {cardTerminalStep === 'approved' && (
-                <div className="space-y-2">
-                  <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500/20 border border-emerald-400 text-3xl text-emerald-400">
-                    ✓
-                  </div>
-                  <p className="font-black text-base text-emerald-300">Transaction Approved!</p>
-                  <p className="font-mono text-[10px] text-white/50">Auth Code: AUTH-{Date.now().toString().slice(-6)}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2 pt-2">
-              {cardTerminalStep === 'waiting' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('action')
-                    setCardTerminalStep('processing')
-                    setTimeout(() => {
-                      setCardTerminalStep('approved')
-                      playPOSTouchTone('action')
-                      setTimeout(() => {
-                        executeFinalizePayment('card')
-                      }, 700)
-                    }, 1200)
-                  }}
-                  className="w-full rounded-xl bg-blue-500 py-3.5 font-body text-xs font-black uppercase tracking-wider text-white shadow-glow hover:bg-blue-400 transition active:scale-95"
-                >
-                  ⚡ Simulate Customer Card Tap / Insert
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setIsCardTerminalModalOpen(false)}
-                className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/60 hover:bg-white/15"
-              >
-                Cancel Card Payment
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MANAGER PIN AUTHORIZATION GATE */}
       {isManagerAuthModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-[80] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Manager approval">
           <div className="w-full max-w-sm rounded-3xl border border-amber-400/50 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2 text-left">
                 <span className="text-xl">🛡️</span>
                 <div>
-                  <h3 className="font-black text-sm text-white">{managerActionTitle || 'Manager Approval Required'}</h3>
+                  <h3 className="font-black text-sm text-white">{managerActionTitle || 'Manager approval'}</h3>
                   <p className="text-[10px] text-white/60">{managerActionDescription}</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsManagerAuthModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
+              <button type="button" onClick={() => setIsManagerAuthModalOpen(false)} className="text-white/60 hover:text-white" aria-label="Close">
                 ✕
               </button>
             </div>
-
-            <div className="space-y-2">
-              <p className="text-xs text-amber-300 font-bold">Enter Supervisor or Manager PIN:</p>
-              <input
-                type="password"
-                maxLength={8}
-                value={managerPinInput}
-                onChange={(e) => setManagerPinInput(e.target.value)}
-                placeholder="••••"
-                autoFocus
-                className="w-full rounded-2xl border border-white/20 bg-black/60 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
-              />
-            </div>
-
-            {managerPinError && (
-              <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2 text-xs text-red-300">
-                {managerPinError}
-              </p>
-            )}
-
-            {/* 1-9 Numpad */}
+            <p className="text-xs text-amber-300 font-bold">Supervisor or manager PIN</p>
+            <input
+              type="password"
+              maxLength={8}
+              value={managerPinInput}
+              onChange={(e) => setManagerPinInput(e.target.value)}
+              placeholder="••••"
+              autoFocus
+              className="w-full rounded-2xl border border-white/20 bg-black/60 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
+            />
+            {managerPinError && <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2 text-xs text-red-300">{managerPinError}</p>}
             <div className="grid grid-cols-3 gap-1.5 pt-1">
               {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
                 <button
@@ -4257,7 +2049,6 @@ export default function StaffPOSPage() {
               <button
                 type="button"
                 onClick={() => {
-                  playPOSTouchTone('tap')
                   setManagerPinInput('')
                   setManagerPinError(null)
                 }}
@@ -4265,34 +2056,15 @@ export default function StaffPOSPage() {
               >
                 Clear
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  playPOSTouchTone('numpad')
-                  setManagerPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))
-                }}
-                className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
-              >
+              <button type="button" onClick={() => setManagerPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))} className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15">
                 0
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  playPOSTouchTone('tap')
-                  setManagerPinInput((prev) => prev.slice(0, -1))
-                }}
-                className="rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/70 hover:bg-white/15"
-              >
+              <button type="button" onClick={() => setManagerPinInput((prev) => prev.slice(0, -1))} className="rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/70 hover:bg-white/15" aria-label="Delete digit">
                 ⌫
               </button>
             </div>
-
             <div className="pt-2 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setIsManagerAuthModalOpen(false)}
-                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/60 hover:bg-white/15"
-              >
+              <button type="button" onClick={() => setIsManagerAuthModalOpen(false)} className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/60 hover:bg-white/15">
                 Cancel
               </button>
               <button
@@ -4301,9 +2073,7 @@ export default function StaffPOSPage() {
                   const check = verifyManagerPin(managerPinInput)
                   if (check.ok) {
                     playPOSTouchTone('action')
-                    if (onManagerApproved) {
-                      onManagerApproved(check.managerName || 'Manager')
-                    }
+                    onManagerApproved?.(check.managerName || 'Manager')
                     setIsManagerAuthModalOpen(false)
                   } else {
                     setManagerPinError(check.message || 'That PIN is not a supervisor or manager PIN.')
@@ -4311,200 +2081,119 @@ export default function StaffPOSPage() {
                 }}
                 className="flex-[2] rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink hover:bg-amber-300 shadow-glow"
               >
-                Authorize Action →
+                Approve →
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* BARCODE / SKU QUICK SCANNER MODAL */}
       {isBarcodeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-          <div className="w-full max-w-sm rounded-3xl border border-sky-500/40 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">📟</span>
-                <div>
-                  <h3 className="font-bold text-sm text-white">Barcode / SKU Scanner</h3>
-                  <p className="text-[10px] text-white/50">Scan with USB reader or enter barcode</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsBarcodeModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (!barcodeInput.trim()) return
-                const found = getProductByBarcode(barcodeInput)
-                if (found) {
-                  handleItemClick(found)
-                  setIsBarcodeModalOpen(false)
-                  setBarcodeInput('')
-                } else {
-                  alert(`No product matched barcode/SKU: ${barcodeInput}`)
-                }
-              }}
-              className="space-y-3"
-            >
-              <input
-                type="text"
-                autoFocus
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                placeholder="Scan barcode or type SKU..."
-                className="w-full rounded-xl border border-sky-400/40 bg-black/60 px-4 py-3 font-mono text-base font-bold text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-sky-400"
-              />
-
-              <button
-                type="submit"
-                className="w-full rounded-xl bg-sky-500 py-3 text-xs font-black uppercase text-ink hover:bg-sky-400 shadow transition"
-              >
-                Lookup &amp; Add Item →
-              </button>
-            </form>
-          </div>
-        </div>
+        <SimpleDialog title="📟 Barcode / SKU" onClose={() => setIsBarcodeModalOpen(false)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!barcodeInput.trim()) return
+              const found = getProductByBarcode(barcodeInput)
+              if (found) {
+                handleItemClick(found)
+                setIsBarcodeModalOpen(false)
+                setBarcodeInput('')
+              } else {
+                setFlash(`No product matches ${barcodeInput}`)
+              }
+            }}
+            className="space-y-3"
+          >
+            <input
+              type="text"
+              autoFocus
+              value={barcodeInput}
+              onChange={(e) => setBarcodeInput(e.target.value)}
+              placeholder="Scan a barcode or type a SKU"
+              className="w-full rounded-xl border border-sky-400/40 bg-black/60 px-4 py-3 font-mono text-base font-bold text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <button type="submit" className="w-full rounded-xl bg-sky-500 py-3 text-xs font-black uppercase text-ink hover:bg-sky-400 shadow transition">
+              Add item →
+            </button>
+          </form>
+        </SimpleDialog>
       )}
 
-      {/* RECENT SALES, RECEIPTS & REFUNDS MODAL */}
-      {isRecentSalesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center p-4 bg-black/90 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-2xl rounded-3xl border border-sky-500/40 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body my-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">🧾</span>
-                <div>
-                  <h3 className="font-black text-base text-white">Completed Orders, Receipts &amp; Refunds</h3>
-                  <p className="text-xs text-white/60">Reprint thermal receipts or process manager-authorized refunds</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsRecentSalesModalOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-              {allOrdersList.slice(0, 30).map((ord) => {
-                const isRefunded = ord.payment?.status === 'refunded' || ord.status === 'cancelled'
-                const ordSource = ord.source
-
-                return (
-                  <div
-                    key={ord.id}
-                    className="rounded-2xl border border-white/10 bg-white/5 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-amber-300">#{ord.shortId}</span>
-                        <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-black uppercase text-white/70">
-                          {ordSource}
-                        </span>
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-black uppercase ${
-                            isRefunded
-                              ? 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
-                              : 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
-                          }`}
-                        >
-                          {isRefunded ? 'REFUNDED' : 'PAID'}
-                        </span>
-                      </div>
-                      <p className="font-bold text-xs text-white mt-1">
-                        {ord.customer.name} &bull; {gbp(ord.payment.total)}
-                      </p>
-                      <p className="text-[11px] text-white/50">
-                        {ord.lines.map((l) => `${l.qty}x ${l.name}`).join(', ')}
-                      </p>
-                      <span className="text-[10px] text-white/40">
-                        {new Date(ord.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReceiptOrder(ord)
-                        }}
-                        className="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/20"
-                      >
-                        🖨️ Receipt
-                      </button>
-
-                      {!isRefunded && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            requireManagerAuth(
-                              'Refund Order',
-                              `Authorize refund of £${(ord.payment.total / 100).toFixed(2)} for Order #${ord.shortId}`,
-                              (mgrName) => {
-                                const reason = prompt('Enter reason for refund (e.g. Customer return, Spillage, Incorrect item):', 'Customer return')
-                                if (reason) {
-                                  const res = refundOrder(ord.id, ord.payment.total, reason, mgrName)
-                                  setFlash(res.ok ? `Order #${ord.shortId} refunded by ${mgrName} — ${res.message}` : res.message)
-                                }
-                              }
-                            )
-                          }}
-                          className="rounded-xl border border-rose-500/30 bg-rose-950/30 px-3 py-1.5 text-xs font-bold text-rose-300 hover:bg-rose-900/50"
-                        >
-                          ↩️ Refund
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MANUAL / CUSTOM AMOUNT ITEM MODAL */}
-      <CustomItemModal
-        isOpen={isCustomItemModalOpen}
-        onClose={() => setIsCustomItemModalOpen(false)}
-        onAddCustomItem={handleAddCustomLineItem}
-      />
+      {isCustomItemModalOpen && <CustomItemModal onClose={() => setIsCustomItemModalOpen(false)} onAddCustomItem={handleAddCustomLineItem} />}
     </div>
   )
 }
 
-function CustomItemModal({
-  isOpen,
-  onClose,
-  onAddCustomItem,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  onAddCustomItem: (name: string, pricePence: number, station: 'spuds' | 'grill' | 'drinks') => void
-}) {
-  const [name, setName] = useState('Custom Food Item')
+function SimpleDialog({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`w-full ${wide ? 'max-w-lg' : 'max-w-sm'} rounded-3xl border border-white/15 bg-slate-900 p-5 shadow-2xl text-white font-body`}>
+        <div className="mb-3 flex items-center justify-between gap-2 border-b border-white/10 pb-2">
+          <h3 className="font-bold text-sm text-white">{title}</h3>
+          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full text-white/60 hover:bg-white/10 hover:text-white" aria-label="Close">
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function TipDialog({ current, onClose, onSet }: { current: number; onClose: () => void; onSet: (pence: number) => void }) {
+  const [custom, setCustom] = useState(current > 0 ? (current / 100).toFixed(2) : '')
+  return (
+    <SimpleDialog title="💝 Gratuity" onClose={onClose}>
+      <p className="text-xs text-white/60">Tips are kept apart from sales on the end-of-day report.</p>
+      <div className="mt-3 grid grid-cols-4 gap-2">
+        {[0, 50, 100, 200].map((t) => (
+          <button key={t} type="button" onClick={() => onSet(t)} className={`rounded-xl py-3 text-sm font-black transition ${current === t ? 'bg-amber-400 text-ink' : 'bg-white/5 text-white hover:bg-white/10'}`}>
+            {t === 0 ? 'None' : gbp(t)}
+          </button>
+        ))}
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          const pence = Math.round((parseFloat(custom) || 0) * 100)
+          if (pence >= 0 && pence <= 10000) onSet(pence)
+        }}
+        className="mt-3 flex gap-2"
+      >
+        <input
+          type="text"
+          inputMode="decimal"
+          value={custom}
+          onChange={(e) => /^\d*\.?\d{0,2}$/.test(e.target.value) && setCustom(e.target.value)}
+          placeholder="Other amount"
+          className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/50 px-3 py-2.5 font-mono text-sm text-white focus:border-amber-400 focus:outline-none"
+        />
+        <button type="submit" className="rounded-xl bg-amber-400 px-4 text-xs font-black uppercase text-ink hover:bg-amber-300">
+          Set
+        </button>
+      </form>
+    </SimpleDialog>
+  )
+}
+
+function CustomItemModal({ onClose, onAddCustomItem }: { onClose: () => void; onAddCustomItem: (name: string, pricePence: number, station: 'spuds' | 'grill' | 'drinks') => void }) {
+  const [name, setName] = useState('Misc item')
   const [priceString, setPriceString] = useState('')
   const [station, setStation] = useState<'spuds' | 'grill' | 'drinks'>('spuds')
-
-  if (!isOpen) return null
+  const parsed = parseFloat(priceString) || 0
 
   const handleNumpad = (val: string) => {
     playPOSTouchTone('tap')
-    if (val === '.') {
-      if (priceString.includes('.')) return
-      setPriceString((prev) => (prev ? `${prev}.` : '0.'))
-      return
-    }
+    if (val === '⌫') return setPriceString((prev) => prev.slice(0, -1))
+    if (val === '.') return setPriceString((prev) => (prev.includes('.') ? prev : prev ? `${prev}.` : '0.'))
     if (priceString.includes('.')) {
       const parts = priceString.split('.')
       if (parts[1] && parts[1].length >= 2) return
@@ -4513,344 +2202,83 @@ function CustomItemModal({
     setPriceString((prev) => (prev === '0' ? val : `${prev}${val}`))
   }
 
-  const handleBackspace = () => {
-    playPOSTouchTone('tap')
-    setPriceString((prev) => {
-      if (prev.length <= 1) return ''
-      return prev.slice(0, -1)
-    })
-  }
-
-  const handleAddInc = (inc: number) => {
-    playPOSTouchTone('tap')
-    const curr = parseFloat(priceString) || 0
-    setPriceString((curr + inc).toFixed(2))
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const val = parseFloat(priceString)
-    if (isNaN(val) || val <= 0) {
-      alert('Please enter a valid price amount greater than £0.00')
-      return
-    }
-    const pence = Math.round(val * 100)
-    onAddCustomItem(name, pence, station)
-  }
-
-  const parsed = parseFloat(priceString) || 0
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-3 bg-black/85 backdrop-blur-md">
-      <div className="w-full max-w-md rounded-3xl border border-purple-500/40 bg-slate-900 p-5 sm:p-6 shadow-2xl space-y-4 text-white font-body my-auto">
-        <div className="flex items-center justify-between border-b border-white/10 pb-3">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">➕</span>
-            <div>
-              <h3 className="display text-lg font-black text-white">Manual Item / Custom £</h3>
-              <p className="text-xs text-white/60">Staff can enter any custom food item &amp; amount</p>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="text-white/60 hover:text-white">✕</button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="text-[10px] font-black uppercase text-purple-300">Item Description / Name:</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Special Deal, Extra Filling, Side Dish..."
-              className="w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-sm text-white font-bold focus:border-purple-400 focus:outline-none mt-1"
-              required
-            />
-            <div className="flex flex-wrap gap-1 mt-1.5">
-              {['Custom Food Item', 'Extra Spud Filling', 'Special Combo', 'Side Dish', 'Price Adjustment'].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => { playPOSTouchTone('tap'); setName(preset) }}
-                  className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] text-white/80 hover:bg-purple-600 hover:text-white transition"
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] font-black uppercase text-amber-300">Custom Price (£):</label>
-              <span className="text-[10px] text-white/40">Staff Can Enter Any Amount</span>
-            </div>
-            <div className="relative mt-1">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-2xl font-black text-amber-400">£</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={priceString}
-                onChange={(e) => {
-                  const v = e.target.value
-                  if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setPriceString(v)
-                }}
-                placeholder="0.00"
-                className="w-full rounded-xl border-2 border-amber-400/50 bg-black/50 pl-9 pr-3 py-2 font-mono text-2xl font-black text-white focus:border-amber-400 focus:outline-none text-right"
-                autoFocus
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-1 mt-1.5">
-              <span className="text-[10px] font-bold text-white/40 uppercase">Quick Add:</span>
-              <div className="flex flex-wrap gap-1">
-                <button
-                  type="button"
-                  onClick={() => { playPOSTouchTone('tap'); setPriceString('') }}
-                  className="rounded-lg bg-red-950/40 border border-red-500/30 px-2 py-0.5 font-mono text-[10px] font-bold text-red-300 hover:bg-red-900/50"
-                >
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddInc(0.5)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
-                >
-                  +£0.50
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddInc(1.0)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
-                >
-                  +£1.00
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddInc(2.0)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
-                >
-                  +£2.00
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddInc(5.0)}
-                  className="rounded-lg bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 hover:bg-amber-400 hover:text-ink"
-                >
-                  +£5.00
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-1 mt-2">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => handleNumpad(d)}
-                  className="h-9 rounded-xl bg-white/10 border border-white/10 font-mono text-base font-bold text-white hover:bg-white/20 active:scale-95 transition flex items-center justify-center"
-                >
-                  {d}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={handleBackspace}
-                className="h-9 rounded-xl bg-red-950/40 border border-red-500/30 font-mono text-sm font-bold text-red-300 hover:bg-red-900/50 active:scale-95 transition flex items-center justify-center"
-              >
-                ⌫
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-black uppercase text-white/60">Send Ticket To Station:</label>
-            <div className="grid grid-cols-3 gap-1.5 mt-1">
-              <button
-                type="button"
-                onClick={() => { playPOSTouchTone('tap'); setStation('spuds') }}
-                className={`py-1.5 rounded-xl text-[11px] font-bold border transition ${
-                  station === 'spuds' ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'
-                }`}
-              >
-                🥔 Spuds (Oven)
-              </button>
-              <button
-                type="button"
-                onClick={() => { playPOSTouchTone('tap'); setStation('grill') }}
-                className={`py-1.5 rounded-xl text-[11px] font-bold border transition ${
-                  station === 'grill' ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'
-                }`}
-              >
-                🔥 Grill / Panini
-              </button>
-              <button
-                type="button"
-                onClick={() => { playPOSTouchTone('tap'); setStation('drinks') }}
-                className={`py-1.5 rounded-xl text-[11px] font-bold border transition ${
-                  station === 'drinks' ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'
-                }`}
-              >
-                🥤 Drinks / Front
-              </button>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={parsed <= 0}
-            className="w-full rounded-full bg-gradient-to-r from-purple-500 to-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:opacity-95 transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-          >
-            <span>➕</span>
-            <span>Add {parsed > 0 ? `£${parsed.toFixed(2)}` : ''} Custom Item To Bill</span>
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-function PayInOutModal({
-  isOpen,
-  onClose,
-  staffName,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  staffName: string
-}) {
-  const [type, setType] = useState<'pay_in' | 'pay_out'>('pay_out')
-  const [amountInput, setAmountInput] = useState<number>(5)
-  const [reason, setReason] = useState('')
-
-  if (!isOpen) return null
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (amountInput <= 0 || !reason.trim()) return
-    const pence = Math.round(amountInput * 100)
-    recordCashFloatAdjustment(type, pence, reason.trim(), staffName)
-    onClose()
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-      <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
-        <div className="flex items-center justify-between border-b border-white/10 pb-2">
-          <h3 className="font-bold text-sm text-white">💵 Cash Float Adjustment</h3>
-          <button type="button" onClick={onClose} className="text-white/60 hover:text-white">✕</button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setType('pay_out')}
-              className={`rounded-xl py-2 font-bold text-xs border ${
-                type === 'pay_out' ? 'bg-rose-600 text-white border-rose-500' : 'bg-white/5 border-white/10 text-white/70'
-              }`}
-            >
-              Pay Out (Petty Cash)
-            </button>
-            <button
-              type="button"
-              onClick={() => setType('pay_in')}
-              className={`rounded-xl py-2 font-bold text-xs border ${
-                type === 'pay_in' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-white/5 border-white/10 text-white/70'
-              }`}
-            >
-              Pay In (Float Refill)
-            </button>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold uppercase text-white/60">Amount (£):</label>
-            <input
-              type="number"
-              step="0.5"
-              min="0.5"
-              value={amountInput}
-              onChange={(e) => setAmountInput(parseFloat(e.target.value) || 0)}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-lg font-mono font-bold text-white focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold uppercase text-white/60">Reason / Description:</label>
-            <input
-              type="text"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Milk & butter from Tesco, coin change..."
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white focus:outline-none"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full rounded-full bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink hover:bg-amber-300"
-          >
-            Record &amp; Kick Drawer
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-function LineNoteModal({
-  isOpen,
-  onClose,
-  initialNote,
-  onSave,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  initialNote: string
-  onSave: (note: string) => void
-}) {
-  const [noteText, setNoteText] = useState(initialNote)
-
-  if (!isOpen) return null
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md">
-      <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-slate-900 p-5 shadow-2xl space-y-4 text-white font-body">
-        <div className="flex items-center justify-between border-b border-white/10 pb-2">
-          <h3 className="font-bold text-sm text-white">Item Kitchen Note</h3>
-          <button type="button" onClick={onClose} className="text-white/60 hover:text-white">✕</button>
-        </div>
-
+    <SimpleDialog title="➕ Misc item" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (parsed <= 0) return
+          onAddCustomItem(name, Math.round(parsed * 100), station)
+        }}
+        className="space-y-3"
+      >
         <input
           type="text"
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          placeholder="e.g. Well done skin, extra crispy..."
-          className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white focus:outline-none"
-          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="What is it?"
+          className="w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-sm text-white font-bold focus:border-purple-400 focus:outline-none"
+          required
         />
-
         <div className="flex flex-wrap gap-1">
-          {['Extra Crispy', 'Well Done', 'Separate Box', 'Light Butter', 'No Salt'].map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => setNoteText((prev) => (prev ? `${prev}, ${preset}` : preset))}
-              className="rounded-lg bg-white/10 px-2 py-1 text-[10px] text-white/80 hover:bg-white/20"
-            >
-              +{preset}
+          {['Misc item', 'Extra filling', 'Side', 'Special', 'Price adjustment'].map((preset) => (
+            <button key={preset} type="button" onClick={() => setName(preset)} className="rounded-lg bg-white/10 px-2 py-1 text-[11px] text-white/80 hover:bg-purple-600 hover:text-white transition">
+              {preset}
             </button>
           ))}
         </div>
-
-        <button
-          type="button"
-          onClick={() => onSave(noteText)}
-          className="w-full rounded-full bg-amber-400 py-2.5 text-xs font-black uppercase text-ink hover:bg-amber-300"
-        >
-          Save Note
+        <div className="flex items-center justify-between rounded-xl border-2 border-amber-400/40 bg-black/50 px-3 py-2">
+          <span className="text-2xl font-black text-amber-400">£</span>
+          <span className="font-mono text-2xl font-black text-white">{priceString || '0.00'}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map((d) => (
+            <button key={d} type="button" onClick={() => handleNumpad(d)} className="h-11 rounded-xl bg-white/10 border border-white/10 font-mono text-base font-bold text-white hover:bg-white/20 active:scale-95 transition" aria-label={d === '⌫' ? 'Delete digit' : d}>
+              {d}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {([
+            ['spuds', '🥔 Oven'],
+            ['grill', '🔥 Grill'],
+            ['drinks', '🥤 Front'],
+          ] as ['spuds' | 'grill' | 'drinks', string][]).map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setStation(id)} className={`py-2 rounded-xl text-[11px] font-bold border transition ${station === id ? 'bg-amber-400 text-ink border-amber-400 font-black' : 'bg-white/5 border-white/10 text-white/70'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button type="submit" disabled={parsed <= 0} className="w-full rounded-full bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink hover:bg-amber-300 transition disabled:opacity-40">
+          Add {parsed > 0 ? `£${parsed.toFixed(2)}` : ''} to the bill
         </button>
+      </form>
+    </SimpleDialog>
+  )
+}
+
+function LineNoteModal({ onClose, initialNote, onSave }: { onClose: () => void; initialNote: string; onSave: (note: string) => void }) {
+  const [noteText, setNoteText] = useState(initialNote)
+  return (
+    <SimpleDialog title="Note for the kitchen" onClose={onClose}>
+      <input
+        type="text"
+        value={noteText}
+        onChange={(e) => setNoteText(e.target.value)}
+        placeholder="e.g. allergy, well done, cut in half"
+        className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
+        autoFocus
+      />
+      <div className="mt-2 flex flex-wrap gap-1">
+        {['Extra crispy', 'Well done', 'Cut in half', 'Separate box', 'Allergy — see customer'].map((preset) => (
+          <button key={preset} type="button" onClick={() => setNoteText((prev) => (prev ? `${prev}, ${preset}` : preset))} className="rounded-lg bg-white/10 px-2 py-1 text-[11px] text-white/80 hover:bg-white/20">
+            +{preset}
+          </button>
+        ))}
       </div>
-    </div>
+      <button type="button" onClick={() => onSave(noteText.trim())} className="mt-3 w-full rounded-full bg-amber-400 py-2.5 text-xs font-black uppercase text-ink hover:bg-amber-300">
+        Save note
+      </button>
+    </SimpleDialog>
   )
 }

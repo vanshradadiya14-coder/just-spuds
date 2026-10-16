@@ -108,25 +108,60 @@ and the toolbar scrolls sideways instead of clipping. The KDS shows four
 columns on a 1366px screen and stacks on a phone; admin tables scroll inside
 their cards.
 
-### Till flow (modelled on Square / Toast / Lightspeed quick-service)
+### Till flow (modelled on the shop's EPOS Now till)
 
-- **Ring up** from the category rail, ❤️ Favourites (owner's "popular" flags
-  plus the last 30 days' best sellers), speed keys, search, or a barcode scan.
-- **Attach a customer** (👤) by phone — visit count and lifetime spend show on
-  the ticket and the order is stored under their number.
-- **Send** fires the ticket to the KDS as an *open check* to be paid at
-  collection; **Cash / Card / Split** take payment now. Open Checks (📋) lists
-  everything sent but unpaid: settle it, reprint the ticket, or void it with a
-  reason. While settling you can add items; removing an item that already went
-  to the kitchen needs a reason and a manager PIN, and the stock goes back.
-- **Sale complete** shows change due (or total charged) and asks Print / Email /
-  No receipt — skipped when auto-receipt is on. Enter starts the next sale.
-- **Tips** on card payments are optional (⚙️) and recorded separately from sales.
-- **Time clock** (⏱️): staff clock in, break and out from the PIN gate without
-  opening the register; timecards are in Admin › Staff.
-- Keyboard: `F2` search, `F4` cash, `F5` card, `F6` split, `F8` send, `F9` hold,
-  `/` or `Ctrl+K` search. The header shows an OFFLINE pill when the network
-  drops — sales keep working locally and sync when it returns.
+Staff move from EPOS Now, so the screens follow it: Home tiles → category →
+item, an item pop-up with tabs, a payment screen, Orders, a ☰ side menu and a
+Close Till screen that prints the end-of-day report.
+
+- **Ring up** from the Home category tiles (EPOS: HOME › JUST SPUDS), the
+  category strip, ★ Favourites (popular flags + last 30 days' best sellers),
+  search or a barcode scan. Sold-out items (stock, or 86'd on the kitchen
+  screen) can't be rung up. A second plain drink just bumps the quantity.
+- **Item pop-up** (`components/pos/ItemOptionsWizard.tsx`): Complimentary
+  (butter, leave-offs, kitchen requests, note, rush) → Spud Toppings → Sauces →
+  Make It A Meal, with Previous / Next and Add always one tap away. Toppings
+  and the meal deal are charged from the menu (the same list the website uses),
+  so the till, website and report never disagree. Unsent lines can be edited.
+- **Function keys** under the ticket: Misc item, Print bill, Hold, No sale,
+  Discount, Gratuity, Petty cash, Adjust float — then **Delete** (manager PIN,
+  logged as a void), **Order** (send to the kitchen, pay on collection) and **Pay**.
+- **Payment screen** (`PaymentScreen.tsx`) replaces the products while the
+  ticket stays visible: numpad, quick cash (Exact, next £, round notes) and Pay
+  by Cash / Card / More (payment link). Part payments add up until nothing is
+  left — e.g. £5 cash then the rest on card. Tabs: Discount (over 20% needs a
+  manager), Split by item (the rest goes to Held), Split by guest. Card payments
+  are taken on the shop's own card machine: key the amount in, tap **Approved**.
+- **Orders** (`OrdersScreen.tsx`): Held (kept on the device, survive a reload),
+  Open (sent but unpaid — including website pickups, which are paid at the
+  counter) and Complete (date filter, search, staff and tender columns, receipt,
+  refund with amount / reason / cash-or-card and a manager PIN).
+- **☰ menu** (`TillSideMenu.tsx`): Adjust float, Petty cash, Tip out, No sale,
+  X read, Close till, past reports, Stock & sold out, Orders, reprint, clock,
+  customer display, shortcuts, Back office, settings (till name) and Cloud sync
+  with the last sync time.
+- **Close till** (`CloseTillScreen.tsx`): checklist (unsynced sales, open
+  orders, held tickets, cash up, card machine total), denomination count
+  (required — blind close hides the expected figure until counted), counted vs
+  expected vs variance for the drawer and the card machine, then **Print &
+  close**, which freezes the report on the shift.
+- **Time clock** (⏱️) from the PIN gate; timecards in Admin › Staff.
+- Keyboard: `F4`/`F5` pay, `F8` order, `F9` hold, `F2`, `/` or `Ctrl+K` search,
+  `Enter` = cash for the amount shown on the payment screen, `Esc` back.
+
+### End-of-day report (`services/endOfDayReport.ts`)
+
+The printed Z-report has the sections of the EPOS Now one: cash drawer (float,
+withdrawn / deposited, petty cash, tip outs, cash sales and refunds, expected,
+counted, over / short), tender (counted / taken / variance for cash, card and
+payment links), sales breakdown, wet / dry, sales by product (toppings and
+"Make It A Meal" on their own lines), sales by employee, refunds, sales by
+category, voids, tax and sales by hour. It's built from the till's own sale log
+(each sale records the cashier and how it was paid) and frozen on the shift
+when the till closes. The same report is the X read during the day, and Admin
+› Reports › Till Shifts reprints any closed day. It prints through a body-level
+80mm slip (`components/PrintSlip.tsx`) so a long report runs over several
+pages instead of being cut off at the first.
 
 ### New online order alarm (KDS, till and admin)
 
@@ -168,9 +203,14 @@ Deliveroo tablet or a Subway KDS behaves.
   before, and the order records which voucher made a discount. If someone clears
   their browser to use it again, the kitchen card, new-order alarm and admin
   order drawer flag that the phone number has ordered before.
-- **Status changes**: cancelled and completed orders are final; a till/phone
-  open check that hasn't been paid cannot be "completed" from the kitchen (the
-  card says *take payment on the till* instead), so no sale slips past the shift.
+- **Status changes**: cancelled and completed orders are final; an order still
+  waiting for payment at the counter — a till/phone open check or a website
+  pickup — cannot be "completed" from the kitchen (the card says *take payment
+  on the till*), so no sale slips past the shift and the drawer.
+- **Spud toppings** use the shop's counter prices (beans / cheese / slaw £1,
+  three cheese £1.50, onions 50p, chicken / tuna £1.50, chilli £2). Older saved
+  lists move to them once (`migrateSpudExtras`), published only after a staff
+  device has the shop's current copy; prices the owner sets afterwards stick.
 - **Cancel / refund**: an order cancels once (stock comes back once); refunds
   are capped at what's left to refund; cash refunds reduce the drawer's
   expected cash and show on the Z-report; a shift can't close over unpaid checks.

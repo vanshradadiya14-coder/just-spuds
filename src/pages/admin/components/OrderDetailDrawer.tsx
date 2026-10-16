@@ -5,6 +5,7 @@ import { lineUnitPrice } from '../../../hooks/useCart'
 import { cx, gbp } from '../../../utils/format'
 import { nextStepLabel, sourceBadge, statusTone } from './orderLabels'
 import { parseKitchenNotes } from '../../../utils/kitchenNotes'
+import { extrasText, mealText, modifierText, saladsText, saucesText } from '../../../utils/lineText'
 
 interface OrderDetailDrawerProps {
   order: Order
@@ -165,10 +166,13 @@ export default function OrderDetailDrawer({ order, onClose, onAdvance, onPrint, 
                       <span className="mr-2 font-black text-amber-400">{l.qty}x</span>
                       {l.name}
                     </p>
-                    {l.extras.length > 0 && <p className="pl-7 text-amber-200">+ {l.extras.join(', ')}</p>}
-                    {l.salads && l.salads.length > 0 && <p className="pl-7 text-emerald-300">🥗 {l.salads.join(', ')}</p>}
-                    {l.sauces.length > 0 && <p className="pl-7 text-amber-300">🥫 {l.sauces.join(', ')}</p>}
-                    {l.meal && <p className="pl-7 font-bold text-amber-300">🥤 Meal deal{l.mealDrink ? `: ${l.mealDrink}` : ''}{l.mealSnack ? ` • ${l.mealSnack}` : ''}</p>}
+                    {l.conversationalModifiers && l.conversationalModifiers.length > 0 && (
+                      <p className="pl-7 font-bold text-rose-200">{l.conversationalModifiers.map(modifierText).join(' • ')}</p>
+                    )}
+                    {l.extras.length > 0 && <p className="pl-7 text-amber-200">+ {extrasText(l)}</p>}
+                    {l.salads && l.salads.length > 0 && <p className="pl-7 text-emerald-300">🥗 {saladsText(l)}</p>}
+                    {l.sauces.length > 0 && <p className="pl-7 text-amber-300">🥫 {saucesText(l)}</p>}
+                    {l.meal && <p className="pl-7 font-bold text-amber-300">🥤 Meal deal{mealText(l) ? `: ${mealText(l)}` : ''}</p>}
                     {l.notes && <p className="pl-7 font-bold text-red-200">⚠️ {l.notes}</p>}
                     {typeof l.priceOverridePence === 'number' && <p className="pl-7 text-[10px] text-purple-300">Price override: {l.priceOverrideReason || 'manager'}</p>}
                   </div>

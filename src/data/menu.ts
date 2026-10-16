@@ -31,6 +31,8 @@ export interface Option {
   fat?: number
   dietary?: string
   allergen?: string
+  /** Price-list revision the option was last migrated to (see migrateSpudExtras). */
+  rev?: number
 }
 
 export interface Product {
@@ -205,13 +207,44 @@ export const CATEGORIES: Category[] = [
   { id: 'SNACKS', label: 'Crisps & Snacks', blurb: 'The crunchy side that makes it a complete meal.' },
 ]
 
+/** Spud toppings at the shop's counter prices (the EPOS Now till, Oct 2026). */
+export const SPUD_EXTRAS_REV = 2
 export const SPUD_EXTRAS: Option[] = [
-  { id: 'beans', label: 'Heinz Baked Beans', price: 150, calories: 95, protein: 5, carbs: 18, fat: 0.5, dietary: 'Vegan 🌿', allergen: 'None' },
-  { id: 'coleslaw', label: 'Homemade Slaw', price: 150, calories: 120, protein: 1, carbs: 6, fat: 10, dietary: 'Vegetarian 🌿', allergen: 'Egg, Mustard' },
-  { id: 'cheese', label: 'Mature Cheddar', price: 150, calories: 155, protein: 9, carbs: 0.5, fat: 13, dietary: 'Vegetarian 🌿', allergen: 'Dairy' },
-  { id: 'three-cheese', label: 'Signature 3-Cheese Blend', price: 200, calories: 190, protein: 12, carbs: 1, fat: 16, dietary: 'Vegetarian 🌿', allergen: 'Dairy' },
-  { id: 'crispy-onions', label: 'Crispy Fried Onions', price: 100, calories: 65, protein: 1, carbs: 6, fat: 4.5, dietary: 'Vegan 🌿', allergen: 'Gluten' },
+  { id: 'beans', label: 'Heinz Baked Beans', price: 100, calories: 95, protein: 5, carbs: 18, fat: 0.5, dietary: 'Vegan 🌿', allergen: 'None', rev: SPUD_EXTRAS_REV },
+  { id: 'cheese', label: 'Mature Cheddar', price: 100, calories: 155, protein: 9, carbs: 0.5, fat: 13, dietary: 'Vegetarian 🌿', allergen: 'Dairy', rev: SPUD_EXTRAS_REV },
+  { id: 'pulled-chicken', label: 'Pulled Chicken', price: 150, calories: 120, protein: 21, carbs: 0.5, fat: 3.5, dietary: 'High Protein 💪', allergen: 'None', rev: SPUD_EXTRAS_REV },
+  { id: 'chilli', label: 'Chilli Con Carne', price: 200, calories: 160, protein: 12, carbs: 9, fat: 8, dietary: 'High Protein 💪', allergen: 'Celery', rev: SPUD_EXTRAS_REV },
+  { id: 'coleslaw', label: 'Homemade Slaw', price: 100, calories: 120, protein: 1, carbs: 6, fat: 10, dietary: 'Vegetarian 🌿', allergen: 'Egg, Mustard', rev: SPUD_EXTRAS_REV },
+  { id: 'crispy-onions', label: 'Crispy Fried Onions', price: 50, calories: 65, protein: 1, carbs: 6, fat: 4.5, dietary: 'Vegan 🌿', allergen: 'Gluten', rev: SPUD_EXTRAS_REV },
+  { id: 'three-cheese', label: 'Signature 3-Cheese Blend', price: 150, calories: 190, protein: 12, carbs: 1, fat: 16, dietary: 'Vegetarian 🌿', allergen: 'Dairy', rev: SPUD_EXTRAS_REV },
+  { id: 'tuna', label: 'Tuna Mayo', price: 150, calories: 140, protein: 12, carbs: 1, fat: 10, dietary: 'High Protein 💪', allergen: 'Fish, Egg', rev: SPUD_EXTRAS_REV },
 ]
+
+/** What each topping cost before the counter price list (rev 2) — only these get repriced. */
+const SPUD_EXTRAS_REV1_PRICES: Record<string, number> = { beans: 150, coleslaw: 150, cheese: 150, 'three-cheese': 200, 'crispy-onions': 100 }
+
+/**
+ * Brings a saved spud-topping list onto the counter price list, once. Prices
+ * still at the old defaults move to the new ones and the new toppings are added;
+ * anything the owner changed in the admin editor is left alone. A list that
+ * already carries the revision marker is never touched again, so a price the
+ * owner sets afterwards (even back to an old value) sticks.
+ */
+export function migrateSpudExtras(list: Option[]): { list: Option[]; changed: boolean } {
+  if (!Array.isArray(list) || list.length === 0) return { list, changed: false }
+  if (list.some((o) => (o.rev ?? 0) >= SPUD_EXTRAS_REV)) return { list, changed: false }
+  const target = new Map(SPUD_EXTRAS.map((o) => [o.id, o]))
+  const migrated = list.map((o): Option => {
+    const next = target.get(o.id)
+    const repriced = next && SPUD_EXTRAS_REV1_PRICES[o.id] === o.price ? next.price : o.price
+    return { ...o, price: repriced, rev: SPUD_EXTRAS_REV }
+  })
+  const have = new Set(migrated.map((o) => o.id))
+  SPUD_EXTRAS.forEach((o) => {
+    if (!have.has(o.id)) migrated.push({ ...o })
+  })
+  return { list: migrated, changed: true }
+}
 
 export const WRAP_EXTRAS: Option[] = [
   { id: 'cheese', label: 'Melted Mature Cheddar', price: 100, calories: 120, protein: 8, carbs: 0.5, fat: 10, dietary: 'Vegetarian 🌿', allergen: 'Dairy' },
@@ -287,6 +320,9 @@ export const NUTRITION_MAP: Record<string, { calories: number; protein: number; 
   'coleslaw': { calories: 120, protein: 1, carbs: 6, fat: 10 },
   'cheese': { calories: 155, protein: 9, carbs: 0.5, fat: 13 },
   'three-cheese': { calories: 190, protein: 12, carbs: 1, fat: 16 },
+  'pulled-chicken': { calories: 120, protein: 21, carbs: 0.5, fat: 3.5 },
+  'chilli': { calories: 160, protein: 12, carbs: 9, fat: 8 },
+  'tuna': { calories: 140, protein: 12, carbs: 1, fat: 10 },
   'extra-cheese': { calories: 120, protein: 8, carbs: 0.5, fat: 10 },
   'extra-meat': { calories: 160, protein: 22, carbs: 2, fat: 7 },
   'crispy-onions': { calories: 65, protein: 1, carbs: 6, fat: 4.5 },
@@ -572,7 +608,7 @@ function getStoredDynamicExtras(): Option[] {
       const raw = localStorage.getItem(DYNAMIC_EXTRAS_KEY)
       if (raw) {
         const parsed = JSON.parse(raw) as Option[]
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+        if (Array.isArray(parsed) && parsed.length > 0) return migrateSpudExtras(parsed).list
       }
     } catch {}
   }

@@ -12,6 +12,8 @@ import {
   SPUD_EXTRAS as DEFAULT_EXTRAS,
   SAUCES as DEFAULT_SAUCES,
   CATEGORIES as DEFAULT_CATEGORIES,
+  migrateSpudExtras,
+  SPUD_EXTRAS_REV,
   type Product,
   type Option,
   type Category,
@@ -428,7 +430,9 @@ export function getExtras(): Option[] {
       localStorage.setItem(EXTRAS_STORAGE_KEY, JSON.stringify(DEFAULT_EXTRAS))
       return DEFAULT_EXTRAS
     }
-    return JSON.parse(raw)
+    // Read through the price-list migration, so every screen charges the same
+    // prices even before this device has published the migrated list.
+    return migrateSpudExtras(JSON.parse(raw)).list
   } catch {
     return DEFAULT_EXTRAS
   }
@@ -439,12 +443,14 @@ export function saveExtra(extra: Option): void {
   try {
     const current = getExtras()
     const index = current.findIndex((e) => e.id === extra.id)
+    // Anything saved here is already on the current price list; never migrate it again.
+    const stamped: Option = { ...extra, rev: Math.max(extra.rev ?? 0, SPUD_EXTRAS_REV) }
     let updated: Option[]
     if (index >= 0) {
       updated = [...current]
-      updated[index] = extra
+      updated[index] = stamped
     } else {
-      updated = [...current, extra]
+      updated = [...current, stamped]
     }
     localStorage.setItem(EXTRAS_STORAGE_KEY, JSON.stringify(updated))
     notifyListeners()
@@ -722,7 +728,26 @@ if (typeof window !== 'undefined') {
     },
     notify: notifyListeners,
   })
-  registerDoc({ name: 'menu.extras', storageKey: EXTRAS_STORAGE_KEY, notify: notifyListeners })
+  // The counter price list (rev 2) is published only once this device holds the
+  // shop's current copy — never from a stale local copy at start-up, which would
+  // carry a newer timestamp and overwrite a manager's later edits.
+  let republishExtras = false
+  registerDoc({
+    name: 'menu.extras',
+    storageKey: EXTRAS_STORAGE_KEY,
+    fromRemote: (remote) => {
+      const { list, changed } = migrateSpudExtras(Array.isArray(remote) ? (remote as Option[]) : [])
+      republishExtras = changed
+      return list
+    },
+    notify: () => {
+      notifyListeners()
+      if (republishExtras) {
+        republishExtras = false
+        setTimeout(() => markDocChanged('menu.extras'), 0)
+      }
+    },
+  })
   registerDoc({ name: 'menu.sauces', storageKey: SAUCES_STORAGE_KEY, notify: notifyListeners })
   registerDoc({ name: 'menu.promos', storageKey: PROMOS_STORAGE_KEY, notify: notifyListeners })
   registerDoc({ name: 'store.settings', storageKey: SETTINGS_STORAGE_KEY, notify: notifyListeners })

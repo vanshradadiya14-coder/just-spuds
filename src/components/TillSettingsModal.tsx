@@ -20,7 +20,7 @@ interface TillSettingsModalProps {
   actor: string
 }
 
-type ToggleKey = Exclude<keyof TillSettings, 'defaultFloatPence' | 'autoLockMinutes'>
+type ToggleKey = Exclude<keyof TillSettings, 'defaultFloatPence' | 'autoLockMinutes' | 'tillName'>
 
 const TOGGLES: { key: ToggleKey; label: string; hint: string }[] = [
   { key: 'autoPrintTillReceipt', label: 'Receipt after every till sale', hint: 'Opens the thermal receipt as soon as a sale is tendered.' },
@@ -39,6 +39,7 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
   const [settings, setSettings] = useState<TillSettings>(() => getTillSettings())
   const [printer, setPrinter] = useState<PrinterDeviceStatus>(() => getPrinterStatus())
   const [floatInput, setFloatInput] = useState(() => (getTillSettings().defaultFloatPence / 100).toFixed(2))
+  const [tillNameInput, setTillNameInput] = useState(() => getTillSettings().tillName)
   const [busy, setBusy] = useState<'usb' | 'drawer' | null>(null)
   const [isSoundOpen, setIsSoundOpen] = useState(false)
 
@@ -58,6 +59,12 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
     const clamped = Math.max(0, Math.min(parsed, 100000))
     setFloatInput((clamped / 100).toFixed(2))
     if (clamped !== settings.defaultFloatPence) updateTillSettings({ defaultFloatPence: clamped }, actor)
+  }
+
+  const commitTillName = () => {
+    const clean = tillNameInput.replace(/\s+/g, ' ').trim().slice(0, 24) || 'Till 1'
+    setTillNameInput(clean)
+    if (clean !== settings.tillName) updateTillSettings({ tillName: clean }, actor)
   }
 
   const handleConnectUSB = async () => {
@@ -87,6 +94,22 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
             ✕
           </button>
         </div>
+
+        <label className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+          <span className="min-w-0">
+            <span className="block text-xs font-bold text-white">Till name</span>
+            <span className="block text-[10px] text-white/50 mt-0.5">Shown on the till, receipts and the end-of-day report.</span>
+          </span>
+          <input
+            type="text"
+            maxLength={24}
+            value={tillNameInput}
+            onChange={(e) => setTillNameInput(e.target.value)}
+            onBlur={commitTillName}
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            className="w-28 shrink-0 rounded-lg border border-white/10 bg-black/50 px-2 py-1 text-right text-sm text-white focus:border-amber-400 focus:outline-none"
+          />
+        </label>
 
         <ul className="space-y-1.5">
           {TOGGLES.map(({ key, label, hint }) => {

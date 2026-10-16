@@ -3,8 +3,11 @@ import type { Order } from '../services/orderStore'
 import { lineUnitPrice } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { SITE } from '../data/site'
+import { MEAL_DEAL } from '../data/menu'
 import { getBusinessDetails } from '../services/menuStore'
 import { orderVat } from '../services/vat'
+import { lineExtras, mealDrinkName, mealSnackName, modifierText, saucesText } from '../utils/lineText'
+import { parseKitchenNotes } from '../utils/kitchenNotes'
 
 interface ThermalReceiptProps {
   order: Order
@@ -22,6 +25,7 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
   const isDelivery = order.fulfilment === 'delivery'
   const isPaid = order.payment.status === 'paid'
   const business = getBusinessDetails()
+  const notes = parseKitchenNotes(order.kitchenNotes)
 
   const content = (
     <div
@@ -63,11 +67,13 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
           </div>
         )}
         <p className="text-[10px] mt-1.5 font-bold">
-          Placed: {new Date(order.createdAt).toLocaleDateString()} {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          Placed: {new Date(order.createdAt).toLocaleDateString('en-GB')} {new Date(order.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </p>
-        <p className="text-[11px] font-bold text-black mt-0.5">
-          {order.isScheduled ? 'Scheduled Due Time:' : 'Target Time:'} {order.scheduledFor || order.estimatedDeliveryTime}
-        </p>
+        {(order.scheduledFor || order.estimatedDeliveryTime) && (
+          <p className="text-[11px] font-bold text-black mt-0.5">
+            {order.isScheduled ? 'Scheduled Due Time:' : 'Target Time:'} {order.scheduledFor || order.estimatedDeliveryTime}
+          </p>
+        )}
       </div>
 
       {/* CUSTOMER & DELIVERY INFO */}
@@ -89,13 +95,14 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
         )}
       </div>
 
-      {/* CRITICAL: ALLERGEN / KITCHEN NOTES ALERT */}
-      {order.kitchenNotes && (
+      {/* CRITICAL: ALLERGEN / KITCHEN NOTES ALERT — only a real instruction, not till bookkeeping */}
+      {notes.note && (
         <div className="my-2.5 p-2 bg-black text-white text-xs font-black uppercase tracking-wide border-2 border-black">
           <p className="text-[11px] underline">⚠️ ALLERGEN / KITCHEN ALERT:</p>
-          <p className="mt-0.5 text-xs">{order.kitchenNotes}</p>
+          <p className="mt-0.5 text-xs">{notes.note}</p>
         </div>
       )}
+      {notes.meta.length > 0 && <p className="py-1 text-[10px] uppercase text-gray-700">{notes.meta.join(' • ')}</p>}
 
       {/* LINE ITEMS */}
       <div className="py-3 border-b border-black space-y-3">
@@ -112,43 +119,39 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
                 <span>{gbp(lineUnitPrice(line) * line.qty)}</span>
               </div>
 
-              {/* Toast-Style Conversational Modifiers */}
+              {/* Leave-offs and swaps */}
               {line.conversationalModifiers && line.conversationalModifiers.length > 0 && (
                 <div className="pl-4 text-[11px] font-bold text-gray-900">
                   {line.conversationalModifiers.map((mod, i) => (
-                    <p key={i} className={mod.type === 'no' ? 'line-through text-gray-600' : ''}>
-                      {mod.type === 'extra' ? `+ EXTRA ${mod.name} (+£1.00)` :
-                       mod.type === 'no' ? `- NO ${mod.name}` :
-                       mod.type === 'lite' ? `~ LITE ${mod.name}` :
-                       mod.type === 'side' ? `⚗️ ${mod.name} ON SIDE` :
-                       `• ${mod.name}`}
-                    </p>
+                    <p key={i}>{mod.type === 'no' ? '- ' : '• '}{modifierText(mod)}{mod.type === 'extra' && mod.pricePence ? ` (+${gbp(mod.pricePence)})` : ''}</p>
                   ))}
                 </div>
               )}
 
-              {/* Extras */}
-              {line.extras && line.extras.length > 0 && (
-                <div className="pl-4 text-[11px] text-gray-800">
-                  {line.extras.map((ext, i) => (
-                    <p key={i}>+ {ext.replace(/-/g, ' ')}</p>
-                  ))}
+              {/* Toppings, with what they cost */}
+              {lineExtras(line).map((x) => (
+                <div key={x.id} className="pl-4 flex justify-between text-[11px] text-gray-800">
+                  <span>+ {x.count > 1 ? `${x.count}× ` : ''}{x.label}</span>
+                  <span>{gbp(x.unit * x.count * line.qty)}</span>
                 </div>
-              )}
+              ))}
 
               {/* Sauces */}
               {line.sauces && line.sauces.length > 0 && (
                 <p className="pl-4 text-[11px] font-bold">
-                  Sauce: {line.sauces.join(', ')}
+                  Sauce: {saucesText(line)}
                 </p>
               )}
 
               {/* Meal Deal */}
               {line.meal && (
                 <div className="pl-4 text-[11px] font-bold text-gray-900">
-                  <p>✓ MEAL DEAL COMBO (+£1.80):</p>
-                  {line.mealDrink && <p className="pl-2">- Drink: {line.mealDrink.replace(/-/g, ' ')}</p>}
-                  {line.mealSnack && <p className="pl-2">- Snack: {line.mealSnack.replace(/-/g, ' ')}</p>}
+                  <div className="flex justify-between">
+                    <span>+ Make It A Meal</span>
+                    <span>{gbp(MEAL_DEAL.price * line.qty)}</span>
+                  </div>
+                  {line.mealDrink && <p className="pl-2">- {mealDrinkName(line.mealDrink)}</p>}
+                  {line.mealSnack && <p className="pl-2">- {mealSnackName(line.mealSnack)}</p>}
                 </div>
               )}
 
@@ -184,10 +187,12 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
           </div>
         )}
 
-        <div className="flex justify-between">
-          <span>Service / Bag</span>
-          <span>{gbp(order.payment.serviceFee)}</span>
-        </div>
+        {order.payment.serviceFee > 0 && (
+          <div className="flex justify-between">
+            <span>Service / Bag</span>
+            <span>{gbp(order.payment.serviceFee)}</span>
+          </div>
+        )}
 
         {order.payment.tip > 0 && (
           <div className="flex justify-between font-bold">
@@ -226,7 +231,8 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
               </div>
             ) : (
               <p className="p-1 bg-gray-100 border border-black text-center">
-                ✓ PAID ({gbp(order.payment.total)}) &bull; {order.payment.method === 'cash' ? 'CASH' : order.payment.method === 'card' ? 'CARD / TILL' : 'ONLINE / PAID'}
+                ✓ PAID ({gbp(order.payment.total)}) &bull;{' '}
+                {order.payment.method === 'cash' ? 'CASH' : order.payment.method === 'card' ? 'CARD' : order.payment.method === 'complimentary' ? 'NO CHARGE' : 'PAID'}
               </p>
             )
           ) : (
@@ -236,6 +242,8 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
           )}
         </div>
       </div>
+
+      {isPaid && order.payment.takenBy && <p className="pt-2 text-center text-[11px]">You were served by {order.payment.takenBy.split(' ')[0]}</p>}
 
       {/* BARCODE & FOOTER */}
       <div className="text-center pt-3 space-y-2">

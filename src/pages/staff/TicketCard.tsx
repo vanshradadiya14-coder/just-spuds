@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../utils/format'
 import { getFirstOrderOfferCheck, getPriceCheck, getStatusChangeBlocker, type Order } from '../../services/orderStore'
 import { parseKitchenNotes } from '../../utils/kitchenNotes'
+import { extrasText, mealText, modifierText, saladsText, saucesText } from '../../utils/lineText'
 
 export default function TicketCard({
   ord,
@@ -210,29 +211,42 @@ export default function TicketCard({
                 </div>
               </div>
 
+              {/* Leave-offs and swaps from the till ("NO BUTTER", "GARLIC BUTTER") */}
+              {l.conversationalModifiers && l.conversationalModifiers.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1 pl-6">
+                  {l.conversationalModifiers.map((m, i) => (
+                    <span
+                      key={i}
+                      className={`rounded-md px-2 py-0.5 font-body text-xs font-black uppercase tracking-wide ${m.type === 'no' ? 'bg-rose-500 text-white' : 'bg-white/15 text-white'}`}
+                    >
+                      {modifierText(m)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {l.extras && l.extras.length > 0 && (
                 <p className="font-body text-xs text-amber-200 mt-1 font-semibold pl-6">
-                  + {l.extras.join(', ')}
+                  + {extrasText(l)}
                 </p>
               )}
 
               {l.salads && l.salads.length > 0 && (
                 <p className="font-body text-xs text-emerald-300 font-semibold mt-0.5 pl-6">
-                  🥗 Salad: {l.salads.join(', ')}
+                  🥗 Salad: {saladsText(l)}
                 </p>
               )}
 
               {l.sauces && l.sauces.length > 0 && (
                 <p className="font-body text-xs text-amber-300 font-semibold mt-0.5 pl-6">
-                  🥫 Sauce: {l.sauces.join(', ')}
+                  🥫 Sauce: {saucesText(l)}
                 </p>
               )}
 
               {l.meal && (
-                <div className="mt-1.5 ml-6 inline-flex items-center gap-1.5 rounded-md bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300">
+                <div className="mt-1.5 ml-6 inline-flex flex-wrap items-center gap-1.5 rounded-md bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300">
                   <span>🥤 Meal Deal:</span>
-                  {l.mealDrink && <span>{l.mealDrink}</span>}
-                  {l.mealSnack && <span>&bull; {l.mealSnack}</span>}
+                  <span>{mealText(l) || 'drink + snack'}</span>
                 </div>
               )}
 

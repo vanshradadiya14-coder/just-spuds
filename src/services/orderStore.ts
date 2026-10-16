@@ -102,6 +102,8 @@ export interface OrderPayment {
   promoCode?: string
   paidAt?: string
   paidNote?: string
+  /** Staff member who took the payment on the till (sales-by-employee on the end-of-day report). */
+  takenBy?: string
   splitDetails?: SplitTenderPortion[]
   manualAdjustment?: {
     originalTotal: number
@@ -625,8 +627,10 @@ export function getStatusChangeBlocker(order: Order, nextStatus: OrderStatus): s
   if (order.status === 'cancelled') return 'This order was cancelled.'
   if (order.status === 'delivered' || order.status === 'collected') return 'This order is already complete.'
   const completing = nextStatus === 'delivered' || nextStatus === 'collected'
-  if (completing && order.source !== 'WEBSITE' && order.payment.status === 'pending_store') {
-    return 'Unpaid — take payment on the till (Open Checks) before completing.'
+  // Website pickups are paid at the counter too: completing one here used to
+  // mark it paid without the money ever reaching the till's drawer or card total.
+  if (completing && order.payment.status === 'pending_store') {
+    return 'Unpaid — take payment on the till (Orders › Open) before completing.'
   }
   return null
 }
@@ -2396,6 +2400,7 @@ export function createManualCounterOrder(
       total,
       paidAt: params.paymentStatus === 'paid' ? now.toISOString() : undefined,
       paidNote: `Entered via ${source} by ${actor}`,
+      ...(params.paymentStatus === 'paid' ? { takenBy: actor } : {}),
       splitDetails: params.splitDetails,
     },
     estimatedDeliveryTime: params.fulfilment === 'delivery' ? '~25-35 mins' : '~10-15 mins',
@@ -2452,14 +2457,36 @@ export function createManualCounterOrder(
 // OPEN CHECKS (sent to kitchen, paid later at the counter)
 // -------------------------------------------------------------
 
-/** Till / phone orders that were fired to the kitchen but not yet paid. */
+/**
+ * Orders waiting for payment at the counter: till / phone checks fired to the
+ * kitchen, and website pickups (the website takes no payment — they pay on
+ * collection). Settling them on the till puts the money on the shift.
+ */
 export function getOpenTillChecks(): Order[] {
   return getStoredOrders().filter(
     (o) =>
-      o.source !== 'WEBSITE' &&
+      !o.isTest &&
       o.payment.status === 'pending_store' &&
       !['cancelled', 'collected', 'delivered', 'completed'].includes(o.status),
   )
+}
+
+const dayLabel = (d: Date) => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+
+/** A pre-order for a later day — it is not expected at the counter today. */
+export function isForLaterDay(order: Pick<Order, 'isScheduled' | 'scheduleDate'>, now: Date = new Date()): boolean {
+  if (!order.isScheduled || !order.scheduleDate) return false
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(now)
+    d.setDate(d.getDate() + i)
+    if (dayLabel(d) === order.scheduleDate) return true
+  }
+  return false
+}
+
+/** Open checks that should be settled before today's till is closed. */
+export function getOpenChecksDueToday(now: Date = new Date()): Order[] {
+  return getOpenTillChecks().filter((o) => !isForLaterDay(o, now))
 }
 
 export interface SettleOpenOrderParams {
@@ -2503,6 +2530,7 @@ export function settleOpenOrder(orderId: string, params: SettleOpenOrderParams):
       total,
       paidAt: now.toISOString(),
       paidNote: `Open check settled at counter by ${params.actor}`,
+      takenBy: params.actor,
       splitDetails: params.splitDetails,
       cardLast4: params.cardLast4,
     },
@@ -2618,7 +2646,9 @@ export function refundOrder(
   orderId: string,
   refundAmountPence: number,
   reason: string,
-  managerName: string
+  managerName: string,
+  /** How the money goes back. Defaults to how it was paid (a split payment is asked for at the till). */
+  refundMethod?: 'cash' | 'card',
 ): { ok: boolean; order?: Order; message: string } {
   const current = getStoredOrders()
   const order = current.find((o) => o.id === orderId || o.shortId === orderId)
@@ -2681,7 +2711,7 @@ export function refundOrder(
 
   saveOrders(updated)
   // Cash refunds come out of the drawer — the shift's expected cash must follow.
-  recordTillRefund({ orderId: order.shortId, amountPence: refundAmountPence, method: order.payment.method, staffName: managerName, reason })
+  recordTillRefund({ orderId: order.shortId, amountPence: refundAmountPence, method: refundMethod || order.payment.method, staffName: managerName, reason })
   logAuditEvent(
     managerName,
     'order.refund_processed',

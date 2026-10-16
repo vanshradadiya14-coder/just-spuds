@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { getCurrentShift, getPastZReports, subscribeShift, type TillShift } from '../../../services/tillStore'
 import { gbp } from '../../../utils/format'
+import type { EndOfDayReport } from '../../../services/endOfDayReport'
+import EndOfDayReportModal from '../../../components/EndOfDayReportSlip'
+import { reportForShift } from '../../../components/EndOfDayHistory'
 
 /**
  * Every closed till shift with its cash reconciliation, so a manager can spot
@@ -10,6 +13,7 @@ export default function TillShiftHistory() {
   const [current, setCurrent] = useState<TillShift | null>(() => getCurrentShift())
   const [past, setPast] = useState<TillShift[]>(() => getPastZReports())
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<EndOfDayReport | null>(null)
 
   useEffect(() => {
     // Closing a shift moves it into the past list, so refresh both on any change.
@@ -80,6 +84,7 @@ export default function TillShiftHistory() {
                     variance={variance}
                     isOpen={isOpen}
                     onToggle={() => setExpanded(isOpen ? null : s.id)}
+                    onViewReport={() => setViewing(reportForShift(s))}
                   />
                 )
               })}
@@ -87,11 +92,21 @@ export default function TillShiftHistory() {
           </table>
         </div>
       )}
+      {current && current.status === 'open' && (
+        <button
+          type="button"
+          onClick={() => setViewing(reportForShift(current))}
+          className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 font-body text-xs font-bold text-white hover:bg-white/10"
+        >
+          📊 X read for the open shift
+        </button>
+      )}
+      {viewing && <EndOfDayReportModal report={viewing} onClose={() => setViewing(null)} />}
     </div>
   )
 }
 
-function ShiftRow({ shift: s, variance, isOpen, onToggle }: { shift: TillShift; variance: number; isOpen: boolean; onToggle: () => void }) {
+function ShiftRow({ shift: s, variance, isOpen, onToggle, onViewReport }: { shift: TillShift; variance: number; isOpen: boolean; onToggle: () => void; onViewReport: () => void }) {
   const closed = s.closedAt ? new Date(s.closedAt) : null
   const varianceClass = variance < -100 ? 'text-rose-300' : variance > 100 ? 'text-amber-300' : 'text-emerald-300'
   const cashMovements = s.movements.filter((m) => m.type !== 'sale_cash' && m.type !== 'open_shift' && m.type !== 'close_shift')
@@ -126,7 +141,19 @@ function ShiftRow({ shift: s, variance, isOpen, onToggle }: { shift: TillShift; 
                 <p className="text-white/40 uppercase tracking-wider text-[10px] mb-1">Float &amp; discounts</p>
                 <p>Opening float {gbp(s.startingFloat)} by {s.openedBy}</p>
                 <p>Discounts given {gbp(s.totalDiscountGiven)}</p>
+                {(s.tipsTotal || 0) > 0 && <p>Tips taken {gbp(s.tipsTotal || 0)}</p>}
+                {typeof s.countedCard === 'number' && <p>Card machine total {gbp(s.countedCard)}</p>}
                 {s.notes && <p className="mt-1 italic text-white/50">“{s.notes}”</p>}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onViewReport()
+                  }}
+                  className="mt-2 rounded-lg bg-amber-400 px-3 py-1.5 text-[11px] font-black text-ink hover:bg-amber-300"
+                >
+                  📄 End-of-day report
+                </button>
               </div>
               <div className="sm:col-span-2">
                 <p className="text-white/40 uppercase tracking-wider text-[10px] mb-1">Drawer movements ({cashMovements.length})</p>

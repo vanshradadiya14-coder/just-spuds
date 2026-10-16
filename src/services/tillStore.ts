@@ -13,6 +13,7 @@ import { kickCashDrawer, setTouchSoundsEnabled } from './printerBridge'
 import { setAlertSoundsEnabled } from './alertSoundBus'
 import { logAuditEvent } from './auditStore'
 import { markRecordChanged, registerEpochHandler, registerRecords } from './cloudSync'
+import type { EndOfDayReport } from './endOfDayReport'
 
 export interface CashDenominations {
   note50: number // £50
@@ -44,6 +45,14 @@ export const EMPTY_DENOMINATIONS: CashDenominations = {
   coin1p: 0,
 }
 
+/**
+ * What a pay-in / pay-out was for, so the end-of-day report can show them on
+ * separate lines like EPOS: float top-ups and bank drops, petty cash spent on
+ * supplies, and tips paid out to staff. Older movements have no kind:
+ * a pay-in counts as float, a pay-out as petty cash.
+ */
+export type CashMovementKind = 'float' | 'petty' | 'tip_out'
+
 export interface CashMovement {
   id: string
   timestamp: string
@@ -52,6 +61,45 @@ export interface CashMovement {
   reason: string
   staffName: string
   orderId?: string
+  kind?: CashMovementKind
+}
+
+export const movementKind = (m: Pick<CashMovement, 'type' | 'kind'>): CashMovementKind =>
+  m.kind || (m.type === 'pay_in' ? 'float' : 'petty')
+
+/** One sale taken on this till during the shift — the end-of-day report is built from these. */
+export interface TillSaleRecord {
+  /** Order id (orderStore `Order.id`). */
+  orderId: string
+  shortId: string
+  at: string
+  /** Cashier who took the money. */
+  staff: string
+  /** Everything taken, including any tip (pence). */
+  total: number
+  tip: number
+  discount: number
+  cash: number
+  card: number
+  /** Payment link / online portion of a split tender. */
+  other: number
+}
+
+/** An item or ticket removed after it was rung up — shown under "Voids" on the report. */
+export interface TillVoidRecord {
+  id: string
+  at: string
+  kind: 'line' | 'ticket' | 'check'
+  /** Cashier at the till. */
+  staff: string
+  /** Manager whose PIN approved it. */
+  approvedBy: string
+  item: string
+  qty: number
+  /** Value removed (pence). */
+  value: number
+  reason: string
+  orderShortId?: string
 }
 
 export interface TillShift {
@@ -81,6 +129,21 @@ export interface TillShift {
   notes?: string
   /** Last change — the admin console keeps the newest copy of each shift. */
   updatedAt?: string
+  /** Till this shift ran on (Till settings → till name). */
+  tillName?: string
+  /** Every sale taken on this till during the shift. */
+  sales?: TillSaleRecord[]
+  voids?: TillVoidRecord[]
+  /** Tips included in the takings (pence). */
+  tipsTotal?: number
+  /** Payment-link / online portions of split tenders taken at the till (pence). */
+  otherTenderTotal?: number
+  /** Card machine end-of-day total entered at close (pence). */
+  countedCard?: number
+  /** Payment-link total confirmed at close (pence). */
+  countedOther?: number
+  /** The printed end-of-day report, frozen when the till was closed. */
+  report?: EndOfDayReport
 }
 
 export interface TillSettings {
@@ -97,6 +160,8 @@ export interface TillSettings {
   autoLockMinutes: number
   /** Lock the till after every completed sale, so each cashier signs their own sales. */
   lockAfterSale: boolean
+  /** Name of this till on screen, receipts and the end-of-day report. */
+  tillName: string
 }
 
 const STORAGE_ACTIVE_SHIFT = 'just_spuds_till_active_shift_v1'
@@ -134,6 +199,7 @@ const DEFAULT_SETTINGS: TillSettings = {
   tipPrompt: false,
   autoLockMinutes: 5,
   lockAfterSale: false,
+  tillName: 'Till 1',
 }
 
 let activeShift: TillShift | null = null
@@ -311,6 +377,11 @@ export function openTillShift(openedBy: string, startingFloatPence: number): Til
     refundsTotal: 0,
     inStoreOrdersCount: 0,
     onlineOrdersCount: 0,
+    tillName: tillSettings.tillName || DEFAULT_SETTINGS.tillName,
+    sales: [],
+    voids: [],
+    tipsTotal: 0,
+    otherTenderTotal: 0,
     movements: [
       {
         id: `mov-${Date.now()}-open`,
@@ -346,74 +417,87 @@ export function recordTillSale(params: {
   paymentMethod: 'cash' | 'card' | 'in_store' | 'split'
   totalPence: number
   discountPence?: number
+  /** Short order number (shown on the report and in the drawer log). */
   orderId: string
+  /** Full order id — lets the end-of-day report list what was sold. */
+  orderUuid?: string
   staffName: string
   splitCashPence?: number
   splitCardPence?: number
   splitOnlinePence?: number
+  /** Tip included in totalPence. */
+  tipPence?: number
 }) {
   if (!activeShift || activeShift.status !== 'open') return
 
+  let cash = 0
+  let card = 0
+  let other = 0
   if (params.paymentMethod === 'split') {
-    const cashPart = params.splitCashPence || 0
-    const cardPart = params.splitCardPence || 0
-    const onlinePart = params.splitOnlinePence || 0
-
-    if (cashPart > 0) {
-      activeShift.cashSalesTotal += cashPart
-      activeShift.expectedCash += cashPart
-      activeShift.movements.push({
-        id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        timestamp: new Date().toISOString(),
-        type: 'sale_cash',
-        amount: cashPart,
-        reason: `Split Tender (Cash Portion) Order #${params.orderId}`,
-        staffName: params.staffName,
-        orderId: params.orderId,
-      })
-
-      if (tillSettings.kickDrawerOnCash) {
-        kickCashDrawer()
-      }
-    }
-
-    if (cardPart > 0) {
-      activeShift.cardSalesTotal += cardPart
-    }
-
-    if (onlinePart > 0) {
-      activeShift.onlineOrdersTotal += onlinePart
-    }
+    cash = params.splitCashPence || 0
+    card = params.splitCardPence || 0
+    other = params.splitOnlinePence || 0
+  } else if (params.paymentMethod === 'cash' || params.paymentMethod === 'in_store') {
+    cash = params.totalPence
   } else {
-    const isCash = params.paymentMethod === 'cash' || params.paymentMethod === 'in_store'
-
-    if (isCash) {
-      activeShift.cashSalesTotal += params.totalPence
-      activeShift.expectedCash += params.totalPence
-      activeShift.movements.push({
-        id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        timestamp: new Date().toISOString(),
-        type: 'sale_cash',
-        amount: params.totalPence,
-        reason: `Cash Sale Order #${params.orderId}`,
-        staffName: params.staffName,
-        orderId: params.orderId,
-      })
-
-      // Automatically trigger drawer kick on cash sale if enabled
-      if (tillSettings.kickDrawerOnCash) {
-        kickCashDrawer()
-      }
-    } else {
-      activeShift.cardSalesTotal += params.totalPence
-    }
+    card = params.totalPence
   }
+
+  if (cash > 0) {
+    activeShift.cashSalesTotal += cash
+    activeShift.expectedCash += cash
+    activeShift.movements.push({
+      id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      type: 'sale_cash',
+      amount: cash,
+      reason: params.paymentMethod === 'split' ? `Split Tender (Cash Portion) Order #${params.orderId}` : `Cash Sale Order #${params.orderId}`,
+      staffName: params.staffName,
+      orderId: params.orderId,
+    })
+    if (tillSettings.kickDrawerOnCash) kickCashDrawer()
+  }
+  if (card > 0) activeShift.cardSalesTotal += card
+  // A payment link taken at the till is not a website order — keep it apart.
+  if (other > 0) activeShift.otherTenderTotal = (activeShift.otherTenderTotal || 0) + other
 
   if (params.discountPence) {
     activeShift.totalDiscountGiven += params.discountPence
   }
+  const tip = Math.max(0, params.tipPence || 0)
+  if (tip > 0) activeShift.tipsTotal = (activeShift.tipsTotal || 0) + tip
+
+  activeShift.sales = [
+    ...(activeShift.sales || []),
+    {
+      orderId: params.orderUuid || params.orderId,
+      shortId: params.orderId,
+      at: new Date().toISOString(),
+      staff: params.staffName,
+      total: cash + card + other,
+      tip,
+      discount: params.discountPence || 0,
+      cash,
+      card,
+      other,
+    },
+  ]
 
   activeShift.inStoreOrdersCount += 1
+  saveActiveShift()
+}
+
+/**
+ * Something rung up and then taken off — a line, a whole ticket, or an open
+ * check that went to the kitchen. Recorded for the "Voids" section of the
+ * end-of-day report (EPOS shows the same).
+ */
+export function recordTillVoid(params: Omit<TillVoidRecord, 'id' | 'at'>) {
+  if (!activeShift || activeShift.status !== 'open') return
+  activeShift.voids = [
+    ...(activeShift.voids || []),
+    { ...params, id: `void-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, at: new Date().toISOString() },
+  ]
   saveActiveShift()
 }
 
@@ -490,20 +574,27 @@ export function recordCashFloatAdjustment(
   type: 'pay_in' | 'pay_out',
   amountPence: number,
   reason: string,
-  staffName: string
+  staffName: string,
+  kind?: CashMovementKind,
 ) {
   if (!activeShift || activeShift.status !== 'open') return
+  const amount = Math.max(0, Math.round(amountPence))
+  if (amount === 0) return
+  // Only a float adjustment can put money in; petty cash and tip-outs always come out.
+  const resolvedKind: CashMovementKind = kind || (type === 'pay_in' ? 'float' : 'petty')
+  const resolvedType = resolvedKind === 'float' ? type : 'pay_out'
 
-  const delta = type === 'pay_in' ? amountPence : -amountPence
+  const delta = resolvedType === 'pay_in' ? amount : -amount
   activeShift.expectedCash += delta
 
   activeShift.movements.push({
-    id: `mov-${Date.now()}-${type}`,
+    id: `mov-${Date.now()}-${resolvedType}`,
     timestamp: new Date().toISOString(),
-    type,
-    amount: amountPence,
+    type: resolvedType,
+    amount,
     reason,
     staffName,
+    kind: resolvedKind,
   })
 
   saveActiveShift()
@@ -511,9 +602,9 @@ export function recordCashFloatAdjustment(
 
   logAuditEvent(
     staffName,
-    type === 'pay_in' ? 'till.pay_in' : 'till.pay_out',
+    resolvedKind === 'tip_out' ? 'till.tip_out' : resolvedKind === 'petty' ? 'till.petty_cash' : resolvedType === 'pay_in' ? 'till.pay_in' : 'till.pay_out',
     'Cash Drawer',
-    `Amount £${(amountPence / 100).toFixed(2)}. Reason: ${reason}`
+    `Amount £${(amount / 100).toFixed(2)}. Reason: ${reason}`
   )
 }
 
@@ -523,7 +614,14 @@ export function recordCashFloatAdjustment(
 export function closeTillShift(
   closedBy: string,
   countedDenominations: CashDenominations,
-  notes?: string
+  notes?: string,
+  extra: {
+    /** Card machine end-of-day total, if the cashier entered it. */
+    countedCard?: number
+    countedOther?: number
+    /** Builds the printed end-of-day report from the closed shift (it needs the orders, which this store cannot import). */
+    buildReport?: (closed: TillShift) => EndOfDayReport
+  } = {},
 ): { closedShift: TillShift; discrepancy: number } {
   if (!activeShift || activeShift.status !== 'open') {
     throw new Error('No active shift to close.')
@@ -539,6 +637,8 @@ export function closeTillShift(
     closedBy,
     countedCash,
     discrepancy,
+    countedCard: typeof extra.countedCard === 'number' ? Math.max(0, Math.round(extra.countedCard)) : undefined,
+    countedOther: typeof extra.countedOther === 'number' ? Math.max(0, Math.round(extra.countedOther)) : undefined,
     closingDenominations: countedDenominations,
     notes: notes?.trim() || undefined,
     movements: [
@@ -552,6 +652,15 @@ export function closeTillShift(
         staffName: closedBy,
       },
     ],
+  }
+
+  if (extra.buildReport) {
+    try {
+      closedShift.report = extra.buildReport(closedShift)
+    } catch (err) {
+      // A report failure must never stop the drawer from closing; the admin can rebuild it.
+      console.error('End-of-day report failed to build:', err)
+    }
   }
 
   // Save to past shifts

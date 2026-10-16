@@ -644,6 +644,191 @@ await test('refunds: once only, never more than was paid, and a cash refund come
 })
 
 // ---------------------------------------------------------------------------
+section('🧮 EPOS till: counter prices, end-of-day report, held tickets')
+
+const EXTRAS_KEY = 'just_spuds_dynamic_extras_v1'
+
+await test('spud toppings move to the counter price list once, and owner prices stick', async () => {
+  const menu = await load('/src/data/menu.ts')
+  const old = [
+    { id: 'beans', label: 'Heinz Baked Beans', price: 150 },
+    { id: 'coleslaw', label: 'Homemade Slaw', price: 150 },
+    { id: 'cheese', label: 'Mature Cheddar', price: 175 },
+    { id: 'three-cheese', label: 'Signature 3-Cheese Blend', price: 200 },
+    { id: 'crispy-onions', label: 'Crispy Fried Onions', price: 100 },
+  ]
+  const { list, changed } = menu.migrateSpudExtras(old)
+  assert.equal(changed, true)
+  const price = (l, id) => l.find((o) => o.id === id)?.price
+  assert.deepEqual(
+    ['beans', 'coleslaw', 'three-cheese', 'crispy-onions', 'pulled-chicken', 'chilli', 'tuna'].map((id) => price(list, id)),
+    [100, 100, 150, 50, 150, 200, 150],
+    'EPOS counter prices, plus the chicken / chilli / tuna toppings',
+  )
+  assert.equal(price(list, 'cheese'), 175, 'a price the owner already changed is left alone')
+  assert.equal(menu.migrateSpudExtras(list).changed, false, 'runs once')
+  const later = list.map((o) => (o.id === 'beans' ? { ...o, price: 150 } : o))
+  assert.equal(price(menu.migrateSpudExtras(later).list, 'beans'), 150, 'an owner price set afterwards is never reverted')
+
+  // A device still holding the old list charges counter prices at once.
+  localStorage.setItem(EXTRAS_KEY, JSON.stringify(old))
+  assert.equal(menu.optionPrice('beans', 'SPUDS'), 100)
+  assert.equal(menuStore.getExtras().find((o) => o.id === 'tuna').price, 150)
+  menuStore.saveExtra({ id: 'beans', label: 'Heinz Baked Beans', price: 120 })
+  assert.equal(menuStore.getExtras().find((o) => o.id === 'beans').price, 120, 'saved through the admin editor and kept')
+  localStorage.setItem(EXTRAS_KEY, JSON.stringify(menu.SPUD_EXTRAS))
+})
+
+await test('the end-of-day report has every EPOS section, built from the till’s own sales', async () => {
+  const eod = await load('/src/services/endOfDayReport.ts')
+  const spud = menuStore.getProductById('spud-just-a')
+  const drink = menuStore.getProducts().find((p) => p.category === 'COLD_DRINKS')
+  menuStore.adjustProductStock(spud.id, 50, 'test', 'seed')
+  menuStore.adjustProductStock(drink.id, 50, 'test', 'seed')
+  tillStore.openTillShift('Sunny', 3000)
+
+  // Chloe: Just A Spud + beans + cheese, made a meal, paid cash.
+  const spudLine = { ...line(spud, 1), extras: ['beans', 'cheese'], meal: true, mealDrink: 'cold-coca-cola', mealSnack: 'snack-ready-salted' }
+  const o1 = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customerName: 'A', customerPhone: '', lines: [spudLine], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Chloe')
+  assert.equal(o1.payment.total, spud.price + 100 + 100 + 195)
+  tillStore.recordTillSale({ paymentMethod: 'cash', totalPence: o1.payment.total, orderId: o1.shortId, orderUuid: o1.id, staffName: 'Chloe' })
+
+  // Sunny: two drinks, 30p off, £1 tip; £2 cash and the rest on card.
+  const drinksTotal = drink.price * 2 - 30 + 100
+  const o2 = orderStore.createManualCounterOrder(
+    {
+      fulfilment: 'pickup',
+      customerName: 'B',
+      customerPhone: '',
+      lines: [line(drink, 2)],
+      paymentMethod: 'split',
+      paymentStatus: 'paid',
+      discount: 30,
+      tip: 100,
+      splitDetails: [
+        { method: 'cash', amount: 200 },
+        { method: 'card', amount: drinksTotal - 200 },
+      ],
+    },
+    'Sunny',
+  )
+  assert.equal(o2.payment.takenBy, 'Sunny')
+  tillStore.recordTillSale({ paymentMethod: 'split', totalPence: drinksTotal, discountPence: 30, orderId: o2.shortId, orderUuid: o2.id, staffName: 'Sunny', splitCashPence: 200, splitCardPence: drinksTotal - 200, tipPence: 100 })
+
+  tillStore.recordCashFloatAdjustment('pay_out', 250, 'Milk', 'Sunny', 'petty')
+  tillStore.recordCashFloatAdjustment('pay_in', 400, 'Tips paid to team', 'Sunny', 'tip_out')
+  tillStore.recordCashFloatAdjustment('pay_in', 1000, 'Coins from the bank', 'Sunny', 'float')
+  tillStore.recordTillVoid({ kind: 'line', staff: 'Chloe', approvedBy: 'Sunny', item: '1x Coke', qty: 1, value: 150, reason: 'Wrong item rung up' })
+  assert.equal(orderStore.refundOrder(o1.id, 100, 'Cold food', 'Sunny', 'cash').ok, true)
+
+  const expected = 3000 + o1.payment.total + 200 - 250 - 400 + 1000 - 100
+  assert.equal(tillStore.getCurrentShift().expectedCash, expected, 'a tip-out always comes out of the drawer, even if asked as a pay-in')
+  const counted = expected - 10
+  const denoms = { ...tillStore.EMPTY_DENOMINATIONS, coin1p: counted }
+  const { closedShift } = tillStore.closeTillShift('Sunny', denoms, 'test close', {
+    countedCard: drinksTotal - 200,
+    buildReport: (closed) => eod.buildEndOfDayReport({ shift: closed, orders: orderStore.getStoredOrders(), products: menuStore.getProducts(), vatRegistered: false }),
+  })
+  const r = closedShift.report
+  assert.ok(r, 'the report is frozen on the closed shift')
+  assert.equal(r.kind, 'Z')
+  assert.equal(r.basis, 'sales')
+  assert.equal(r.sales.transactions, 2)
+  assert.equal(r.sales.items, 3)
+  assert.equal(r.sales.discount, 30)
+  assert.equal(r.sales.total, o1.payment.total + drink.price * 2 - 30)
+  assert.equal(r.sales.tips, 100)
+
+  const row = (rows, key) => rows.find((x) => x.key === key)
+  assert.equal(row(r.byProduct, `product:${spud.id}`).total, spud.price)
+  assert.equal(row(r.byProduct, 'topping:beans').total, 100, 'toppings are their own lines, like EPOS')
+  assert.equal(row(r.byProduct, 'meal-deal').label, 'Make It A Meal')
+  assert.equal(row(r.byProduct, `product:${drink.id}`).qty, 2)
+  assert.equal(row(r.byProduct, `product:${drink.id}`).discount, 30)
+  assert.equal(row(r.byCategory, 'TOPPINGS').total, 200)
+  assert.equal(r.byCategory.reduce((n, x) => n + x.total, 0), r.sales.total, 'categories add up to sales')
+  assert.equal(row(r.wetDry, 'wet').total, drink.price * 2 - 30)
+  assert.equal(row(r.wetDry, 'dry').total, o1.payment.total)
+  assert.deepEqual(
+    r.byEmployee.map((e) => [e.label, e.transactions, e.total, e.tips]).sort(),
+    [
+      ['Chloe', 1, o1.payment.total, 0],
+      ['Sunny', 1, drink.price * 2 - 30, 100],
+    ],
+  )
+
+  assert.equal(r.drawer.float, 3000)
+  assert.equal(r.drawer.petty, 250)
+  assert.equal(r.drawer.tipOuts, 400)
+  assert.equal(r.drawer.floatAdjust, 1000)
+  assert.equal(r.drawer.cashRefunds, 100)
+  assert.equal(r.drawer.expected, expected)
+  assert.equal(r.drawer.counted, counted)
+  assert.equal(r.drawer.variance, -10)
+  const card = r.tenders.find((t) => t.key === 'card')
+  assert.equal(card.taken, drinksTotal - 200)
+  assert.equal(card.variance, 0, 'card machine total matches the till')
+  assert.equal(r.tenders.find((t) => t.key === 'cash').taken, o1.payment.total + 200 - 100)
+  assert.equal(r.refunds.length, 1)
+  assert.equal(r.refunds[0].method, 'cash')
+  assert.equal(r.refunds[0].reason, 'Cold food')
+  assert.equal(r.voids.length, 1)
+  assert.equal(r.tax.length, 1)
+  assert.match(r.tax[0].label, /not registered/)
+  assert.equal(r.sales.tax, 0)
+
+  const vatReport = eod.buildEndOfDayReport({ shift: closedShift, orders: orderStore.getStoredOrders(), products: menuStore.getProducts(), vatRegistered: true })
+  const vat20 = (gross) => Math.round((gross * 20) / 120)
+  assert.equal(vatReport.sales.tax, vat20(o1.payment.total) + vat20(drink.price * 2 - 30), 'VAT on what was paid, after the discount')
+  assert.ok(tillStore.getPastZReports().some((s) => s.id === closedShift.id && s.report), 'the closed day keeps its report')
+})
+
+await test('a website pickup is paid on the till before the kitchen can complete it', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 50, 'test', 'seed')
+  const web = orderStore.createNewOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], subtotal: p.price, deliveryFee: 0, serviceFee: 0, tip: 0, discount: 0, total: p.price, paymentMethod: 'in_store' })
+  assert.equal(web.payment.status, 'pending_store')
+  assert.ok(orderStore.getOpenTillChecks().some((o) => o.id === web.id), 'waiting under Orders › Open on the till')
+  ;['accepted', 'baking', 'ready_for_pickup'].forEach((s) => orderStore.updateOrderStatus(web.id, s))
+  assert.match(orderStore.getStatusChangeBlocker(orderStore.getOrderById(web.id), 'collected'), /unpaid/i)
+  orderStore.settleOpenOrder(web.id, { lines: web.lines, discount: 0, paymentMethod: 'card', actor: 'Chloe' })
+  assert.equal(orderStore.getOrderById(web.id).payment.takenBy, 'Chloe')
+  assert.equal(orderStore.updateOrderStatus(web.id, 'collected').status, 'collected')
+
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const label = tomorrow.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+  assert.equal(orderStore.isForLaterDay({ isScheduled: true, scheduleDate: label }), true, 'a pre-order for tomorrow does not block closing today')
+  assert.equal(orderStore.isForLaterDay({ isScheduled: false }), false)
+})
+
+await test('held tickets survive a reload and are recalled once only', async () => {
+  const held = await load('/src/services/heldTickets.ts')
+  const t = held.holdTicket({ customer: 'Bob', lines: [line(firstSpud(), 1)], type: 'takeaway', heldBy: 'Chloe' })
+  assert.ok(JSON.parse(localStorage.getItem('just_spuds_till_held_tickets_v1')).some((x) => x.id === t.id), 'kept in storage, not page memory')
+  assert.equal(held.takeHeldTicket(t.id).customer, 'Bob')
+  assert.equal(held.takeHeldTicket(t.id), undefined, 'a second till tab cannot recall it again')
+})
+
+await test('quick cash buttons: exact, next pound, round notes', async () => {
+  const pay = await load('/src/components/pos/PaymentScreen.tsx')
+  assert.deepEqual(pay.quickCashOptions(695), [695, 700, 1000, 2000, 5000])
+  assert.deepEqual(pay.quickCashOptions(2000), [2000, 5000])
+  assert.deepEqual(pay.quickCashOptions(0), [])
+})
+
+await test('staff screens show names, not ids; till bookkeeping stays out of the allergen box', async () => {
+  const lt = await load('/src/utils/lineText.ts')
+  assert.equal(lt.extrasText({ extras: ['beans', 'beans', 'cheese'], category: 'SPUDS' }), '2× Heinz Baked Beans, Mature Cheddar')
+  assert.equal(lt.saucesText({ sauces: ['spud-special'] }), 'House Spud Special')
+  assert.equal(lt.mealText({ meal: true, mealDrink: 'cold-coca-cola', mealSnack: 'snack-ready-salted' }), 'Coca Cola 330ml Can + Walkers Ready Salted Crisps')
+  assert.equal(lt.modifierText({ name: 'Butter', type: 'no' }), 'NO Butter')
+  const notes = await load('/src/utils/kitchenNotes.ts')
+  const parsed = notes.parseKitchenNotes('[TILL: Front counter] TAKEAWAY • Cashier: Chloe • Discount: 10% — Regulars • No onions')
+  assert.equal(parsed.note, 'No onions')
+})
+
+// ---------------------------------------------------------------------------
 section('🧾 VAT follows each product’s rate')
 
 await test('0% cold takeaway, 20% hot food, eat-in all standard, tips outside VAT, discount spread by value', async () => {

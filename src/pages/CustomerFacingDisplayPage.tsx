@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { subscribeCFDState, type CFDTicketState, EMPTY_CFD_STATE } from '../services/cfdBus'
 import { lineUnitPrice } from '../hooks/useCart'
 import { gbp } from '../utils/format'
+import { extrasText, mealText, saucesText } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { SITE } from '../data/site'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
@@ -182,20 +183,20 @@ export default function CustomerFacingDisplayPage() {
                       {/* Extras & Sauces */}
                       {line.extras && line.extras.length > 0 && (
                         <p className="text-[11px] text-white/60 pl-8">
-                          + {line.extras.map((e) => e.replace(/-/g, ' ')).join(', ')}
+                          + {extrasText(line)}
                         </p>
                       )}
 
                       {line.sauces && line.sauces.length > 0 && (
                         <p className="text-[11px] text-white/60 pl-8">
-                          Sauce: {line.sauces.join(', ')}
+                          Sauce: {saucesText(line)}
                         </p>
                       )}
 
                       {/* Meal Deal */}
                       {line.meal && (
                         <div className="rounded-lg bg-amber-500/10 border border-amber-400/30 px-2 py-1 text-[11px] text-amber-300 font-bold ml-8 inline-block">
-                          ✓ MEAL DEAL COMBO: {line.mealDrink?.replace(/-/g, ' ')} &bull; {line.mealSnack?.replace(/-/g, ' ')}
+                          ✓ Meal deal: {mealText(line) || 'drink + snack'}
                         </div>
                       )}
                     </div>
