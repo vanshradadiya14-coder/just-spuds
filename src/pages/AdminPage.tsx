@@ -79,7 +79,9 @@ import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import { gbp, cx } from '../utils/format'
 import SmartImage from '../components/SmartImage'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
+import FullscreenButton from '../components/FullscreenButton'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
+import { useFullscreen } from '../hooks/useFullscreen'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
 import TillShiftHistory from './admin/components/TillShiftHistory'
 import StaffTimecards from './admin/components/StaffTimecards'
@@ -173,7 +175,7 @@ export default function AdminPage() {
   const [newPromoDesc, setNewPromoDesc] = useState('')
 
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const { supported: canFullscreen, isFullscreen, toggle: toggleFullScreen } = useFullscreen()
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
   const [deliverySettings, setDeliverySettingsState] = useState<StoreDeliverySettings>(() => getDeliverySettings())
 
@@ -235,16 +237,6 @@ export default function AdminPage() {
   const handleAcceptNewOrder = (orderId: string) => {
     updateOrderStatus(orderId, 'accepted')
     dismissOrderAlert(orderId)
-  }
-
-  const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {})
-      setIsFullscreen(true)
-    } else {
-      document.exitFullscreen().catch(() => {})
-      setIsFullscreen(false)
-    }
   }
 
   const handleAdminPinSubmit = (e: React.FormEvent) => {
@@ -1004,6 +996,8 @@ export default function AdminPage() {
               <span>KDS</span>
             </Link>
 
+            <FullscreenButton />
+
             <div>
               <button
                 ref={headerMoreRef}
@@ -1028,7 +1022,7 @@ export default function AdminPage() {
                         { icon: '⚡', label: 'Send 2 test orders', hint: 'Practise the alarm and printer', run: handleSimulateRush },
                         { icon: '🔔', label: 'Alert sound', hint: 'Choose, upload or test the alarm', run: () => setIsSoundSettingsOpen(true) },
                         { icon: '📥', label: 'Export ledger (CSV)', hint: 'Every order in this browser', run: () => exportOrdersCSV(orders) },
-                        { icon: isFullscreen ? '🗗' : '⛶', label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullScreen },
+                        ...(canFullscreen ? [{ icon: isFullscreen ? '🗗' : '⛶', label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullScreen }] : []),
                       ] as { icon: string; label: string; hint?: string; to?: string; className?: string; run?: () => void }[]
                     ).map((item) =>
                       item.to ? (

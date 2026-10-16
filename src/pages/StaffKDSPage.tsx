@@ -47,8 +47,10 @@ import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal
 import SyncStatusPill from '../components/SyncStatusPill'
 import MenuPopover from '../components/MenuPopover'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
+import FullscreenButton from '../components/FullscreenButton'
 import { cx, gbp } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
+import { useFullscreen } from '../hooks/useFullscreen'
 type StaffTab = 'active' | 'new' | 'baking' | 'dispatched' | 'completed' | 'stock'
 
 const REJECTION_REASON_PRESETS = [
@@ -119,7 +121,7 @@ export default function StaffKDSPage() {
   // Thermal receipt modal state
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null)
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const { supported: canFullscreen, isFullscreen, toggle: toggleFullScreen } = useFullscreen()
 
   useEffect(() => {
     const unsubAuth = subscribeAuth((u) => setUser(u))
@@ -165,15 +167,6 @@ export default function StaffKDSPage() {
 
   const toggleAlarmSound = () => updateTillSettings({ soundAlerts: !tillSettings.soundAlerts }, user?.name || 'Kitchen Staff')
 
-  const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {})
-      setIsFullscreen(true)
-    } else {
-      document.exitFullscreen().catch(() => {})
-      setIsFullscreen(false)
-    }
-  }
 
   const handlePinSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -479,6 +472,8 @@ export default function StaffKDSPage() {
               </button>
             </div>
 
+            <FullscreenButton />
+
             <div>
               <button
                 ref={moreButtonRef}
@@ -504,17 +499,19 @@ export default function StaffKDSPage() {
                         <span aria-hidden>📊</span> Admin console
                       </Link>
                     )}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setIsMoreOpen(false)
-                        toggleFullScreen()
-                      }}
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-white hover:bg-white/10"
-                    >
-                      <span aria-hidden>{isFullscreen ? '🗗' : '⛶'}</span> {isFullscreen ? 'Exit full screen' : 'Full screen'}
-                    </button>
+                    {canFullscreen && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreOpen(false)
+                          toggleFullScreen()
+                        }}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-white hover:bg-white/10"
+                      >
+                        <span aria-hidden>{isFullscreen ? '🗗' : '⛶'}</span> {isFullscreen ? 'Exit full screen' : 'Full screen'}
+                      </button>
+                    )}
                     <Link role="menuitem" to="/" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-white hover:bg-white/10">
                       <span aria-hidden>🌐</span> Customer website
                     </Link>

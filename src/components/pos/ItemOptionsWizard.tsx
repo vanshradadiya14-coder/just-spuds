@@ -278,34 +278,40 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
           {step.id === 'toppings' && (
             <>
               <p className="text-[11px] text-white/50">Tap to add. Tap again for a double portion.</p>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {/* Equal-height tiles; a picked topping shows its count and a − in its own column, never over the name. */}
+              <div className="grid auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-3">
                 {extras.map((e) => {
                   const n = countOf(e.id)
                   return (
-                    <div key={e.id} className="relative">
+                    <div
+                      key={e.id}
+                      className={`flex min-h-[4.25rem] overflow-hidden rounded-xl border transition ${n > 0 ? 'border-amber-300 bg-amber-400 text-ink' : 'border-white/10 bg-white/5 text-white hover:bg-white/10'}`}
+                    >
                       <button
                         type="button"
                         onClick={() => {
                           playPOSTouchTone('tap')
                           setToppings((prev) => [...prev, e.id])
                         }}
-                        className={`w-full rounded-xl border py-3 pl-3 text-left transition active:scale-95 ${n > 0 ? 'border-amber-300 bg-amber-400 pr-11 text-ink' : 'border-white/10 bg-white/5 pr-3 text-white hover:bg-white/10'}`}
+                        className="flex min-w-0 flex-1 flex-col justify-center px-3 py-2.5 text-left active:scale-[0.97]"
                       >
-                        <span className="block text-sm font-black leading-tight">{e.label}</span>
-                        <span className={`block font-mono text-xs ${n > 0 ? 'text-ink/70' : 'text-amber-300'}`}>+{gbp(e.price)}</span>
+                        <span className="line-clamp-2 text-sm font-black leading-tight">{e.label}</span>
+                        <span className={`mt-0.5 font-mono text-xs ${n > 0 ? 'text-ink/70' : 'text-amber-300'}`}>+{gbp(e.price)}</span>
                       </button>
                       {n > 0 && (
-                        <>
-                          <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-ink px-1.5 font-mono text-[11px] font-black text-amber-300">×{n}</span>
+                        <div className="flex w-12 shrink-0 flex-col items-center justify-center gap-1 border-l border-ink/15 bg-amber-300/60">
+                          <span className="font-mono text-sm font-black leading-none" aria-label={`${n} portion${n === 1 ? '' : 's'}`}>
+                            ×{n}
+                          </span>
                           <button
                             type="button"
                             onClick={() => removeOne(e.id)}
-                            className="absolute bottom-2 right-2 grid h-7 w-7 place-items-center rounded-full bg-ink text-sm font-black text-white"
+                            className="grid h-7 w-7 place-items-center rounded-full bg-ink text-base font-black leading-none text-white hover:bg-ink/80"
                             aria-label={`Remove one ${e.label}`}
                           >
                             −
                           </button>
-                        </>
+                        </div>
                       )}
                     </div>
                   )

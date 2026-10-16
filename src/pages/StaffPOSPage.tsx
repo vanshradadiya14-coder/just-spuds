@@ -73,6 +73,7 @@ import { getHeldTickets, holdTicket, subscribeHeldTickets, takeHeldTicket, type 
 import { buildEndOfDayReport, type EndOfDayReport } from '../services/endOfDayReport'
 import ThermalReceipt from '../components/ThermalReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
+import FullscreenButton from '../components/FullscreenButton'
 
 type OrderType = 'takeaway' | 'eat_in' | 'phone'
 
@@ -1013,6 +1014,7 @@ export default function StaffPOSPage() {
             <span>👨‍🍳</span>
             <span>Kitchen KDS</span>
           </Link>
+          <FullscreenButton showLabel className="rounded-full px-4 py-2 backdrop-blur-md" />
         </div>
 
         <div className="relative z-10 w-full max-w-sm rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-8 shadow-2xl text-center ring-1 ring-amber-400/20">
@@ -1543,6 +1545,7 @@ export default function StaffPOSPage() {
             <span>👨‍🍳</span>
             <span className="hidden sm:inline">KDS</span>
           </Link>
+          <FullscreenButton />
           <button type="button" onClick={logout} className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50" title="Lock till" aria-label="Lock till">
             🔒
           </button>
