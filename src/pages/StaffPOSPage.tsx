@@ -9,6 +9,7 @@ import {
   subscribeShift,
   getTillSettings,
   subscribeTillSettings,
+  updateTillSettings,
   getLastCompletedTillOrder,
   setLastCompletedTillOrder,
   type TillShift,
@@ -17,6 +18,7 @@ import {
 import {
   subscribeOrders,
   updateOrderStatus,
+  sendOrderToDrivers,
   createManualCounterOrder,
   getOrderById,
   getOpenTillChecks,
@@ -28,6 +30,7 @@ import {
   getMenuStockOverrides,
   subscribeStock,
   type Order,
+  type OrderStatus,
   type PaymentMethod,
   type SplitTenderPortion,
 } from '../services/orderStore'
@@ -43,6 +46,10 @@ import StockModal from '../components/pos/StockModal'
 import CloseTillScreen from '../components/pos/CloseTillScreen'
 import EndOfDayReportModal from '../components/EndOfDayReportSlip'
 import EndOfDayHistoryModal, { reportForShift } from '../components/EndOfDayHistory'
+import TicketCard from './staff/TicketCard'
+import AllDayBar from './staff/AllDayBar'
+import NewOrderAlertModal from '../components/staff/NewOrderAlertModal'
+import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
 import { formatDuration, getActiveTimeclockEntry, isOnBreak, subscribeTimeclock, workedMs, type TimeclockEntry } from '../services/timeclockStore'
 import {
   getCurrentUser,
@@ -64,7 +71,13 @@ import { lineExtras, mealText, modifierText, saucesText } from '../utils/lineTex
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { playPOSTouchTone } from '../services/printerBridge'
 import TillSettingsModal from '../components/TillSettingsModal'
-import { dismissOrderAlert, subscribeOrderAlerts, type OnlineOrderAlert } from '../services/alertSoundBus'
+import {
+  dismissOrderAlert,
+  subscribeOrderAlerts,
+  subscribeAlertSoundState,
+  type AlertSoundState,
+  type OnlineOrderAlert,
+} from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
 import SyncStatusPill from '../components/SyncStatusPill'
 import { computeVat, isVatRegistered } from '../services/vat'
@@ -75,6 +88,15 @@ import ThermalReceipt from '../components/ThermalReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
 import InstallAppButton from '../components/InstallAppButton'
+
+const REJECTION_REASON_PRESETS = [
+  { id: 'out_of_stock', label: '🥔 Out of fresh King Edward potato stock', defaultText: 'We have temporarily run out of fresh jacket potato stock for this batch.' },
+  { id: 'topping_unavailable', label: '🧀 Ingredient unavailable (custom topping sold out)', defaultText: 'One or more of your chosen toppings/fillings is currently sold out in kitchen.' },
+  { id: 'rush_overload', label: '⏰ Kitchen at peak capacity (cannot fulfill in time)', defaultText: 'Kitchen is currently experiencing an extreme rush and cannot prepare your order to quality standard.' },
+  { id: 'outside_radius', label: '🏠 Delivery address outside delivery radius', defaultText: 'Delivery address is outside our safe hot delivery perimeter in Aylesbury.' },
+  { id: 'closing_early', label: '🚫 Store closing early for maintenance', defaultText: 'Kitchen is closing early for scheduled oven cleaning and maintenance.' },
+  { id: 'custom', label: '📝 Other / Custom Reason', defaultText: '' },
+]
 
 type OrderType = 'takeaway' | 'eat_in' | 'phone'
 
@@ -170,10 +192,19 @@ export default function StaffPOSPage() {
   const [lastOrder, setLastOrder] = useState<Order | null>(() => getLastCompletedTillOrder())
   const [saleComplete, setSaleComplete] = useState<{ order: Order; changeDuePence: number; tenderLabel: string } | null>(null)
 
-  // Online order alerts
+  // Online order alerts & Unified KDS
   const [activeAlerts, setActiveAlerts] = useState<OnlineOrderAlert[]>([])
   const seenAlertIds = useRef<Set<string>>(new Set())
   const [currentTime, setCurrentTime] = useState(new Date())
+
+  // Unified System Mode: 'till' = Till Register | 'kitchen' = Live Kitchen Display Flow
+  const [terminalMode, setTerminalMode] = useState<'till' | 'kitchen'>('till')
+  const [kdsSearchQuery, setKdsSearchQuery] = useState('')
+  const [alertSoundState, setAlertSoundState] = useState<AlertSoundState>({ sounding: false, blocked: false, deferredToOtherTab: false, engine: null, enabled: true })
+  const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null)
+  const [rejectionPresetId, setRejectionPresetId] = useState(REJECTION_REASON_PRESETS[0].id)
+  const [customRejectionText, setCustomRejectionText] = useState(REJECTION_REASON_PRESETS[0].defaultText)
+  const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false)
 
   // Manager PIN gate
   const [isManagerAuthModalOpen, setIsManagerAuthModalOpen] = useState(false)
@@ -198,6 +229,7 @@ export default function StaffPOSPage() {
     const unsubAuth = subscribeAuth((u) => setUser(u))
     const unsubShift = subscribeShift((s) => setShift(s))
     const unsubSettings = subscribeTillSettings((st) => setSettings(st))
+    const unsubSound = subscribeAlertSoundState((s) => setAlertSoundState(s))
     const unsubAlerts = subscribeOrderAlerts((a) => {
       // "Receipt when an online order arrives": pop the ticket for anything new, without accepting it.
       const fresh = a.find((alert) => !seenAlertIds.current.has(alert.orderId))
@@ -205,6 +237,9 @@ export default function StaffPOSPage() {
       if (fresh && getTillSettings().autoPrintOnline) {
         const order = getOrderById(fresh.orderId)
         if (order) setReceiptOrder(order)
+      }
+      if (fresh) {
+        setIsOnlineOrdersModalOpen(true)
       }
       setActiveAlerts(a)
     })
@@ -245,6 +280,7 @@ export default function StaffPOSPage() {
       unsubAuth()
       unsubShift()
       unsubSettings()
+      unsubSound()
       unsubAlerts()
       unsubOrders()
       unsubMenu()
@@ -327,6 +363,76 @@ export default function StaffPOSPage() {
     }
   }
 
+  // ------------------------------------------------------------------ live kitchen flow
+  const filteredKdsOrders = useMemo(() => {
+    let list = allOrdersList
+    const q = kdsSearchQuery.trim().toLowerCase()
+    if (q) {
+      list = list.filter(
+        (o) =>
+          o.shortId?.toLowerCase().includes(q) ||
+          o.id.toLowerCase().includes(q) ||
+          o.customer?.name?.toLowerCase().includes(q) ||
+          o.customer?.phone?.includes(q)
+      )
+    }
+    return list
+  }, [allOrdersList, kdsSearchQuery])
+
+  const newOrders = useMemo(() => filteredKdsOrders.filter((o) => o.status === 'placed'), [filteredKdsOrders])
+  const bakingOrders = useMemo(
+    () => filteredKdsOrders.filter((o) => o.status === 'accepted' || o.status === 'baking' || o.status === 'quality_check'),
+    [filteredKdsOrders]
+  )
+  const dispatchedOrders = useMemo(
+    () =>
+      filteredKdsOrders.filter(
+        (o) =>
+          o.status === 'ready_for_delivery' ||
+          o.status === 'driver_assigned' ||
+          o.status === 'driver_arrived_at_store' ||
+          o.status === 'order_collected' ||
+          o.status === 'out_for_delivery' ||
+          o.status === 'ready_for_pickup'
+      ),
+    [filteredKdsOrders]
+  )
+  const completedOrders = useMemo(
+    () => filteredKdsOrders.filter((o) => o.status === 'delivered' || o.status === 'collected'),
+    [filteredKdsOrders]
+  )
+  const activeKitchenCount = newOrders.length + bakingOrders.length
+
+  const handleKitchenStatusChange = (orderId: string, nextStatus: OrderStatus) => {
+    playPOSTouchTone('action')
+    updateOrderStatus(orderId, nextStatus)
+  }
+
+  const handleAcceptOnlineOrder = (order: Order, print: boolean) => {
+    playPOSTouchTone('action')
+    const accepted = updateOrderStatus(order.id, 'accepted')
+    dismissOrderAlert(order.id)
+    if (print && (accepted || order)) {
+      setReceiptOrder(accepted || order)
+    }
+    setFlash(`Order #${order.shortId || order.id.slice(-4)} accepted! Sent to Kitchen Flow.`)
+  }
+
+  const handleOpenRejectModal = (order: Order) => {
+    setRejectingOrder(order)
+    setRejectionPresetId(REJECTION_REASON_PRESETS[0].id)
+    setCustomRejectionText(REJECTION_REASON_PRESETS[0].defaultText)
+  }
+
+  const handleConfirmRejection = () => {
+    if (!rejectingOrder) return
+    const reasonFinal = customRejectionText.trim() || 'Kitchen unavailable to prepare order.'
+    cancelOrder(rejectingOrder.id, reasonFinal)
+    dismissOrderAlert(rejectingOrder.id)
+    setRejectingOrder(null)
+    setFlash(`Order #${rejectingOrder.shortId || rejectingOrder.id.slice(-4)} declined & customer notified.`)
+  }
+
   // ------------------------------------------------------------------ money
   const subtotalPence = useMemo(() => cartLines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0), [cartLines])
   const discountPence = useMemo(() => {
@@ -374,6 +480,7 @@ export default function StaffPOSPage() {
       if (!e.key.startsWith('F') || e.ctrlKey || e.altKey || e.metaKey) return
       if (document.querySelector('[role="dialog"]') || paying) return
       const actions: Record<string, () => void> = {
+        F1: () => setTerminalMode((m) => (m === 'till' ? 'kitchen' : 'till')),
         F2: () => setIsFastSearchOpen(true),
         F4: () => openPayment('payment'),
         F5: () => openPayment('payment'),
@@ -1478,7 +1585,7 @@ export default function StaffPOSPage() {
     <div className="relative h-screen supports-[height:100dvh]:h-dvh w-full bg-portal-dark text-slate-100 flex flex-col overflow-hidden select-none font-body">
       <FixedAmbientBackdrop variant="portal" />
 
-      {/* Top bar: menu, till, status, orders */}
+      {/* Top bar: menu, till, status, mode toggle, orders */}
       <header className="h-14 border-b border-white/10 bg-slate-900 px-2 sm:px-3 flex items-center justify-between gap-2 shrink-0 z-20">
         <div className="flex items-center gap-2 min-w-0">
           <button
@@ -1499,6 +1606,52 @@ export default function StaffPOSPage() {
               {user?.name} • Shift #{shift.shiftNumber} • {currentTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
             </p>
           </div>
+
+          {/* Unified Mode Switcher: Till Register vs Kitchen Flow */}
+          <div className="ml-1 sm:ml-2 flex items-center rounded-xl border border-white/15 bg-black/40 p-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                playPOSTouchTone('tap')
+                setTerminalMode('till')
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-black transition ${
+                terminalMode === 'till'
+                  ? 'bg-amber-400 text-ink shadow'
+                  : 'text-white/70 hover:text-white hover:bg-white/5'
+              }`}
+              title="Switch to Counter Till (F1)"
+            >
+              <span>🥔</span>
+              <span className="hidden sm:inline">Till</span>
+              {cartLines.length > 0 && (
+                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-blue-600 px-1 font-mono text-[9px] font-black text-white">
+                  {cartLines.reduce((n, l) => n + l.qty, 0)}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                playPOSTouchTone('tap')
+                setTerminalMode('kitchen')
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-black transition ${
+                terminalMode === 'kitchen'
+                  ? 'bg-amber-400 text-ink shadow'
+                  : 'text-white/70 hover:text-white hover:bg-white/5'
+              }`}
+              title="Switch to Live Kitchen Display Flow (F1)"
+            >
+              <span>👨‍🍳</span>
+              <span className="hidden sm:inline">Kitchen Flow</span>
+              {activeKitchenCount > 0 && (
+                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 font-mono text-[9px] font-black text-white animate-pulse">
+                  {activeKitchenCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto scrollbar-none [&>*]:shrink-0 py-1">
@@ -1510,6 +1663,35 @@ export default function StaffPOSPage() {
               OFFLINE
             </span>
           )}
+
+          {/* Alarm sound status & volume settings */}
+          <div className="flex items-center rounded-xl border border-white/15 bg-white/5 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                const nextEnabled = !tillSettings.soundAlerts
+                updateTillSettings({ soundAlerts: nextEnabled })
+                setFlash(nextEnabled ? 'Order alarms active' : 'Order alarms muted')
+              }}
+              className={`px-2 py-1.5 text-xs font-bold transition hover:bg-white/10 ${
+                !tillSettings.soundAlerts ? 'text-amber-400 bg-amber-400/10' : 'text-emerald-400'
+              }`}
+              title={!tillSettings.soundAlerts ? 'Alarms muted — tap to enable sound' : 'Alarms active — tap to mute'}
+              aria-label="Alarm mute toggle"
+            >
+              {!tillSettings.soundAlerts ? '🔇' : '🔔'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSoundSettingsOpen(true)}
+              className="px-1.5 py-1.5 text-xs text-white/50 hover:text-white hover:bg-white/10 border-l border-white/10"
+              title="Alert sound settings"
+              aria-label="Sound settings"
+            >
+              ⚙️
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => setIsTimeclockOpen(true)}
@@ -1522,14 +1704,20 @@ export default function StaffPOSPage() {
             <span>⏱️</span>
             <span className="hidden xl:inline font-mono">{myClock ? (isOnBreak(myClock) ? 'On break' : formatDuration(workedMs(myClock))) : 'Clock in'}</span>
           </button>
+
           {activeAlerts.length > 0 && (
-            <button type="button" onClick={() => setIsOnlineOrdersModalOpen(true)} className="rounded-xl bg-rose-600 px-3 py-1.5 font-body text-xs font-black text-white shadow-glow hover:bg-rose-500 transition animate-bounce flex items-center gap-1.5">
-              <span>🚨</span>
+            <button
+              type="button"
+              onClick={() => setIsOnlineOrdersModalOpen(true)}
+              className="rounded-xl bg-gradient-to-r from-rose-600 to-red-600 px-3 py-1.5 font-body text-xs font-black text-white shadow-glow hover:from-rose-500 hover:to-red-500 transition animate-bounce flex items-center gap-1.5 ring-2 ring-rose-400"
+            >
+              <span className="text-sm">🚨</span>
               <span>
-                {activeAlerts.length} new online order{activeAlerts.length > 1 ? 's' : ''}
+                {activeAlerts.length} New Online Order{activeAlerts.length > 1 ? 's' : ''}
               </span>
             </button>
           )}
+
           <button
             type="button"
             onClick={() => setOrdersTab(openChecksCount > 0 ? 'open' : heldTickets.length > 0 ? 'held' : 'complete')}
@@ -1542,10 +1730,7 @@ export default function StaffPOSPage() {
               <span className="grid h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 font-mono text-[10px] font-black text-ink">{openChecksCount + heldTickets.length}</span>
             )}
           </button>
-          <Link to="/staff" className="rounded-xl bg-amber-400 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-amber-300 transition flex items-center gap-1" aria-label="Kitchen display">
-            <span>👨‍🍳</span>
-            <span className="hidden sm:inline">KDS</span>
-          </Link>
+
           <InstallAppButton />
           <FullscreenButton />
           <button type="button" onClick={logout} className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50" title="Lock till" aria-label="Lock till">
@@ -1555,8 +1740,193 @@ export default function StaffPOSPage() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Products — or, while paying, the payment screen in their place (EPOS) */}
-        {paying ? (
+        {terminalMode === 'kitchen' ? (
+          /* ================= UNIFIED KITCHEN DISPLAY VIEW ================= */
+          <div className="flex-1 flex flex-col min-w-0 bg-slate-950 overflow-hidden">
+            {/* Kitchen Header Control Bar */}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-slate-900/80 px-3 py-2">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <h2 className="text-sm font-black uppercase tracking-wider text-white">Live Kitchen Display &amp; Expediter</h2>
+                </div>
+                <div className="hidden sm:flex items-center gap-1.5 text-xs text-white/60">
+                  <span className="rounded-md bg-amber-400/20 px-2 py-0.5 font-bold text-amber-300">
+                    {newOrders.length} New
+                  </span>
+                  <span className="rounded-md bg-orange-400/20 px-2 py-0.5 font-bold text-orange-300">
+                    {bakingOrders.length} In Oven
+                  </span>
+                  <span className="rounded-md bg-emerald-400/20 px-2 py-0.5 font-bold text-emerald-300">
+                    {dispatchedOrders.length} Ready
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {cartLines.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playPOSTouchTone('tap')
+                      setTerminalMode('till')
+                    }}
+                    className="flex items-center gap-1.5 rounded-xl border border-blue-400/50 bg-blue-600/30 px-3 py-1.5 text-xs font-bold text-blue-200 hover:bg-blue-600/50 transition"
+                  >
+                    <span>🛒</span>
+                    <span>Till Cart ({cartLines.length} items • {gbp(totalDuePence)})</span>
+                  </button>
+                )}
+                <div className="relative w-44 sm:w-60">
+                  <input
+                    type="search"
+                    value={kdsSearchQuery}
+                    onChange={(e) => setKdsSearchQuery(e.target.value)}
+                    placeholder="Search kitchen orders..."
+                    className="w-full rounded-xl border border-white/10 bg-black/50 px-3 py-1.5 text-xs text-white placeholder-white/40 focus:border-amber-400 focus:outline-none"
+                  />
+                  {kdsSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setKdsSearchQuery('')}
+                      className="absolute right-2.5 top-1.5 text-xs text-white/40 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsStockOpen(true)}
+                  className="rounded-xl border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-white/10"
+                  title="86 items / Mark sold out"
+                >
+                  📦 86 Stock
+                </button>
+              </div>
+            </div>
+
+            {/* All Day Summary Counter Bar */}
+            <AllDayBar orders={filteredKdsOrders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.status !== 'collected')} />
+
+            {/* Kanban Columns */}
+            <div className="flex-1 overflow-x-auto overflow-y-hidden p-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 h-full min-w-[700px] lg:min-w-0">
+                {/* Column 1: New / Pending */}
+                <div className="flex flex-col min-h-0 rounded-2xl border border-white/10 bg-black/30 p-2.5">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+                    <h3 className="font-black text-xs uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                      <span>📝</span>
+                      <span>New &amp; Pending</span>
+                    </h3>
+                    <span className="rounded-full bg-amber-400/20 px-2 py-0.5 font-mono text-[11px] font-black text-amber-300">
+                      {newOrders.length}
+                    </span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                    {newOrders.map((ord) => (
+                      <TicketCard
+                        key={ord.id}
+                        ord={ord}
+                        handleStatusChange={handleKitchenStatusChange}
+                        handleOpenRejectModal={handleOpenRejectModal}
+                        setPrintingOrder={setReceiptOrder}
+                        sendOrderToDrivers={sendOrderToDrivers}
+                      />
+                    ))}
+                    {newOrders.length === 0 && (
+                      <div className="py-12 text-center text-xs text-white/30 italic">No new incoming orders</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Column 2: In Oven / Prep */}
+                <div className="flex flex-col min-h-0 rounded-2xl border border-white/10 bg-black/30 p-2.5">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+                    <h3 className="font-black text-xs uppercase tracking-wider text-orange-300 flex items-center gap-1.5">
+                      <span>🍳</span>
+                      <span>In Oven (Baking)</span>
+                    </h3>
+                    <span className="rounded-full bg-orange-400/20 px-2 py-0.5 font-mono text-[11px] font-black text-orange-300">
+                      {bakingOrders.length}
+                    </span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                    {bakingOrders.map((ord) => (
+                      <TicketCard
+                        key={ord.id}
+                        ord={ord}
+                        handleStatusChange={handleKitchenStatusChange}
+                        handleOpenRejectModal={handleOpenRejectModal}
+                        setPrintingOrder={setReceiptOrder}
+                        sendOrderToDrivers={sendOrderToDrivers}
+                      />
+                    ))}
+                    {bakingOrders.length === 0 && (
+                      <div className="py-12 text-center text-xs text-white/30 italic">Oven is currently empty</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Column 3: Ready / Dispatch */}
+                <div className="flex flex-col min-h-0 rounded-2xl border border-white/10 bg-black/30 p-2.5">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+                    <h3 className="font-black text-xs uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                      <span>🛵</span>
+                      <span>Ready for Dispatch</span>
+                    </h3>
+                    <span className="rounded-full bg-emerald-400/20 px-2 py-0.5 font-mono text-[11px] font-black text-emerald-300">
+                      {dispatchedOrders.length}
+                    </span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                    {dispatchedOrders.map((ord) => (
+                      <TicketCard
+                        key={ord.id}
+                        ord={ord}
+                        handleStatusChange={handleKitchenStatusChange}
+                        handleOpenRejectModal={handleOpenRejectModal}
+                        setPrintingOrder={setReceiptOrder}
+                        sendOrderToDrivers={sendOrderToDrivers}
+                      />
+                    ))}
+                    {dispatchedOrders.length === 0 && (
+                      <div className="py-12 text-center text-xs text-white/30 italic">No orders waiting for dispatch</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Column 4: Completed */}
+                <div className="flex flex-col min-h-0 rounded-2xl border border-white/10 bg-black/30 p-2.5">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+                    <h3 className="font-black text-xs uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <span>✓</span>
+                      <span>Completed Today</span>
+                    </h3>
+                    <span className="rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px] font-bold text-white/60">
+                      {completedOrders.length}
+                    </span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                    {completedOrders.slice(0, 15).map((ord) => (
+                      <TicketCard
+                        key={ord.id}
+                        ord={ord}
+                        handleStatusChange={handleKitchenStatusChange}
+                        handleOpenRejectModal={handleOpenRejectModal}
+                        setPrintingOrder={setReceiptOrder}
+                        sendOrderToDrivers={sendOrderToDrivers}
+                      />
+                    ))}
+                    {completedOrders.length === 0 && (
+                      <div className="py-12 text-center text-xs text-white/30 italic">No completed orders yet</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : paying ? (
           <PaymentScreen
             key={settlingOrder?.id || 'ticket'}
             className="fixed inset-0 z-[45] lg:static lg:z-auto flex-1"
@@ -1580,6 +1950,65 @@ export default function StaffPOSPage() {
           />
         ) : (
           <section className="flex-1 flex flex-col min-w-0 bg-slate-950">
+            {/* Live Kitchen Status Stream Bar inside Till mode */}
+            <div className="flex items-center justify-between border-b border-white/10 bg-slate-900/90 px-3 py-1.5 text-xs shrink-0">
+              <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+                <span className="font-bold text-white/60 uppercase tracking-wider text-[10px]">Kitchen status:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('tap')
+                    setTerminalMode('kitchen')
+                  }}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                    newOrders.length > 0 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse' : 'bg-white/5 text-white/60'
+                  }`}
+                  title="View pending online and counter orders in kitchen"
+                >
+                  <span>📝</span>
+                  <span>{newOrders.length} New</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('tap')
+                    setTerminalMode('kitchen')
+                  }}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                    bakingOrders.length > 0 ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'bg-white/5 text-white/60'
+                  }`}
+                  title="View orders currently baking in the oven"
+                >
+                  <span>🍳</span>
+                  <span>{bakingOrders.length} In Oven</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playPOSTouchTone('tap')
+                    setTerminalMode('kitchen')
+                  }}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                    dispatchedOrders.length > 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-white/5 text-white/60'
+                  }`}
+                  title="View orders ready for pickup or driver delivery"
+                >
+                  <span>🛵</span>
+                  <span>{dispatchedOrders.length} Ready</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  playPOSTouchTone('tap')
+                  setTerminalMode('kitchen')
+                }}
+                className="hidden sm:flex items-center gap-1 text-[11px] font-bold text-amber-300 hover:text-amber-200 transition shrink-0 ml-2"
+              >
+                <span>Kitchen Flow →</span>
+              </button>
+            </div>
+
             {/* Breadcrumb + search (EPOS: HOME › JUST SPUDS) */}
             <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-slate-900/60 px-2.5 py-2">
               <nav className="flex min-w-0 items-center gap-1.5 text-xs font-black uppercase tracking-wider" aria-label="Menu path">
@@ -1705,7 +2134,7 @@ export default function StaffPOSPage() {
         )}
 
         {/* Tablet / phone: total bar that opens the ticket sheet */}
-        {!isTicketSheetOpen && !paying && (
+        {terminalMode === 'till' && !isTicketSheetOpen && !paying && (
           <div className="lg:hidden fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-slate-900/95 backdrop-blur px-3 py-2 flex items-center gap-2 shadow-2xl">
             <button type="button" onClick={() => setIsTicketSheetOpen(true)} className="flex-1 flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-left" aria-label="View ticket">
               <span className="text-xs font-bold text-white">
@@ -1720,7 +2149,7 @@ export default function StaffPOSPage() {
           </div>
         )}
 
-        {ticketPanel}
+        {terminalMode === 'till' && ticketPanel}
       </div>
 
       {flash && (
@@ -1914,43 +2343,90 @@ export default function StaffPOSPage() {
         </SimpleDialog>
       )}
 
-      {isOnlineOrdersModalOpen && (
-        <SimpleDialog title="🚨 New online orders" onClose={() => setIsOnlineOrdersModalOpen(false)} wide>
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {activeAlerts.map((alert) => (
-              <div key={alert.orderId} className="rounded-2xl border border-white/10 bg-black/40 p-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="rounded-md bg-amber-400 px-1.5 py-0.5 font-mono text-[10px] font-black text-ink">#{alert.shortId}</span>
-                  <p className="font-bold text-xs text-white mt-1">
-                    {alert.customerName} ({gbp(alert.total)})
-                  </p>
-                  <p className="text-[10px] text-white/60">{alert.itemsSummary}</p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const accepted = updateOrderStatus(alert.orderId, 'accepted')
-                      dismissOrderAlert(alert.orderId)
-                      if (accepted) setReceiptOrder(accepted)
-                    }}
-                    className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-ink hover:bg-emerald-400 shadow"
-                  >
-                    🖨️ Accept &amp; print
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => dismissOrderAlert(alert.orderId)}
-                    className="rounded-xl border border-white/10 bg-white/5 px-2 py-2 text-xs text-white/60 hover:text-white"
-                    title="Stops the alarm for this order; it stays in the kitchen queue"
-                  >
-                    🔕 Silence
-                  </button>
-                </div>
+      {isOnlineOrdersModalOpen && activeAlerts.length > 0 && (
+        <NewOrderAlertModal
+          alerts={activeAlerts}
+          orders={allOrdersList}
+          soundState={alertSoundState}
+          onAccept={handleAcceptOnlineOrder}
+          onDecline={handleOpenRejectModal}
+          onSilence={dismissOrderAlert}
+          onOpenSoundSettings={() => setIsSoundSettingsOpen(true)}
+          printByDefault={Boolean(tillSettings.autoPrintOnline)}
+        />
+      )}
+
+      {isSoundSettingsOpen && (
+        <AlertSoundSettingsModal
+          onClose={() => setIsSoundSettingsOpen(false)}
+          actor={actor}
+        />
+      )}
+
+      {rejectingOrder && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Decline order">
+          <div className="w-full max-w-md rounded-3xl border border-rose-500/50 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div>
+                <h3 className="font-black text-sm text-rose-300">Decline Order #{rejectingOrder.shortId || rejectingOrder.id.slice(-4)}</h3>
+                <p className="text-[11px] text-white/60">{rejectingOrder.customer?.name} • {gbp(rejectingOrder.payment?.total || 0)}</p>
               </div>
-            ))}
+              <button type="button" onClick={() => setRejectingOrder(null)} className="text-white/60 hover:text-white" aria-label="Close">✕</button>
+            </div>
+            
+            <p className="text-xs text-white/70">
+              Select reason for cancellation. The customer will be instantly notified with this reason:
+            </p>
+
+            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              {REJECTION_REASON_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setRejectionPresetId(p.id)
+                    setCustomRejectionText(p.defaultText)
+                  }}
+                  className={`w-full text-left p-2.5 rounded-xl border text-xs font-bold transition ${
+                    rejectionPresetId === p.id
+                      ? 'border-rose-400 bg-rose-500/20 text-rose-200'
+                      : 'border-white/10 bg-white/5 text-white/80 hover:bg-white/10'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-white/50 block mb-1">Message sent to customer:</label>
+              <textarea
+                value={customRejectionText}
+                onChange={(e) => setCustomRejectionText(e.target.value)}
+                rows={3}
+                placeholder="Type explanation to customer..."
+                className="w-full rounded-xl border border-white/15 bg-black/50 p-2.5 text-xs text-white placeholder-white/40 focus:border-rose-400 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRejectingOrder(null)}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/70 hover:bg-white/15"
+              >
+                Keep Order
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRejection}
+                className="flex-1 rounded-xl bg-rose-600 py-2.5 text-xs font-black uppercase tracking-wider text-white hover:bg-rose-500 shadow-glow"
+              >
+                Confirm Decline &amp; Refund
+              </button>
+            </div>
           </div>
-        </SimpleDialog>
+        </div>
       )}
 
       {isLineNoteModalOpen && selectedLineId && (
