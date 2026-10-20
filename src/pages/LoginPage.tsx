@@ -22,9 +22,13 @@ export default function LoginPage() {
   const [loadingGoogle, setLoadingGoogle] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Post-login routing lives in authStore so every role lands somewhere useful;
-  // customers (no portal) go back to wherever they came from.
-  const destinationForRole = (role?: Role): string => homePortalForRole(role) ?? redirect
+  // Post-login routing respects redirect query param if provided, otherwise lands on role home portal
+  const destinationForRole = (role?: Role): string => {
+    if (redirect && redirect !== '/' && redirect !== '/login') {
+      return redirect
+    }
+    return homePortalForRole(role) ?? '/'
+  }
 
   // The Admin tab is the same PIN keypad restricted to management roles — there
   // is no email/password login (the old one granted admin to any address).
@@ -33,7 +37,10 @@ export default function LoginPage() {
     if (!pin.trim()) return
     const res = loginWithPin(pin, tab === 'admin' ? MANAGEMENT_ROLES : undefined)
     if (res.ok) {
-      navigate(tab === 'admin' ? '/admin' : destinationForRole(res.user?.role))
+      const dest = redirect && redirect !== '/' && redirect !== '/login'
+        ? redirect
+        : (tab === 'admin' ? '/admin' : destinationForRole(res.user?.role))
+      navigate(dest)
     } else {
       setPin('')
       setError(res.message)

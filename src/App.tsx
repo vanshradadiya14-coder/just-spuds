@@ -19,6 +19,9 @@ const LoginPage = lazy(() => import('./pages/LoginPage'))
 const CustomerFacingDisplayPage = lazy(() => import('./pages/CustomerFacingDisplayPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
+import ProtectedRoute from './components/ProtectedRoute'
+import { MANAGEMENT_ROLES, SHOP_FLOOR_ROLES } from './services/authStore'
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -45,14 +48,49 @@ export default function App() {
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
 
-              {/* DEDICATED FULLSCREEN STAFF KITCHEN, TILL POS, COURIER & ADMIN PORTALS (Zero Customer Navbar/Banners) */}
-              <Route path="staff" element={<StaffKDSPage />} />
-              <Route path="pos" element={<StaffPOSPage />} />
-              <Route path="till" element={<StaffPOSPage />} />
+              {/* DEDICATED SECURED STAFF KITCHEN, TILL POS, COURIER & ADMIN PORTALS */}
+              <Route
+                path="staff"
+                element={
+                  <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Kitchen Display System" loginTab="staff">
+                    <StaffKDSPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="pos"
+                element={
+                  <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
+                    <StaffPOSPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="till"
+                element={
+                  <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
+                    <StaffPOSPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="cfd" element={<CustomerFacingDisplayPage />} />
               <Route path="customer-display" element={<CustomerFacingDisplayPage />} />
-              <Route path="driver" element={<DriverDashboardPage />} />
-              <Route path="admin" element={<AdminPage />} />
+              <Route
+                path="driver"
+                element={
+                  <ProtectedRoute allowedRoles={['DRIVER', ...MANAGEMENT_ROLES]} portalName="Courier Dispatch" loginTab="staff">
+                    <DriverDashboardPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="admin"
+                element={
+                  <ProtectedRoute allowedRoles={MANAGEMENT_ROLES} portalName="Management Admin Console" loginTab="admin">
+                    <AdminPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="login" element={<LoginPage />} />
             </Routes>
           </Suspense>

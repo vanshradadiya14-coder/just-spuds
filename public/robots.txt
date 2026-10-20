@@ -1,8 +1,12 @@
 User-agent: *
 Allow: /
 Disallow: /admin
+Disallow: /pos
+Disallow: /till
 Disallow: /staff
 Disallow: /driver
+Disallow: /cfd
+Disallow: /customer-display
 Disallow: /track/
 Disallow: /login
 

@@ -1,14 +1,15 @@
 {
-  "name": "Just Spuds Courier Hub",
-  "short_name": "Spuds Courier",
-  "description": "Real-time mobile dispatch and delivery terminal for Just Spuds Aylesbury couriers.",
-  "start_url": "/driver",
+  "name": "Just Spuds Store Suite & EPOS",
+  "short_name": "Just Spuds POS",
+  "description": "Professional EPOS food till, kitchen display system, and store management console for Just Spuds Aylesbury.",
+  "start_url": "/pos",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#020617",
   "theme_color": "#f59e0b",
-  "categories": ["business", "food", "productivity"],
+  "categories": ["business", "food", "productivity", "utilities"],
   "icons": [
     {
       "src": "/favicon-48x48.png",
@@ -36,14 +37,28 @@
   ],
   "shortcuts": [
     {
-      "name": "Live Dispatch",
-      "url": "/driver",
-      "description": "Open live delivery dispatch feed"
+      "name": "Counter Till & EPOS",
+      "short_name": "Till POS",
+      "url": "/pos",
+      "description": "Open full-screen counter till with split tender and thermal receipt printing"
     },
     {
-      "name": "Kitchen Terminal",
+      "name": "Admin Management Console",
+      "short_name": "Admin",
+      "url": "/admin",
+      "description": "Open live order analytics, staff rosters, menu management, and Z-reports"
+    },
+    {
+      "name": "Kitchen Display System (KDS)",
+      "short_name": "Kitchen",
       "url": "/staff",
-      "description": "Open staff KDS"
+      "description": "Open live kitchen bump bar and ticket station"
+    },
+    {
+      "name": "Courier Dispatch Hub",
+      "short_name": "Courier",
+      "url": "/driver",
+      "description": "Open courier delivery dispatch feed"
     }
   ]
 }

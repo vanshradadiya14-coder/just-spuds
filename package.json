@@ -11,7 +11,9 @@
     "test": "node scripts/test-epos.mjs",
     "assets": "node scripts/fetch-assets.mjs",
     "share": "lt --port 5173",
-    "tunnel": "untun tunnel --port 5173"
+    "tunnel": "untun tunnel --port 5173",
+    "pos:app": "cmd /c Launch-Store-POS.bat",
+    "admin:app": "cmd /c Launch-Admin-Portal.bat"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",

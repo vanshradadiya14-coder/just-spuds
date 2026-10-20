@@ -174,6 +174,12 @@ export default function AdminPage() {
   const [newPromoMinOrder, setNewPromoMinOrder] = useState('10.00')
   const [newPromoDesc, setNewPromoDesc] = useState('')
 
+  // Current authenticated manager session
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getCurrentUser())
+  useEffect(() => {
+    return subscribeAuth((u) => setCurrentUser(u))
+  }, [])
+
   const [currentTime, setCurrentTime] = useState(new Date())
   const { supported: canFullscreen, isFullscreen, toggle: toggleFullScreen } = useFullscreen()
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
@@ -998,6 +1004,28 @@ export default function AdminPage() {
 
             <FullscreenButton />
 
+            {/* Manager Session & Quick Lock */}
+            {currentUser && (
+              <div className="flex items-center gap-2 pl-1 border-l border-white/10">
+                <div className="hidden lg:block text-right leading-tight">
+                  <p className="font-body text-xs font-bold text-white truncate max-w-[120px]">{currentUser.name}</p>
+                  <p className="font-body text-[10px] text-amber-400 font-semibold">{currentUser.role.replace('_', ' ')}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout()
+                    window.location.href = '/login?tab=admin'
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/40 bg-red-500/15 px-2.5 py-1.5 font-body text-xs font-bold text-red-300 hover:bg-red-500 hover:text-white transition shadow-sm"
+                  title="Lock Admin Console & Sign Out"
+                >
+                  <span aria-hidden>🔒</span>
+                  <span>Lock</span>
+                </button>
+              </div>
+            )}
+
             <div>
               <button
                 ref={headerMoreRef}
@@ -1022,6 +1050,7 @@ export default function AdminPage() {
                         { icon: '⚡', label: 'Send 2 test orders', hint: 'Practise the alarm and printer', run: handleSimulateRush },
                         { icon: '🔔', label: 'Alert sound', hint: 'Choose, upload or test the alarm', run: () => setIsSoundSettingsOpen(true) },
                         { icon: '📥', label: 'Export ledger (CSV)', hint: 'Every order in this browser', run: () => exportOrdersCSV(orders) },
+                        { icon: '🔒', label: 'Lock console', hint: 'Sign out and return to PIN screen', run: () => { logout(); window.location.href = '/login?tab=admin' } },
                         ...(canFullscreen ? [{ icon: isFullscreen ? '🗗' : '⛶', label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullScreen }] : []),
                       ] as { icon: string; label: string; hint?: string; to?: string; className?: string; run?: () => void }[]
                     ).map((item) =>
