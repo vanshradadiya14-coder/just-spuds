@@ -74,6 +74,7 @@ import { buildEndOfDayReport, type EndOfDayReport } from '../services/endOfDayRe
 import ThermalReceipt from '../components/ThermalReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
+import InstallAppButton from '../components/InstallAppButton'
 
 type OrderType = 'takeaway' | 'eat_in' | 'phone'
 
@@ -1545,6 +1546,7 @@ export default function StaffPOSPage() {
             <span>👨‍🍳</span>
             <span className="hidden sm:inline">KDS</span>
           </Link>
+          <InstallAppButton />
           <FullscreenButton />
           <button type="button" onClick={logout} className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50" title="Lock till" aria-label="Lock till">
             🔒

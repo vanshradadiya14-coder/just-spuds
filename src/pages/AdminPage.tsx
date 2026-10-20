@@ -80,6 +80,7 @@ import { gbp, cx } from '../utils/format'
 import SmartImage from '../components/SmartImage'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
+import InstallAppButton from '../components/InstallAppButton'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { useFullscreen } from '../hooks/useFullscreen'
 import AdminLiveOrders from './admin/components/AdminLiveOrders'
@@ -1002,6 +1003,7 @@ export default function AdminPage() {
               <span>KDS</span>
             </Link>
 
+            <InstallAppButton />
             <FullscreenButton />
 
             {/* Manager Session & Quick Lock */}

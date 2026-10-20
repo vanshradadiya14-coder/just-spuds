@@ -49,3 +49,10 @@ import('./services/sync/supabaseBackend')
 
 // Firebase is loaded on demand: Google sign-in pulls it in, and Analytics only
 // starts once a visitor accepts cookies (components/CookieConsent).
+
+// Register PWA service worker for home-screen & desktop app installation
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {})
+  })
+}
