@@ -88,6 +88,7 @@ import ThermalReceipt from '../components/ThermalReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
 import InstallAppButton from '../components/InstallAppButton'
+import TerminalAuthorityBanner from '../components/pos/TerminalAuthorityBanner'
 
 const REJECTION_REASON_PRESETS = [
   { id: 'out_of_stock', label: '🥔 Out of fresh King Edward potato stock', defaultText: 'We have temporarily run out of fresh jacket potato stock for this batch.' },
@@ -1738,6 +1739,12 @@ export default function StaffPOSPage() {
           </button>
         </div>
       </header>
+
+      <TerminalAuthorityBanner
+        actor={actor}
+        requireManagerAuth={requireManagerAuth}
+        onClaimed={() => setFlash('Master register authority claimed on this system!')}
+      />
 
       <div className="flex-1 flex overflow-hidden">
         {terminalMode === 'kitchen' ? (

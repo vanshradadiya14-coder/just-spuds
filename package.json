@@ -12,7 +12,7 @@
     "assets": "node scripts/fetch-assets.mjs",
     "share": "lt --port 5173",
     "tunnel": "untun tunnel --port 5173",
-    "pos:app": "cmd /c Launch-Store-POS.bat",
+    "pos:app": "node scripts/launch-pos.mjs",
     "admin:app": "cmd /c Launch-Admin-Portal.bat"
   },
   "dependencies": {

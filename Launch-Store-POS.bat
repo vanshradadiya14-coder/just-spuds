@@ -6,8 +6,8 @@ echo   JUST SPUDS AYLESBURY - COUNTER TILL SOFTWARE
 echo ===================================================
 echo Launching till in standalone dedicated software mode...
 
-:: Set Target URL (Default: Live Domain; Fallback: Localhost if running locally)
-set "TARGET_URL=https://www.justspuds.uk/pos"
+:: Set Target URL (Primary: Subdomain pos.justspuds.uk; Fallback: Localhost or www)
+set "TARGET_URL=https://pos.justspuds.uk"
 if "%~1"=="local" set "TARGET_URL=http://localhost:5173/pos"
 
 :: Check for Microsoft Edge or Google Chrome
@@ -25,12 +25,11 @@ if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
 )
 
 if "%BROWSER%"=="" (
-    echo [ERROR] Neither Microsoft Edge nor Google Chrome could be found.
     echo Opening in default browser...
     start "" "%TARGET_URL%"
     exit /b
 )
 
-:: Launch in Dedicated Application / Kiosk Software Window (Zero Browser UI / No URL bar)
+:: Launch in Dedicated Standalone Window (Zero Browser UI / No address bar)
 start "" "%BROWSER%" --app="%TARGET_URL%" --start-maximized --disable-pinch --overscroll-history-navigation=0 --no-first-run
 exit /b

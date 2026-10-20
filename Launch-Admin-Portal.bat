@@ -2,12 +2,12 @@
 title Just Spuds Admin Management Console
 cls
 echo ===================================================
-echo   JUST SPUDS AYLESBURY - MANAGEMENT CONSOLE
+echo   JUST SPUDS AYLESBURY - MANAGEMENT PORTAL
 echo ===================================================
-echo Launching admin portal in dedicated software mode...
+echo Launching admin console in dedicated software mode...
 
-:: Set Target URL (Default: Live Domain; Fallback: Localhost if running locally)
-set "TARGET_URL=https://www.justspuds.uk/admin"
+:: Set Target URL (Primary: Subdomain admin.justspuds.uk; Fallback: Localhost)
+set "TARGET_URL=https://admin.justspuds.uk"
 if "%~1"=="local" set "TARGET_URL=http://localhost:5173/admin"
 
 :: Check for Microsoft Edge or Google Chrome
@@ -25,12 +25,11 @@ if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
 )
 
 if "%BROWSER%"=="" (
-    echo [ERROR] Neither Microsoft Edge nor Google Chrome could be found.
     echo Opening in default browser...
     start "" "%TARGET_URL%"
     exit /b
 )
 
-:: Launch in Dedicated Application Software Window (Zero Browser UI / No URL bar)
+:: Launch in Dedicated Standalone Window (Zero Browser UI / No address bar)
 start "" "%BROWSER%" --app="%TARGET_URL%" --start-maximized --disable-pinch --overscroll-history-navigation=0 --no-first-run
 exit /b
