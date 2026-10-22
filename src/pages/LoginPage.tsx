@@ -1,49 +1,108 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { loginWithPin, loginWithGoogle, getCurrentUser, homePortalForRole, MANAGEMENT_ROLES, type Role } from '../services/authStore'
+import {
+  loginWithPin,
+  loginWithGoogle,
+  getCurrentUser,
+  homePortalForRole,
+  MANAGEMENT_ROLES,
+  SHOP_FLOOR_ROLES,
+} from '../services/authStore'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
-
-type LoginTab = 'staff' | 'admin' | 'customer'
+import { detectSubdomain } from '../App'
+import { playPOSTouchTone } from '../services/printerBridge'
+import FullscreenButton from '../components/FullscreenButton'
+import { getLocalDeviceName } from '../services/terminalLockStore'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const redirect = params.get('redirect') || '/'
+  const subdomain = detectSubdomain()
 
   useDocumentMeta({
-    title: 'Staff & Portal Sign In',
-    description: 'Sign in to the Just Spuds Kitchen Display System (KDS) or Management Console.',
+    title:
+      subdomain === 'pos'
+        ? 'Store Till & POS Station Sign In | Just Spuds'
+        : subdomain === 'admin'
+        ? 'Store Management Console Sign In | Just Spuds'
+        : 'Sign In | Just Spuds Aylesbury',
+    description: 'Secure sign in for Just Spuds Aylesbury portals.',
   })
 
-  // Customer links (e.g. from the tracking page) open straight on the Customer tab.
-  const [tab, setTab] = useState<LoginTab>(() => (params.get('tab') === 'customer' ? 'customer' : 'staff'))
+  // PIN state
   const [pin, setPin] = useState('')
-  const [loadingGoogle, setLoadingGoogle] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadingGoogle, setLoadingGoogle] = useState(false)
+  const [timeStr, setTimeStr] = useState(() => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
 
-  // Post-login routing respects redirect query param if provided, otherwise lands on role home portal
-  const destinationForRole = (role?: Role): string => {
-    if (redirect && redirect !== '/' && redirect !== '/login') {
-      return redirect
+  // Keep live clock running for POS terminal aesthetic
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeStr(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Auto-submit when 4 digits are entered on the POS terminal
+  useEffect(() => {
+    if ((subdomain === 'pos' || subdomain === 'admin') && pin.length >= 4) {
+      // Auto attempt login if 4 digits
+      const allowedRoles = subdomain === 'pos' ? SHOP_FLOOR_ROLES : MANAGEMENT_ROLES
+      const res = loginWithPin(pin, allowedRoles)
+      if (res.ok) {
+        playPOSTouchTone('action')
+        navigate(subdomain === 'pos' ? '/' : subdomain === 'admin' ? '/' : redirect)
+      } else {
+        // If length reached 4 and failed, check if it's a driver attempting till access
+        if (pin === '7777' || pin === '7778' || pin === '7779') {
+          setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
+        } else {
+          setError(res.message || 'Invalid PIN.')
+        }
+        playPOSTouchTone('numpad')
+        setPin('')
+      }
     }
-    return homePortalForRole(role) ?? '/'
+  }, [pin, subdomain, redirect, navigate])
+
+  const handleKeypadPress = (num: string) => {
+    playPOSTouchTone('numpad')
+    setError(null)
+    setPin((prev) => (prev.length < 8 ? prev + num : prev))
   }
 
-  // The Admin tab is the same PIN keypad restricted to management roles — there
-  // is no email/password login (the old one granted admin to any address).
-  const handlePinSubmit = (e: React.FormEvent) => {
+  const handleClear = () => {
+    playPOSTouchTone('tap')
+    setPin('')
+    setError(null)
+  }
+
+  const handleBackspace = () => {
+    playPOSTouchTone('tap')
+    setPin((prev) => prev.slice(0, -1))
+    setError(null)
+  }
+
+  const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!pin.trim()) return
-    const res = loginWithPin(pin, tab === 'admin' ? MANAGEMENT_ROLES : undefined)
+
+    const allowedRoles = subdomain === 'pos' ? SHOP_FLOOR_ROLES : subdomain === 'admin' ? MANAGEMENT_ROLES : undefined
+    const res = loginWithPin(pin, allowedRoles)
+
     if (res.ok) {
-      const dest = redirect && redirect !== '/' && redirect !== '/login'
-        ? redirect
-        : (tab === 'admin' ? '/admin' : destinationForRole(res.user?.role))
-      navigate(dest)
+      playPOSTouchTone('action')
+      navigate(subdomain === 'pos' ? '/' : subdomain === 'admin' ? '/' : redirect)
     } else {
+      if (pin === '7777' || pin === '7778' || pin === '7779') {
+        setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
+      } else {
+        setError(res.message || 'Invalid PIN.')
+      }
+      playPOSTouchTone('numpad')
       setPin('')
-      setError(res.message)
     }
   }
 
@@ -53,7 +112,7 @@ export default function LoginPage() {
     try {
       const res = await loginWithGoogle()
       if (res.ok && res.user) {
-        navigate(destinationForRole(res.user.role))
+        navigate(redirect || homePortalForRole(res.user.role) || '/')
       } else {
         setError(res.message || 'Google sign in failed.')
       }
@@ -66,239 +125,360 @@ export default function LoginPage() {
 
   const currentUser = getCurrentUser()
 
+  /* =========================================================================
+     VIEW 1: DEDICATED IN-STORE POS & STAFF TERMINAL (pos.justspuds.uk)
+     - 100% viewport height, NO scrollbar, NO customer links, NO admin tabs.
+     - Ultra tactile, responsive numeric PIN pad with status bar.
+     ========================================================================= */
+  if (subdomain === 'pos') {
+    return (
+      <div className="relative h-[100dvh] w-screen overflow-hidden flex flex-col justify-between items-center bg-slate-950 font-body text-slate-100 select-none p-3 sm:p-4">
+        <FixedAmbientBackdrop variant="portal" />
+
+        {/* TOP STATUS BAR */}
+        <header className="relative z-10 w-full flex items-center justify-between border-b border-white/10 pb-2 px-2 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-400 text-xl font-black text-ink shadow-sm">
+              🥔
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display text-sm font-black tracking-wider text-white">JUST SPUDS</span>
+                <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-300 border border-amber-400/30">
+                  POS REGISTER
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                {getLocalDeviceName()} &bull; Market Square, Aylesbury
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-amber-300">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>{timeStr}</span>
+            </div>
+            <FullscreenButton />
+          </div>
+        </header>
+
+        {/* CENTER AUTHENTICATION CARD (FITS 100% WITHOUT SCROLLING) */}
+        <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center py-2">
+          <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-4 sm:p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
+            
+            {/* Terminal Title */}
+            <div className="text-center mb-3">
+              <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-lg ring-2 ring-amber-400/50">
+                👨‍🍳
+              </div>
+              <h1 className="text-lg sm:text-xl font-black text-white uppercase tracking-wider">
+                Staff Register Sign-In
+              </h1>
+              <p className="text-[11px] text-slate-400">
+                Enter your 4-digit staff PIN to unlock till &amp; kitchen
+              </p>
+            </div>
+
+            {/* If currently signed in, offer fast continue */}
+            {currentUser && SHOP_FLOOR_ROLES.includes(currentUser.role) && (
+              <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-2 text-center text-xs text-emerald-200 flex items-center justify-between">
+                <span>Signed in as <strong>{currentUser.name}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="rounded-lg bg-emerald-600 px-2 py-0.5 font-bold text-white text-[11px] hover:bg-emerald-500"
+                >
+                  Open Till &rarr;
+                </button>
+              </div>
+            )}
+
+            {/* PIN Dots Indicator */}
+            <div className="mb-3 flex justify-center gap-3">
+              {[0, 1, 2, 3].map((idx) => {
+                const filled = pin.length > idx
+                return (
+                  <div
+                    key={idx}
+                    className={`h-4 w-4 rounded-full border-2 transition-all duration-150 ${
+                      filled
+                        ? 'border-amber-400 bg-amber-400 shadow-glow scale-110'
+                        : 'border-slate-600 bg-slate-800'
+                    }`}
+                  />
+                )
+              })}
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="mb-3 rounded-xl border border-red-500/40 bg-red-950/60 p-2 text-center text-[11px] font-semibold text-red-200">
+                {error}
+              </div>
+            )}
+
+            {/* Numeric Keypad (Optimized Touch Targets) */}
+            <form onSubmit={handleManualSubmit} className="space-y-2">
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => handleKeypadPress(num)}
+                    className="h-11 sm:h-12 rounded-2xl border border-white/10 bg-slate-800/80 font-mono text-lg sm:text-xl font-black text-white hover:bg-slate-700 active:scale-95 active:bg-amber-400 active:text-slate-950 transition shadow-sm"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="h-11 sm:h-12 rounded-2xl border border-rose-500/30 bg-rose-950/40 font-body text-xs font-bold text-rose-300 hover:bg-rose-900/60 active:scale-95 transition"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleKeypadPress('0')}
+                  className="h-11 sm:h-12 rounded-2xl border border-white/10 bg-slate-800/80 font-mono text-lg sm:text-xl font-black text-white hover:bg-slate-700 active:scale-95 active:bg-amber-400 active:text-slate-950 transition shadow-sm"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBackspace}
+                  className="h-11 sm:h-12 rounded-2xl border border-white/10 bg-slate-800/80 font-body text-sm font-bold text-amber-300 hover:bg-slate-700 active:scale-95 transition"
+                  title="Backspace"
+                >
+                  ⌫
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full rounded-2xl bg-amber-400 py-2.5 sm:py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 active:scale-[0.99] transition mt-2"
+              >
+                Unlock Counter Till &rarr;
+              </button>
+            </form>
+          </div>
+        </main>
+
+        {/* BOTTOM TERMINAL FOOTER */}
+        <footer className="relative z-10 w-full border-t border-white/10 pt-2 px-2 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
+          <span>In-Store Master Register &bull; Single Authority Mode</span>
+          <span className="font-mono text-slate-400">Ver 2.4.0 &bull; SSL Secured</span>
+        </footer>
+      </div>
+    )
+  }
+
+  /* =========================================================================
+     VIEW 2: DEDICATED MANAGEMENT ADMIN CONSOLE (admin.justspuds.uk)
+     - Executive dark theme, Manager/Supervisor PIN only.
+     - NO customer tab, NO till staff controls.
+     ========================================================================= */
+  if (subdomain === 'admin') {
+    return (
+      <div className="relative h-[100dvh] w-screen overflow-hidden flex flex-col justify-between items-center bg-slate-950 font-body text-slate-100 select-none p-4">
+        <FixedAmbientBackdrop variant="portal" />
+
+        <header className="relative z-10 w-full flex items-center justify-between border-b border-white/10 pb-2 px-2 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-400 text-xl font-black text-ink shadow-sm">
+              🛡️
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display text-sm font-black tracking-wider text-white">JUST SPUDS</span>
+                <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-300 border border-rose-500/30">
+                  MANAGEMENT PORTAL
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">Owner &bull; General Manager &bull; Shift Supervisor</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-amber-300">
+            <span>{timeStr}</span>
+          </div>
+        </header>
+
+        <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center py-2">
+          <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
+            <div className="text-center mb-4">
+              <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-lg ring-2 ring-amber-400/50">
+                📊
+              </div>
+              <h1 className="text-xl font-black text-white uppercase tracking-wider">Manager Authorization</h1>
+              <p className="text-xs text-slate-400 mt-0.5">Enter Manager / Owner PIN for console access</p>
+            </div>
+
+            {error && (
+              <div className="mb-3 rounded-xl border border-red-500/40 bg-red-950/60 p-2.5 text-center text-xs font-semibold text-red-200">
+                {error}
+              </div>
+            )}
+
+            {/* PIN Dots */}
+            <div className="mb-4 flex justify-center gap-3">
+              {[0, 1, 2, 3, 4, 5].map((idx) => (
+                <div
+                  key={idx}
+                  className={`h-3.5 w-3.5 rounded-full border-2 transition-all duration-150 ${
+                    pin.length > idx
+                      ? 'border-amber-400 bg-amber-400 shadow-glow scale-110'
+                      : 'border-slate-600 bg-slate-800'
+                  }`}
+                />
+              ))}
+            </div>
+
+            <form onSubmit={handleManualSubmit} className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => handleKeypadPress(num)}
+                    className="h-11 rounded-2xl border border-white/10 bg-slate-800/80 font-mono text-xl font-bold text-white hover:bg-slate-700 active:scale-95 active:bg-amber-400 active:text-slate-950 transition"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="h-11 rounded-2xl border border-rose-500/30 bg-rose-950/40 font-body text-xs font-bold text-rose-300 hover:bg-rose-900/60 active:scale-95 transition"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleKeypadPress('0')}
+                  className="h-11 rounded-2xl border border-white/10 bg-slate-800/80 font-mono text-xl font-bold text-white hover:bg-slate-700 active:scale-95 active:bg-amber-400 active:text-slate-950 transition"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBackspace}
+                  className="h-11 rounded-2xl border border-white/10 bg-slate-800/80 font-body text-sm font-bold text-amber-300 hover:bg-slate-700 active:scale-95 transition"
+                >
+                  ⌫
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition mt-2"
+              >
+                Access Management Console &rarr;
+              </button>
+            </form>
+          </div>
+        </main>
+
+        <footer className="relative z-10 w-full border-t border-white/10 pt-2 px-2 flex items-center justify-between text-xs text-slate-500 shrink-0">
+          <span>Enterprise Management Audit Active</span>
+          <span className="font-mono text-slate-400">admin.justspuds.uk</span>
+        </footer>
+      </div>
+    )
+  }
+
+  /* =========================================================================
+     VIEW 3: PUBLIC STOREFRONT CUSTOMER LOGIN (www.justspuds.uk)
+     - 1-Click Google sign in, customer favorites and order history.
+     ========================================================================= */
   return (
-    <div className="relative min-h-screen bg-stock pb-32 pt-[110px] sm:pt-[130px] flex flex-col items-center justify-center px-4 overflow-hidden">
-      {/* Dynamic Creative Ambient Particle & Aurora Engine */}
+    <div className="relative min-h-[90vh] flex flex-col items-center justify-center px-4 py-12 select-none overflow-hidden">
       <FixedAmbientBackdrop variant="login" />
 
-      {/* Radiant Ambient Core Halo behind form */}
-      <div className="pointer-events-none absolute h-[550px] w-[550px] rounded-full bg-gradient-to-tr from-amber-400/25 via-amber-200/20 to-orange-400/10 blur-[130px]" />
-
-      {/* Return to Site Header */}
-      <div className="relative z-10 mb-6 flex items-center gap-3">
-        <Link
-          to="/"
-          className="inline-flex items-center gap-2 rounded-full border border-amber-900/15 bg-white/90 backdrop-blur-md px-4 py-2 font-body text-xs font-bold text-ink shadow-sm hover:bg-amber-100/50 transition"
-        >
-          <span>←</span>
-          <span>Back to Just Spuds Official Site</span>
-        </Link>
-        <Link
-          to="/menu"
-          className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-400/25 backdrop-blur-md px-4 py-2 font-body text-xs font-bold text-amber-950 shadow-sm hover:bg-amber-400 transition"
-        >
-          <span>🥔</span>
-          <span>Order Menu</span>
-        </Link>
-      </div>
-
-      <div className="relative z-10 w-full max-w-md rounded-3xl border border-amber-400/35 bg-white/95 backdrop-blur-xl p-6 sm:p-8 shadow-warm-lg ring-1 ring-amber-400/20 space-y-6">
-        
-        {/* Header */}
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-amber-400/35 bg-white/95 backdrop-blur-xl p-6 sm:p-8 shadow-warm-lg space-y-6">
         <div className="text-center">
-          <div className="relative mx-auto mb-3 inline-block">
-            <img
-              src="/assets/brand/logo.png"
-              alt="Just Spuds Logo"
-              className="h-16 w-16 rounded-full object-cover shadow-lg ring-2 ring-amber-400/60"
-            />
-            <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-amber-400 text-xs shadow-md">
-              {tab === 'staff' ? '👨‍🍳' : tab === 'admin' ? '📊' : '👤'}
-            </span>
+          <div className="mx-auto mb-3 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl shadow-lg ring-2 ring-amber-400/60">
+            🥔
           </div>
-          <h1 className="display text-2xl sm:text-3xl text-ink font-bold">
-            {tab === 'staff' ? 'Staff PIN' : tab === 'admin' ? 'Manager PIN' : 'Customer Account'}
-          </h1>
+          <h1 className="font-display text-2xl sm:text-3xl font-black text-ink">Customer Account</h1>
           <p className="font-body text-xs text-slate-500 mt-1">
-            Just Spuds Aylesbury &bull; Market Square Portal
+            Just Spuds Aylesbury &bull; Fast Checkout &amp; Order Tracker
           </p>
         </div>
 
-        {/* Role Tab Selector */}
-        <div className="grid grid-cols-3 gap-1.5 rounded-2xl border border-ink/10 bg-paper p-1 text-center font-body text-xs font-bold">
-          <button
-            type="button"
-            onClick={() => { setTab('staff'); setError(null) }}
-            className={`rounded-xl py-2 transition ${tab === 'staff' ? 'bg-amber-400 text-ink shadow font-black' : 'text-slate-600 hover:text-ink'}`}
-          >
-            Staff KDS
-          </button>
-          <button
-            type="button"
-            onClick={() => { setTab('admin'); setError(null) }}
-            className={`rounded-xl py-2 transition ${tab === 'admin' ? 'bg-amber-400 text-ink shadow font-black' : 'text-slate-600 hover:text-ink'}`}
-          >
-            Admin
-          </button>
-          <button
-            type="button"
-            onClick={() => { setTab('customer'); setError(null) }}
-            className={`rounded-xl py-2 transition ${tab === 'customer' ? 'bg-amber-400 text-ink shadow font-black' : 'text-slate-600 hover:text-ink'}`}
-          >
-            Customer
-          </button>
-        </div>
-
-        {/* Current status if already logged in */}
         {currentUser && (
           <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-3.5 text-xs text-emerald-800 flex items-center justify-between">
             <div>
               <p className="font-bold">Signed in as {currentUser.name}</p>
-              <p className="text-[11px]">Role: {currentUser.role}</p>
+              <p className="text-[11px] text-slate-600">{currentUser.email}</p>
             </div>
             <Link
-              to={destinationForRole(currentUser.role)}
-              className="rounded-lg bg-emerald-700 text-white px-3 py-1 text-[11px] font-bold"
+              to="/menu"
+              className="rounded-lg bg-emerald-700 text-white px-3 py-1 text-[11px] font-bold hover:bg-emerald-600"
             >
-              Continue →
+              Order Menu &rarr;
             </Link>
           </div>
         )}
 
-        {/* TAB 1 & 2: PIN KEYPAD (staff, or management-only for the Admin tab) */}
-        {(tab === 'staff' || tab === 'admin') && (
-          <form onSubmit={handlePinSubmit} className="space-y-4">
-            <label className="block text-center font-body text-xs font-bold text-slate-600">
-              {tab === 'admin' ? 'Enter your supervisor / manager PIN' : 'Enter your staff PIN'}
-            </label>
-            <input
-              type="password"
-              maxLength={8}
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="••••"
-              autoFocus
-              className="w-full rounded-2xl border border-ink/20 bg-paper py-3 text-center font-mono text-3xl tracking-[0.5em] text-ink focus:border-amber-500 focus:outline-none"
-            />
-
-            {/* Numeric Keypad */}
-            <div className="grid grid-cols-3 gap-2 pt-1">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => setPin((prev) => (prev.length < 8 ? prev + num : prev))}
-                  className="rounded-xl border border-ink/10 bg-white py-3 font-mono text-lg font-bold text-ink hover:bg-paper active:scale-95 shadow-xs"
-                >
-                  {num}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPin('')}
-                className="rounded-xl border border-red-200 bg-red-50 py-3 font-body text-xs font-bold text-red-600 hover:bg-red-100"
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                onClick={() => setPin((prev) => (prev.length < 8 ? prev + '0' : prev))}
-                className="rounded-xl border border-ink/10 bg-white py-3 font-mono text-lg font-bold text-ink hover:bg-paper"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={() => setPin((prev) => prev.slice(0, -1))}
-                className="rounded-xl border border-ink/10 bg-white py-3 font-body text-xs font-bold text-ink hover:bg-paper"
-              >
-                ⌫
-              </button>
-            </div>
-
-            {error && (
-              <p className="rounded-xl bg-red-50 border border-red-200 p-2.5 font-body text-xs text-red-600 text-center">
-                {error}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition"
-            >
-              {tab === 'admin' ? 'Open Admin Console →' : 'Sign in →'}
-            </button>
-          </form>
-        )}
-
-        {/* TAB 3: CUSTOMER GOOGLE SIGN IN */}
-        {tab === 'customer' && (
-          <div className="space-y-4 pt-1">
-            <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-500/15 via-amber-400/5 to-transparent p-4 space-y-2">
-              <p className="font-body text-xs font-black uppercase tracking-wider text-amber-900">
-                ✨ Fast 1-Click Customer Access
-              </p>
-              <p className="font-body text-xs text-slate-600 leading-relaxed">
-                Sign in with Google and your name and email are filled in for you at checkout.
-              </p>
-            </div>
-
-            {error && (
-              <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-700 font-body space-y-2 text-left">
-                <p className="font-semibold">{error}</p>
-                {error.includes('Authorized domains') ? (
-                  <a
-                    href="https://console.firebase.google.com/project/just-spuds/authentication/settings"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-bold text-amber-700 hover:text-amber-900 underline"
-                  >
-                    Open Firebase Authorized Domains Settings &rarr;
-                  </a>
-                ) : error.includes('Firebase Console') ? (
-                  <a
-                    href="https://console.firebase.google.com/project/just-spuds/authentication/providers"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-bold text-amber-700 hover:text-amber-900 underline"
-                  >
-                    Open Firebase Console Sign-in settings &rarr;
-                  </a>
-                ) : null}
-              </div>
-            )}
-
-            <button
-              type="button"
-              disabled={loadingGoogle}
-              onClick={handleGoogleSignIn}
-              className="w-full rounded-2xl border border-slate-300 bg-white py-4 px-4 font-body text-sm font-bold text-slate-800 shadow-md hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition flex items-center justify-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {loadingGoogle ? (
-                <div className="flex items-center gap-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-                  <span>Signing in with Google...</span>
-                </div>
-              ) : (
-                <>
-                  <svg className="h-5 w-5" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24Z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.04 0 12s.45 3.82 1.25 5.42l4.03-3.15Z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98Z"
-                    />
-                  </svg>
-                  <span>Continue with Google</span>
-                </>
-              )}
-            </button>
-
-            <p className="text-center font-body text-[11px] text-slate-400">
-              No passwords required &bull; Powered by Google Firebase
+        <div className="space-y-4 pt-1">
+          <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-500/15 via-amber-400/5 to-transparent p-4 space-y-2">
+            <p className="font-body text-xs font-black uppercase tracking-wider text-amber-900">
+              ✨ Fast 1-Click Customer Access
+            </p>
+            <p className="font-body text-xs text-slate-600 leading-relaxed">
+              Sign in with Google to pre-fill your delivery details and access live potato order tracking.
             </p>
           </div>
-        )}
+
+          {error && (
+            <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-700 font-body">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={loadingGoogle}
+            onClick={handleGoogleSignIn}
+            className="w-full rounded-2xl border border-slate-300 bg-white py-3.5 px-4 font-body text-sm font-bold text-slate-800 shadow-md hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition flex items-center justify-center gap-3 disabled:opacity-60"
+          >
+            {loadingGoogle ? (
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+                <span>Signing in with Google...</span>
+              </div>
+            ) : (
+              <>
+                <svg className="h-5 w-5" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24Z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.04 0 12s.45 3.82 1.25 5.42l4.03-3.15Z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98Z"
+                  />
+                </svg>
+                <span>Continue with Google</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        <div className="border-t border-slate-100 pt-4 text-center">
+          <Link to="/" className="text-xs text-amber-700 hover:text-amber-900 font-bold">
+            &larr; Return to Just Spuds Menu &amp; Ordering
+          </Link>
+        </div>
       </div>
     </div>
   )

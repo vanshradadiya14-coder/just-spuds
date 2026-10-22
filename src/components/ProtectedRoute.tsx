@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Navigate, useLocation, Link } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import {
   getCurrentUser,
   subscribeAuth,
@@ -96,14 +96,18 @@ export default function ProtectedRoute({
               }}
               className="flex-1 rounded-2xl bg-amber-400 px-4 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow hover:bg-amber-300 transition"
             >
-              🔑 Switch PIN / Login as Manager
+              🔑 Switch PIN / Sign In as Staff
             </button>
-            <Link
-              to="/pos"
+            <button
+              type="button"
+              onClick={() => {
+                logout()
+                window.location.href = '/login'
+              }}
               className="flex-1 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 font-body text-xs font-bold text-white hover:bg-white/20 transition flex items-center justify-center"
             >
-              Go to Till POS
-            </Link>
+              Sign Out
+            </button>
           </div>
         </div>
       </div>

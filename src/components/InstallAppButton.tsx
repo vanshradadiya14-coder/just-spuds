@@ -1,30 +1,21 @@
 import { useState, useEffect } from 'react'
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
-}
+import {
+  isRunningStandalone,
+  canInstallApp,
+  subscribeInstallPrompt,
+  triggerInstallPrompt,
+} from '../services/installPromptStore'
 
 export default function InstallAppButton({ className }: { className?: string }) {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
-  const [isStandalone, setIsStandalone] = useState(false)
+  const [canInstall, setCanInstall] = useState(() => canInstallApp())
+  const [isStandalone, setIsStandalone] = useState(() => isRunningStandalone())
   const [showModal, setShowModal] = useState(false)
 
   useEffect(() => {
-    // Check if already running as standalone app
-    const isStandaloneMode =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (window.navigator as any).standalone === true
-
-    setIsStandalone(isStandaloneMode)
-
-    const handler = (e: Event) => {
-      e.preventDefault()
-      setDeferredPrompt(e as BeforeInstallPromptEvent)
-    }
-
-    window.addEventListener('beforeinstallprompt', handler)
-    return () => window.removeEventListener('beforeinstallprompt', handler)
+    return subscribeInstallPrompt((avail) => {
+      setCanInstall(avail)
+      setIsStandalone(isRunningStandalone())
+    })
   }, [])
 
   if (isStandalone) {
@@ -32,12 +23,8 @@ export default function InstallAppButton({ className }: { className?: string }) 
   }
 
   const handleInstallClick = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt()
-      const { outcome } = await deferredPrompt.userChoice
-      if (outcome === 'accepted') {
-        setDeferredPrompt(null)
-      }
+    if (canInstall) {
+      await triggerInstallPrompt()
     } else {
       setShowModal(true)
     }
@@ -48,14 +35,17 @@ export default function InstallAppButton({ className }: { className?: string }) 
       <button
         type="button"
         onClick={handleInstallClick}
-        className={className || "inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/15 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition shadow-sm"}
+        className={
+          className ||
+          'inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/15 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition shadow-sm'
+        }
         title="Install as dedicated Desktop Software / Till App"
       >
         <span aria-hidden>📲</span>
         <span>Install App</span>
       </button>
 
-      {/* Instructions Modal if browser doesn't support auto-prompt */}
+      {/* Instructions Modal if browser requires manual omnibox install */}
       {showModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
           <div className="relative w-full max-w-md rounded-3xl border border-amber-400/40 bg-slate-900 p-6 text-white shadow-2xl font-body">
@@ -72,22 +62,23 @@ export default function InstallAppButton({ className }: { className?: string }) 
                 🥔
               </div>
               <div>
-                <h3 className="text-lg font-bold text-white">Install Just Spuds Till</h3>
-                <p className="text-xs text-amber-400 font-semibold">Standalone Software Mode</p>
+                <h3 className="text-lg font-bold text-white">Install Just Spuds</h3>
+                <p className="text-xs text-amber-400 font-semibold">Dedicated Standalone Mode</p>
               </div>
             </div>
 
             <p className="mb-4 text-xs text-slate-300 leading-relaxed">
-              To install this till as a standalone software program without any browser tabs or search bar:
+              To install this software as a standalone desktop window without browser tabs:
             </p>
 
             <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs">
               <div className="flex items-start gap-2.5">
                 <span className="font-bold text-amber-400 text-sm">1.</span>
                 <div>
-                  <p className="font-bold text-white">Chrome Address Bar Icon</p>
+                  <p className="font-bold text-white">Browser Address Bar Icon</p>
                   <p className="text-slate-400">
-                    Look at the far right of your address bar (next to the star ⭐). Click the <span className="font-mono bg-white/10 px-1 py-0.5 rounded text-amber-300">💻 (Install)</span> monitor icon.
+                    Look at the far right of your address bar (next to the star ⭐). Click the{' '}
+                    <span className="font-mono bg-white/10 px-1 py-0.5 rounded text-amber-300">💻 (Install)</span> monitor icon.
                   </p>
                 </div>
               </div>
@@ -95,19 +86,12 @@ export default function InstallAppButton({ className }: { className?: string }) 
               <div className="flex items-start gap-2.5 border-t border-white/10 pt-2.5">
                 <span className="font-bold text-amber-400 text-sm">2.</span>
                 <div>
-                  <p className="font-bold text-white">Chrome Menu (⋮)</p>
+                  <p className="font-bold text-white">Chrome / Edge Menu (⋮)</p>
                   <p className="text-slate-400">
-                    Click the 3 vertical dots in the top-right corner of Chrome → <span className="text-white font-semibold">Save and share</span> → <span className="text-amber-300 font-semibold">Install Just Spuds...</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2.5 border-t border-white/10 pt-2.5">
-                <span className="font-bold text-amber-400 text-sm">3.</span>
-                <div>
-                  <p className="font-bold text-white">Windows Desktop Shortcut</p>
-                  <p className="text-slate-400">
-                    You can also double-click the <span className="text-amber-300 font-semibold">Just Spuds POS Till</span> shortcut directly on your Windows Desktop!
+                    Click the 3 vertical dots in the top-right corner &rarr;{' '}
+                    <span className="text-white font-semibold">Save and share</span> /{' '}
+                    <span className="text-white font-semibold">Apps</span> &rarr;{' '}
+                    <span className="text-amber-300 font-semibold">Install Just Spuds...</span>
                   </p>
                 </div>
               </div>

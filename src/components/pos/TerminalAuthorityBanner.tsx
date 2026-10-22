@@ -13,12 +13,14 @@ interface TerminalAuthorityBannerProps {
   actor: string
   requireManagerAuth: (title: string, desc: string, onSuccess: (mgr: string) => void) => void
   onClaimed?: () => void
+  onOpenSoftwareModal?: () => void
 }
 
 export default function TerminalAuthorityBanner({
   actor,
   requireManagerAuth,
   onClaimed,
+  onOpenSoftwareModal,
 }: TerminalAuthorityBannerProps) {
   const [masterInfo, setMasterInfo] = useState<MasterTerminalInfo | null>(() => getMasterTerminalInfo())
   const [isMaster, setIsMaster] = useState(() => isMasterTerminal())
@@ -45,16 +47,27 @@ export default function TerminalAuthorityBanner({
             No Master Till registered yet. Register this machine ({getLocalDeviceName()}) as the official counter till to prevent conflicts.
           </span>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            claimMasterTerminal(actor)
-            onClaimed?.()
-          }}
-          className="rounded-lg bg-amber-400 px-3 py-1 font-body text-[11px] font-black uppercase tracking-wider text-ink hover:bg-amber-300 shadow transition"
-        >
-          Claim As Master Till ✓
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenSoftwareModal && (
+            <button
+              type="button"
+              onClick={onOpenSoftwareModal}
+              className="rounded-lg border border-amber-400/40 bg-amber-400/20 px-2.5 py-1 font-body text-[11px] font-bold text-amber-200 hover:bg-amber-400 hover:text-slate-950 transition"
+            >
+              Station Setup &amp; Software
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              claimMasterTerminal(actor)
+              onClaimed?.()
+            }}
+            className="rounded-lg bg-amber-400 px-3 py-1 font-body text-[11px] font-black uppercase tracking-wider text-ink hover:bg-amber-300 shadow transition"
+          >
+            Claim As Master Till ✓
+          </button>
+        </div>
       </div>
     )
   }
@@ -71,23 +84,34 @@ export default function TerminalAuthorityBanner({
           </span>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={() => {
-          requireManagerAuth(
-            'Transfer Master Till',
-            `Transfer master register authority from "${masterInfo.name}" to this device (${getLocalDeviceName()})`,
-            (mgr) => {
-              releaseMasterTerminal(mgr)
-              claimMasterTerminal(mgr)
-              onClaimed?.()
-            }
-          )
-        }}
-        className="rounded-lg border border-rose-400/50 bg-rose-600 px-3 py-1 font-body text-[11px] font-black uppercase tracking-wider text-white hover:bg-rose-500 shadow-glow transition shrink-0"
-      >
-        Transfer Master Authority 🔑
-      </button>
+      <div className="flex items-center gap-2">
+        {onOpenSoftwareModal && (
+          <button
+            type="button"
+            onClick={onOpenSoftwareModal}
+            className="rounded-lg border border-rose-400/40 bg-rose-900/40 px-2.5 py-1 font-body text-[11px] font-bold text-rose-200 hover:bg-rose-800 transition"
+          >
+            Station Software
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            requireManagerAuth(
+              'Transfer Master Till',
+              `Transfer master register authority from "${masterInfo.name}" to this device (${getLocalDeviceName()})`,
+              (mgr) => {
+                releaseMasterTerminal(mgr)
+                claimMasterTerminal(mgr)
+                onClaimed?.()
+              }
+            )
+          }}
+          className="rounded-lg border border-rose-400/50 bg-rose-600 px-3 py-1 font-body text-[11px] font-black uppercase tracking-wider text-white hover:bg-rose-500 shadow-glow transition shrink-0"
+        >
+          Transfer Master Authority 🔑
+        </button>
+      </div>
     </div>
   )
 }

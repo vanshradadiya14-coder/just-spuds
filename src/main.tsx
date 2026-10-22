@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { startCloudSync } from './services/cloudSync'
+import './services/installPromptStore'
 import './index.css'
 
 // Automatically clear any lingering legacy demo sessions or demo orders from client storage

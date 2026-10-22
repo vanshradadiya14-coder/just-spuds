@@ -87,7 +87,7 @@ import { buildEndOfDayReport, type EndOfDayReport } from '../services/endOfDayRe
 import ThermalReceipt from '../components/ThermalReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
-import InstallAppButton from '../components/InstallAppButton'
+import TerminalSoftwareEnrollmentModal from '../components/pos/TerminalSoftwareEnrollmentModal'
 import TerminalAuthorityBanner from '../components/pos/TerminalAuthorityBanner'
 
 const REJECTION_REASON_PRESETS = [
@@ -221,6 +221,7 @@ export default function StaffPOSPage() {
   const [heldTickets, setHeldTickets] = useState<HeldTicket[]>(() => getHeldTickets())
   const [myClock, setMyClock] = useState<TimeclockEntry | undefined>(undefined)
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
+  const [showSoftwareModal, setShowSoftwareModal] = useState(false)
 
   const actor = user?.name || 'Staff Cashier'
   const tillName = tillSettings.tillName || 'Till 1'
@@ -1732,7 +1733,15 @@ export default function StaffPOSPage() {
             )}
           </button>
 
-          <InstallAppButton />
+          <button
+            type="button"
+            onClick={() => setShowSoftwareModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/15 px-2.5 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-slate-950 transition shadow-sm"
+            title="Terminal Hardware Station, Standalone Software & Offline Launchers"
+          >
+            <span>🛡️</span>
+            <span className="hidden sm:inline">Station &amp; Software</span>
+          </button>
           <FullscreenButton />
           <button type="button" onClick={logout} className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50" title="Lock till" aria-label="Lock till">
             🔒
@@ -1744,6 +1753,7 @@ export default function StaffPOSPage() {
         actor={actor}
         requireManagerAuth={requireManagerAuth}
         onClaimed={() => setFlash('Master register authority claimed on this system!')}
+        onOpenSoftwareModal={() => setShowSoftwareModal(true)}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -2609,6 +2619,12 @@ export default function StaffPOSPage() {
       )}
 
       {isCustomItemModalOpen && <CustomItemModal onClose={() => setIsCustomItemModalOpen(false)} onAddCustomItem={handleAddCustomLineItem} />}
+
+      <TerminalSoftwareEnrollmentModal
+        isOpen={showSoftwareModal}
+        onClose={() => setShowSoftwareModal(false)}
+        onFlash={(msg) => setFlash(msg)}
+      />
     </div>
   )
 }
