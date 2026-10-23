@@ -4,16 +4,16 @@ JUST SPUDS AYLESBURY - ACTIVE LIVE PREVIEW & TILL LINK
 
 1. Live Public Tunnel Link (Accessible worldwide):
    Main Storefront:
-   https://vertical-org-choir-screens.trycloudflare.com
+   https://yacht-rubber-nicole-biol.trycloudflare.com
 
    Staff POS & EPOS Till Terminal (staff PIN — never write PINs in this file):
-   https://vertical-org-choir-screens.trycloudflare.com/pos
+   https://yacht-rubber-nicole-biol.trycloudflare.com/pos
 
    Customer-Facing Display (CFD Second Screen):
-   https://vertical-org-choir-screens.trycloudflare.com/cfd
+   https://yacht-rubber-nicole-biol.trycloudflare.com/cfd
 
    Kitchen Display System (KDS):
-   https://vertical-org-choir-screens.trycloudflare.com/staff
+   https://yacht-rubber-nicole-biol.trycloudflare.com/staff
 
 2. Permanent Production Domain (Vercel Global CDN):
    https://www.justspuds.uk
