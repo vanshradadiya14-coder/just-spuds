@@ -38,7 +38,7 @@ export default function HomePage() {
 
       {/* Build teaser */}
       <section className="on-dark relative overflow-hidden bg-ink-stock py-24 sm:py-36 border-t border-amber-500/15">
-        <Backdrop tone="dark" grid={false} spotlight intensity={1.3} particles3D={true} />
+        <Backdrop tone="dark" grid={false} spotlight intensity={1.1} />
         {/* Glowing Hearth Ambient Pool */}
         <div className="pointer-events-none absolute -top-32 right-1/4 h-[450px] w-[450px] rounded-full bg-gradient-to-br from-amber-400/20 to-amber-600/10 blur-[120px]" />
         <div className="relative mx-auto grid max-w-[1400px] items-center gap-12 px-5 sm:px-8 lg:grid-cols-2">

@@ -8,6 +8,7 @@ import ItemModal from '../components/ItemModal'
 import Builder from '../components/Builder'
 import FulfillmentSwitcher from '../components/FulfillmentSwitcher'
 import ReorderWidget from '../components/ReorderWidget'
+import AllergenMatrixModal from '../components/AllergenMatrixModal'
 import {
   ALLERGY_NOTICE, MEAL_DEAL, type CategoryId, type Product,
 } from '../data/menu'
@@ -32,6 +33,7 @@ const FILTER_TAGS = [
 
 export default function MenuPage() {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false)
+  const [isAllergenModalOpen, setIsAllergenModalOpen] = useState(false)
   const [products, setProducts] = useState<Product[]>(() => getOnlineProducts())
   const activeCategories = getCategories()
 
@@ -234,8 +236,18 @@ export default function MenuPage() {
                   )}
                 </div>
 
-                {/* Quick Dietary Filter Tags */}
+                {/* Quick Dietary Filter Tags & Natasha's Law Guide */}
                 <div className="no-scrollbar -mx-4 flex items-center gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsAllergenModalOpen(true)}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-400/60 bg-amber-500/15 px-3.5 py-1.5 font-body text-[11px] font-black uppercase tracking-wider text-amber-900 hover:bg-amber-400 hover:text-ink transition shadow-xs"
+                    title="View Natasha's Law 14 UK Food Allergens Matrix"
+                  >
+                    <span>🛡️</span>
+                    <span>14 UK Allergens Matrix</span>
+                  </button>
+
                   {FILTER_TAGS.map((f) => (
                     <button
                       key={f.id}
@@ -651,6 +663,12 @@ export default function MenuPage() {
         product={selectedProduct}
         isOpen={Boolean(selectedProduct)}
         onClose={() => setSelectedProduct(null)}
+      />
+
+      {/* Natasha's Law & 14 UK Food Allergens Matrix Modal */}
+      <AllergenMatrixModal
+        isOpen={isAllergenModalOpen}
+        onClose={() => setIsAllergenModalOpen(false)}
       />
     </>
   )

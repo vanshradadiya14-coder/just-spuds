@@ -10,6 +10,8 @@ import ActiveOrderBanner from './ActiveOrderBanner'
 import PromoBar from './PromoBar'
 import StoreStatusBanner from './StoreStatusBanner'
 import CommandPalette from './CommandPalette'
+import AllergenMatrixModal from './AllergenMatrixModal'
+import LoyaltyModal from './LoyaltyModal'
 
 const LINKS = [
   { to: '/', label: 'Home' },
@@ -39,6 +41,8 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [isAllergenModalOpen, setIsAllergenModalOpen] = useState(false)
+  const [isLoyaltyModalOpen, setIsLoyaltyModalOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(getCurrentUser())
   const portal = portalLinkFor(currentUser?.role)
   const headerRef = useCssVarHeight<HTMLElement>('--header-h')
@@ -145,6 +149,28 @@ export default function Navbar() {
                 <span>Delivery</span>
               </button>
             </div>
+
+            {/* Natasha's Law Allergen Matrix Guide */}
+            <button
+              type="button"
+              onClick={() => setIsAllergenModalOpen(true)}
+              className="hidden xl:inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-white/80 hover:bg-white/10 hover:text-white transition font-body text-[11px] font-bold"
+              title="Natasha's Law 14 UK Food Allergens Guide"
+            >
+              <span>🛡️</span>
+              <span>Allergens</span>
+            </button>
+
+            {/* Spud Club Loyalty Rewards */}
+            <button
+              type="button"
+              onClick={() => setIsLoyaltyModalOpen(true)}
+              className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-amber-300 hover:bg-amber-400 hover:text-ink transition font-body text-[11px] font-bold shadow-sm"
+              title="The Spud Club VIP Stamp Card & Rewards"
+            >
+              <span>🥔</span>
+              <span>Rewards</span>
+            </button>
 
             {/* Customer Sign In / Account Button */}
             <button
@@ -291,6 +317,18 @@ export default function Navbar() {
         isOpen={isSearchOpen}
         onOpen={() => setIsSearchOpen(true)}
         onClose={() => setIsSearchOpen(false)}
+      />
+
+      {/* Natasha's Law & 14 UK Food Allergens Matrix Modal */}
+      <AllergenMatrixModal
+        isOpen={isAllergenModalOpen}
+        onClose={() => setIsAllergenModalOpen(false)}
+      />
+
+      {/* The Spud Club VIP Stamp Card & Rewards Modal */}
+      <LoyaltyModal
+        isOpen={isLoyaltyModalOpen}
+        onClose={() => setIsLoyaltyModalOpen(false)}
       />
     </>
   )

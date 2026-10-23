@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Wordmark } from './Brand'
 import { SITE, MAPS_SEARCH_URL } from '../data/site'
 import { getBusinessDetails } from '../services/menuStore'
 import { getOpeningHours } from '../hooks/useOpeningHours'
 import { resetCookieChoice } from './CookieConsent'
+import AllergenMatrixModal from './AllergenMatrixModal'
+import LoyaltyModal from './LoyaltyModal'
 
 // Staff/admin portals are deliberately not linked from the public storefront —
 // they're reached directly at /staff and /admin, gated by the PIN screen there.
@@ -16,6 +19,8 @@ const NAV = [
 ]
 
 export default function Footer() {
+  const [isAllergenOpen, setIsAllergenOpen] = useState(false)
+  const [isLoyaltyOpen, setIsLoyaltyOpen] = useState(false)
   const business = getBusinessDetails()
   // Only real profile pages — a link to instagram.com's homepage helps nobody.
   const socials = [
@@ -37,6 +42,24 @@ export default function Footer() {
                   <Link to={l.to} className="ul-draw font-body text-[13px] text-white/65 transition-colors hover:text-white">{l.label}</Link>
                 </li>
               ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setIsAllergenOpen(true)}
+                  className="ul-draw font-body text-[13px] text-white/65 transition-colors hover:text-amber-400 text-left"
+                >
+                  🛡️ 14 UK Allergens Guide
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setIsLoyaltyOpen(true)}
+                  className="ul-draw font-body text-[13px] text-white/65 transition-colors hover:text-amber-400 text-left"
+                >
+                  🥔 Spud Club VIP Rewards
+                </button>
+              </li>
             </ul>
           </nav>
 
@@ -84,6 +107,16 @@ export default function Footer() {
           </p>
         </div>
       </div>
+
+      <AllergenMatrixModal
+        isOpen={isAllergenOpen}
+        onClose={() => setIsAllergenOpen(false)}
+      />
+
+      <LoyaltyModal
+        isOpen={isLoyaltyOpen}
+        onClose={() => setIsLoyaltyOpen(false)}
+      />
     </footer>
   )
 }

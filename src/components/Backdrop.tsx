@@ -13,7 +13,7 @@ import Canvas3D from './Canvas3D'
  *  4. a hairline measure grid for structural proportion.
  */
 export default function Backdrop({
-  tone = 'dark', grid = true, spotlight = true, gl = false, intensity = 1, particles3D = true,
+  tone = 'dark', grid = false, spotlight = true, gl = false, intensity = 1, particles3D = false,
 }: {
   tone?: 'dark' | 'light'
   grid?: boolean

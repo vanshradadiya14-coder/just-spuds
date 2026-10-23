@@ -285,15 +285,22 @@ export default function TicketCard({
             )}
           </div>
 
-          <span className="font-body text-[10px] uppercase font-bold">
-            {ord.payment.status === 'paid' ? (
-              <span className="text-emerald-400">✓ PAID ({gbp(ord.payment.total)})</span>
-            ) : ord.fulfilment === 'delivery' ? (
-              <span className="text-amber-400">🛵 DRIVER COLLECTS {gbp(ord.payment.total)}</span>
-            ) : (
-              <span className="text-amber-400">🛍️ COLLECT {gbp(ord.payment.total)} AT COUNTER</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {ord.payment.promoCode && (
+              <span className="rounded-md border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 font-body text-[10px] font-black uppercase tracking-wider text-amber-300 shadow-xs">
+                🎟️ {ord.payment.promoCode} (-{gbp(ord.payment.discount || 0)})
+              </span>
             )}
-          </span>
+            <span className="font-body text-[10px] uppercase font-bold">
+              {ord.payment.status === 'paid' ? (
+                <span className="text-emerald-400">✓ PAID ({gbp(ord.payment.total)})</span>
+              ) : ord.fulfilment === 'delivery' ? (
+                <span className="text-amber-400">🛵 DRIVER COLLECTS {gbp(ord.payment.total)}</span>
+              ) : (
+                <span className="text-amber-400">🛍️ COLLECT {gbp(ord.payment.total)} AT COUNTER</span>
+              )}
+            </span>
+          </div>
         </div>
 
         {/* 1-Click Ticket Status & Decision Action Bar */}

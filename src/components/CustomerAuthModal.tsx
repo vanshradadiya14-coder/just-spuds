@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getCurrentUser, loginWithGoogle, logout, subscribeAuth, type AuthUser } from '../services/authStore'
 import { getCustomerPlacedOrderIds, getActiveCustomerOrderId } from '../services/orderStore'
+import { getLoyaltyState, subscribeLoyalty, type LoyaltyState } from '../services/loyaltyStore'
+import LoyaltyModal from './LoyaltyModal'
 
 interface CustomerAuthModalProps {
   isOpen: boolean
@@ -13,11 +15,17 @@ export default function CustomerAuthModal({ isOpen, onClose }: CustomerAuthModal
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [loyalty, setLoyalty] = useState<LoyaltyState>(() => getLoyaltyState())
+  const [isLoyaltyOpen, setIsLoyaltyOpen] = useState(false)
 
   useEffect(() => {
     setUser(getCurrentUser())
-    const unsub = subscribeAuth((u) => setUser(u))
-    return unsub
+    const unsubAuth = subscribeAuth((u) => setUser(u))
+    const unsubLoyalty = subscribeLoyalty(setLoyalty)
+    return () => {
+      unsubAuth()
+      unsubLoyalty()
+    }
   }, [])
 
   if (!isOpen) return null
@@ -118,14 +126,23 @@ export default function CustomerAuthModal({ isOpen, onClose }: CustomerAuthModal
 
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-amber-400/20 text-center font-body">
                   <div className="rounded-xl bg-white p-2.5 shadow-xs">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Spud Rewards</p>
-                    <p className="text-lg font-black text-amber-600">🥔 150 Pts</p>
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Spud Points</p>
+                    <p className="text-lg font-black text-amber-600">🥔 {loyalty.points} Pts</p>
                   </div>
                   <div className="rounded-xl bg-white p-2.5 shadow-xs">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Orders Placed</p>
-                    <p className="text-lg font-black text-ink">📦 {orderCount} Orders</p>
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stamp Card</p>
+                    <p className="text-lg font-black text-ink">{loyalty.stamps} / 6 ({orderCount} Total)</p>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsLoyaltyOpen(true)}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 py-2.5 px-4 font-body text-xs font-black uppercase tracking-wider text-ink shadow-sm hover:bg-amber-300 transition active:scale-95"
+                >
+                  <span>🥔</span>
+                  <span>View Stamp Card &amp; Claim Rewards</span>
+                </button>
               </div>
 
               {/* Active Order Quick Link */}
@@ -230,6 +247,11 @@ export default function CustomerAuthModal({ isOpen, onClose }: CustomerAuthModal
           )}
         </div>
       </div>
+
+      <LoyaltyModal
+        isOpen={isLoyaltyOpen}
+        onClose={() => setIsLoyaltyOpen(false)}
+      />
     </div>
   )
 }

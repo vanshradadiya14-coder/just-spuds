@@ -11,6 +11,7 @@ import { validateDeliveryPostcode } from '../data/deliveryZones'
 import { getNotificationPermission, requestNotificationPermission } from '../services/notificationService'
 import { getProductById, isProductSoldOut } from '../services/menuStore'
 import { getCurrentUser, loginWithGoogle, subscribeAuth, type AuthUser } from '../services/authStore'
+import { addOrderLoyalty } from '../services/loyaltyStore'
 interface CheckoutModalProps {
   isOpen: boolean
   onClose: () => void
@@ -222,6 +223,9 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
         }))
       }
       
+      // Award customer points & digital stamps in The Spud Club
+      addOrderLoyalty(grandTotal)
+
       clear()
       onClose()
       closeCart()

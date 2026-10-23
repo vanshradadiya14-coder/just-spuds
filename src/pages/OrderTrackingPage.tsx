@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getBusinessDetails } from '../services/menuStore'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
@@ -143,6 +143,29 @@ export default function OrderTrackingPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>(order?.review?.tags || [])
   const [reviewSubmitted, setReviewSubmitted] = useState<boolean>(!!order?.review)
   const [reviewSavedMessage, setReviewSavedMessage] = useState<string | null>(null)
+  const prevStatusRef = useRef<string | null>(order?.status || null)
+
+  const playOrderChime = () => {
+    if (typeof window === 'undefined') return
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = new AudioCtx()
+      const now = ctx.currentTime
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(523.25, now) // C5
+      osc.frequency.setValueAtTime(659.25, now + 0.12) // E5
+      osc.frequency.setValueAtTime(783.99, now + 0.24) // G5
+      gain.gain.setValueAtTime(0.2, now)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now)
+      osc.stop(now + 0.65)
+    } catch {}
+  }
 
   useDocumentMeta({
     title: order ? `Track Order #${order.shortId} (${order.status.toUpperCase()})` : 'Track Your Order',
@@ -166,6 +189,10 @@ export default function OrderTrackingPage() {
       setOrder(found)
       if (found) {
         setIsAuthorized(isCustomerAuthorizedForOrder(found, isStaff))
+        if (prevStatusRef.current && prevStatusRef.current !== found.status) {
+          playOrderChime()
+        }
+        prevStatusRef.current = found.status
       }
     })
     return unsub
@@ -586,6 +613,64 @@ export default function OrderTrackingPage() {
               <span className="font-mono text-2xl sm:text-3xl font-black tracking-widest text-ink">
                 {order.deliveryDetails.deliveryPin}
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* STORE PICKUP COUNTER PASS & DIRECT STORE NAVIGATION */}
+        {!isDelivery && !isOffTrack && !isComplete && (
+          <div className="rounded-3xl border-2 border-amber-400/50 bg-gradient-to-r from-amber-500/15 via-amber-400/10 to-amber-500/5 p-6 mb-8 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-amber-400 text-3xl text-ink font-bold shadow-glow">
+                  🛍️
+                </span>
+                <div>
+                  <span className="font-body text-[10px] font-black uppercase tracking-widest text-amber-800 block">
+                    Counter Pickup Pass &bull; Market Square, Aylesbury
+                  </span>
+                  <h3 className="display text-2xl font-bold text-ink">
+                    Order #{order.shortId}
+                  </h3>
+                  <p className="font-body text-xs text-slate-600">
+                    Present this collection pass at our hot potato counter when arriving at the shop.
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-2xl border-2 border-dashed border-amber-400 bg-white p-3.5 text-center shrink-0 shadow-sm">
+                <span className="font-mono text-3xl font-black text-amber-950 tracking-wider block">
+                  #{order.shortId}
+                </span>
+                <span className="block font-body text-[9px] uppercase tracking-wider text-slate-400 mt-0.5">
+                  Collection Ticket
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Directions to Shop */}
+            <div className="pt-3 border-t border-amber-300/40 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs font-body text-slate-700">
+                <span>📍</span>
+                <span className="font-semibold">{getBusinessDetails().address}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href="https://www.google.com/maps/search/?api=1&query=Just+Spuds+Market+Square+Aylesbury+HP20+1SN"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 font-body text-xs font-bold text-white hover:bg-slate-800 transition shadow-sm active:scale-95"
+                >
+                  <span>🗺️ Google Maps Directions</span>
+                </a>
+                <a
+                  href="https://maps.apple.com/?daddr=Market+Square,+Aylesbury+HP20+1SN"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-ink/20 bg-white px-4 py-2 font-body text-xs font-bold text-ink hover:bg-paper transition active:scale-95"
+                >
+                  <span>🍏 Apple Maps</span>
+                </a>
+              </div>
             </div>
           </div>
         )}

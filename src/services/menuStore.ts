@@ -92,6 +92,34 @@ const DEFAULT_PROMOS: PromoCode[] = [
     description: 'Free Meal Deal Upgrade (£1.95 discount)',
     active: true,
   },
+  {
+    code: 'EXTRACHEESE',
+    discountPence: 100,
+    minOrderPence: 500,
+    description: 'Spud Club Reward: Free Melted British Cheddar Scoop (£1.00 off)',
+    active: true,
+  },
+  {
+    code: 'FREEDRINK',
+    discountPence: 275,
+    minOrderPence: 500,
+    description: 'Spud Club Reward: Free Barista Coffee or Cold Drink (£2.75 off)',
+    active: true,
+  },
+  {
+    code: 'FREESIDE',
+    discountPence: 150,
+    minOrderPence: 500,
+    description: 'Spud Club Reward: Free Crunchy Slaw or Crisps Side (£1.50 off)',
+    active: true,
+  },
+  {
+    code: 'FREESPUD',
+    discountPence: 650,
+    minOrderPence: 650,
+    description: 'Spud Club Reward: Free Handcrafted King Edward Spud (£6.50 off)',
+    active: true,
+  },
 ]
 
 const defaultDailyHours = { openTime: '11:00', closeTime: '22:00', isClosed: false }
@@ -556,7 +584,20 @@ export function getPromoCodes(): PromoCode[] {
       localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(DEFAULT_PROMOS))
       return DEFAULT_PROMOS
     }
-    return JSON.parse(raw)
+    const stored: PromoCode[] = JSON.parse(raw)
+    const existingCodes = new Set(stored.map((p) => p.code.toUpperCase()))
+    let hasNew = false
+    const merged = [...stored]
+    for (const def of DEFAULT_PROMOS) {
+      if (!existingCodes.has(def.code.toUpperCase())) {
+        merged.push(def)
+        hasNew = true
+      }
+    }
+    if (hasNew) {
+      localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(merged))
+    }
+    return merged
   } catch {
     return DEFAULT_PROMOS
   }

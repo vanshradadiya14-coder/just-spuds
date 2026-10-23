@@ -42,7 +42,7 @@ export default function Range() {
 
   return (
     <section className="relative overflow-hidden bg-stock py-28 sm:py-40">
-      <Backdrop tone="light" spotlight intensity={0.65} particles3D={true} />
+      <Backdrop tone="light" spotlight intensity={0.65} />
       {/* Radiant Ambient Honey & Hearth Pools */}
       <div className="pointer-events-none absolute -top-40 right-1/4 h-[550px] w-[550px] rounded-full bg-gradient-to-br from-amber-400/20 via-amber-200/15 to-transparent blur-[130px]" />
       <div className="pointer-events-none absolute bottom-20 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/15 to-transparent blur-[120px]" />
