@@ -6,7 +6,7 @@ import { SITE } from '../data/site'
 import { MEAL_DEAL } from '../data/menu'
 import { getBusinessDetails } from '../services/menuStore'
 import { orderVat } from '../services/vat'
-import { lineExtras, mealDrinkName, mealSnackName, modifierText, saucesText } from '../utils/lineText'
+import { lineExtras, mealDrinkName, mealSnackName, modifierText, saladsText, saucesText } from '../utils/lineText'
 import { parseKitchenNotes } from '../utils/kitchenNotes'
 
 interface ThermalReceiptProps {
@@ -135,6 +135,13 @@ export default function ThermalReceipt({ order, onClose, isModal = true }: Therm
                   <span>{gbp(x.unit * x.count * line.qty)}</span>
                 </div>
               ))}
+
+              {/* Salads */}
+              {line.salads && line.salads.length > 0 && (
+                <p className="pl-4 text-[11px] font-bold">
+                  Salad: {saladsText(line)}
+                </p>
+              )}
 
               {/* Sauces */}
               {line.sauces && line.sauces.length > 0 && (

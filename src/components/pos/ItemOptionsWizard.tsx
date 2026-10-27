@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MEAL_DEAL, extrasFor, optionLabel, type Product } from '../../data/menu'
+import { FRESH_SALAD_OPTIONS, MEAL_DEAL, extrasFor, optionLabel, type Product } from '../../data/menu'
 import { getSauces } from '../../services/menuStore'
 import { playPOSTouchTone } from '../../services/printerBridge'
 import type { CartLine, CartLineModifier } from '../../hooks/useCart'
 import { gbp } from '../../utils/format'
+import { stationForLine } from '../../utils/lineText'
 
 /**
- * EPOS-style item pop-up: Complimentary → Toppings → Sauces → Make It A Meal,
- * with Previous / Next and an Add button that is always one tap away.
+ * EPOS-style item pop-up: Complimentary → Toppings → Fresh Salad → Sauces → Make It A Meal,
+ * with Previous / Next, an Express single-screen toggle for high-speed cashiers,
+ * and an Add button that is always one tap away.
  *
  * Prices come from the shop's menu (the same topping list the website uses),
  * so a topping costs the same here, online and on the end-of-day report.
  */
 
 type Butter = 'real' | 'garlic' | 'vegan' | 'none'
-type StepId = 'free' | 'toppings' | 'sauces' | 'meal'
+type StepId = 'free' | 'toppings' | 'salads' | 'sauces' | 'meal'
+
+const SALAD_ELIGIBLE_CATEGORIES = new Set(['SPUDS', 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS'])
+const WIZARD_MODE_KEY = 'just_spuds_pos_wizard_mode_v1'
 
 const BUTTERS: { id: Butter; label: string }[] = [
   { id: 'real', label: 'Real butter' },
@@ -43,7 +48,7 @@ const KITCHEN_REQUESTS: Record<string, string[]> = {
 }
 
 export const stationFor = (category: string): CartLine['station'] =>
-  category === 'SPUDS' ? 'spuds' : category === 'PANINIS' || category === 'WRAPS' || category === 'RICE_BOXES' ? 'grill' : category === 'BAGUETTES' || category === 'SALADS' ? 'pass' : 'drinks'
+  stationForLine({ category: category as Product['category'] })
 
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
@@ -68,6 +73,7 @@ export interface ItemOptionsWizardProps {
 export default function ItemOptionsWizard({ product, initial, onClose, onConfirm }: ItemOptionsWizardProps) {
   const extras = useMemo(() => extrasFor(product), [product])
   const sauces = useMemo(() => (product.sauces ? getSauces() : []), [product])
+  const hasSalads = SALAD_ELIGIBLE_CATEGORIES.has(product.category)
   const leaveOffChoices = useMemo(() => {
     const names = [...baseToppingNames(product), ...(LEAVE_OFF[product.category] || [])]
     return names.filter((n, i) => names.findIndex((x) => x.toLowerCase() === n.toLowerCase()) === i)
@@ -93,19 +99,37 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
   const [note, setNote] = useState(() => initialNoteParts.filter((p) => !requestChoices.includes(p) && p !== '🔥 RUSH ORDER').join(', '))
   const [rush, setRush] = useState(Boolean(initial?.isRush))
   const [toppings, setToppings] = useState<string[]>(() => [...(initial?.extras || [])])
+  const [chosenSalads, setChosenSalads] = useState<string[]>(() => [...(initial?.salads || [])])
   const [chosenSauces, setChosenSauces] = useState<string[]>(() => [...(initial?.sauces || [])])
   const [meal, setMeal] = useState(Boolean(initial?.meal))
   const [mealDrink, setMealDrink] = useState<string>(initial?.mealDrink || MEAL_DEAL.drinkOptions[0].id)
   const [mealSnack, setMealSnack] = useState<string>(initial?.mealSnack || MEAL_DEAL.snackOptions[0].id)
   const [qty, setQty] = useState(initial?.qty || 1)
+  const [expressMode, setExpressMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(WIZARD_MODE_KEY) === 'express'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleExpressMode = (next: boolean) => {
+    setExpressMode(next)
+    try {
+      localStorage.setItem(WIZARD_MODE_KEY, next ? 'express' : 'tabs')
+    } catch {
+      // ignore storage errors
+    }
+  }
 
   const steps = useMemo(() => {
     const list: { id: StepId; label: string }[] = [{ id: 'free', label: 'Complimentary' }]
     if (extras.length > 0) list.push({ id: 'toppings', label: product.category === 'SPUDS' ? 'Spud Toppings' : 'Extras' })
+    if (hasSalads) list.push({ id: 'salads', label: 'Fresh Salad' })
     if (sauces.length > 0) list.push({ id: 'sauces', label: 'Sauces' })
     if (product.mealEligible) list.push({ id: 'meal', label: 'Make It A Meal' })
     return list
-  }, [extras.length, sauces.length, product])
+  }, [extras.length, hasSalads, sauces.length, product])
   // Opens on Complimentary like the EPOS till staff already know.
   const [stepIndex, setStepIndex] = useState(0)
   const step = steps[Math.min(stepIndex, steps.length - 1)]
@@ -137,6 +161,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
       name: product.name,
       base: product.price,
       extras: toppings,
+      salads: chosenSalads.length > 0 ? chosenSalads : undefined,
       sauces: chosenSauces,
       meal,
       mealDrink: meal ? mealDrink : undefined,
@@ -186,43 +211,76 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
             <h3 className="display truncate text-xl font-black">{product.name}</h3>
             <p className="text-xs text-white/50">{gbp(product.price)} each</p>
           </div>
-          <div className="flex items-center gap-1.5" aria-label="Quantity">
-            <button type="button" onClick={() => setQty((q) => Math.max(1, q - 1))} className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-lg font-black hover:bg-white/15" aria-label="One fewer">
-              −
-            </button>
-            <span className="w-8 text-center font-mono text-lg font-black">{qty}</span>
-            <button type="button" onClick={() => setQty((q) => Math.min(50, q + 1))} className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-lg font-black hover:bg-white/15" aria-label="One more">
-              +
-            </button>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-xl border border-white/15 bg-white/5 p-0.5 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => toggleExpressMode(false)}
+                className={`rounded-lg px-2.5 py-1.5 transition ${!expressMode ? 'bg-amber-400 text-ink font-black' : 'text-white/60 hover:text-white'}`}
+                title="Stepped tab layout"
+              >
+                📑 Tabs
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleExpressMode(true)}
+                className={`rounded-lg px-2.5 py-1.5 transition ${expressMode ? 'bg-amber-400 text-ink font-black' : 'text-white/60 hover:text-white'}`}
+                title="All modifiers on a single screen for fast counter entry"
+              >
+                ⚡ Express
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5" aria-label="Quantity">
+              <button type="button" onClick={() => setQty((q) => Math.max(1, q - 1))} className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-lg font-black hover:bg-white/15" aria-label="One fewer">
+                −
+              </button>
+              <span className="w-8 text-center font-mono text-lg font-black">{qty}</span>
+              <button type="button" onClick={() => setQty((q) => Math.min(50, q + 1))} className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-lg font-black hover:bg-white/15" aria-label="One more">
+                +
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Tabs (EPOS: Complimentary · Spud Toppings · Sauces · Make It A Meal) */}
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-white/10 px-2 scrollbar-none" role="tablist">
-          {steps.map((s, i) => {
-            const active = s.id === step.id
-            const badge =
-              s.id === 'toppings' ? toppings.length : s.id === 'sauces' ? chosenSauces.length : s.id === 'meal' ? (meal ? 1 : 0) : leaveOff.length + requests.length + (butter !== 'real' && product.category === 'SPUDS' ? 1 : 0)
-            return (
-              <button
-                key={s.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setStepIndex(i)}
-                className={`relative shrink-0 whitespace-nowrap px-3 py-3 text-xs font-bold tracking-wide transition sm:px-4 ${active ? 'text-amber-300' : 'text-white/60 hover:text-white'}`}
-              >
-                {s.label}
-                {badge > 0 && <span className="ml-1.5 rounded-full bg-amber-400 px-1.5 font-mono text-[10px] font-black text-ink">{badge}</span>}
-                {active && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-amber-400" />}
-              </button>
-            )
-          })}
-        </div>
+        {/* Tabs (EPOS: Complimentary · Spud Toppings · Fresh Salad · Sauces · Make It A Meal) */}
+        {!expressMode && (
+          <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-white/10 px-2 scrollbar-none" role="tablist">
+            {steps.map((s, i) => {
+              const active = s.id === step.id
+              const badge =
+                s.id === 'toppings'
+                  ? toppings.length
+                  : s.id === 'salads'
+                  ? chosenSalads.length
+                  : s.id === 'sauces'
+                  ? chosenSauces.length
+                  : s.id === 'meal'
+                  ? meal
+                    ? 1
+                    : 0
+                  : leaveOff.length + requests.length + (butter !== 'real' && product.category === 'SPUDS' ? 1 : 0)
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setStepIndex(i)}
+                  className={`relative shrink-0 whitespace-nowrap px-3 py-3 text-xs font-bold tracking-wide transition sm:px-4 ${active ? 'text-amber-300' : 'text-white/60 hover:text-white'}`}
+                >
+                  {s.label}
+                  {badge > 0 && <span className="ml-1.5 rounded-full bg-amber-400 px-1.5 font-mono text-[10px] font-black text-ink">{badge}</span>}
+                  {active && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-amber-400" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
 
-        <div className="min-h-[14rem] flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
-          {step.id === 'free' && (
-            <>
+        <div className="min-h-[14rem] flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
+          {(expressMode || step.id === 'free') && (
+            <div className="space-y-4">
+              {expressMode && <p className="text-[11px] font-black uppercase tracking-wider text-amber-300">1. Complimentary &amp; Prep</p>}
               {product.category === 'SPUDS' && (
                 <div>
                   <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-white/50">Butter</p>
@@ -272,11 +330,12 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
                   🔥 {rush ? 'Rush' : 'Rush?'}
                 </button>
               </div>
-            </>
+            </div>
           )}
 
-          {step.id === 'toppings' && (
-            <>
+          {(expressMode ? extras.length > 0 : step.id === 'toppings') && (
+            <div className="space-y-2">
+              {expressMode && <p className="border-t border-white/10 pt-3 text-[11px] font-black uppercase tracking-wider text-amber-300">2. Paid Toppings &amp; Fillings</p>}
               <p className="text-[11px] text-white/50">Tap to add. Tap again for a double portion.</p>
               {/* Equal-height tiles; a picked topping shows its count and a − in its own column, never over the name. */}
               <div className="grid auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-3">
@@ -317,11 +376,50 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
                   )
                 })}
               </div>
-            </>
+            </div>
           )}
 
-          {step.id === 'sauces' && (
-            <>
+          {(expressMode ? hasSalads : step.id === 'salads') && (
+            <div className="space-y-2.5">
+              <div className={expressMode ? 'border-t border-white/10 pt-3 flex flex-wrap items-center justify-between gap-2' : 'flex flex-wrap items-center justify-between gap-2'}>
+                <p className="text-[11px] font-black uppercase tracking-wider text-emerald-300">
+                  🥗 Fresh Salad Selection (Free)
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setChosenSalads(FRESH_SALAD_OPTIONS.map((s) => s.id))}
+                    className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-black text-ink hover:bg-emerald-400 transition"
+                  >
+                    All Salads 🥗
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChosenSalads([])}
+                    className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-bold text-white/70 hover:bg-white/10 hover:text-white transition"
+                  >
+                    No Salad ✕
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {FRESH_SALAD_OPTIONS.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setChosenSalads((prev) => toggle(prev, s.id))}
+                    className={chip(chosenSalads.includes(s.id), 'emerald')}
+                  >
+                    {chosenSalads.includes(s.id) ? `✓ ${s.label}` : s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(expressMode ? sauces.length > 0 : step.id === 'sauces') && (
+            <div className="space-y-2">
+              {expressMode && <p className="border-t border-white/10 pt-3 text-[11px] font-black uppercase tracking-wider text-amber-300">🥫 Complimentary Sauces</p>}
               <p className="text-[11px] text-white/50">Sauces are free.</p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {sauces.map((s) => (
@@ -330,11 +428,12 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
                   </button>
                 ))}
               </div>
-            </>
+            </div>
           )}
 
-          {step.id === 'meal' && (
-            <>
+          {(expressMode ? product.mealEligible : step.id === 'meal') && (
+            <div className="space-y-3">
+              {expressMode && <p className="border-t border-white/10 pt-3 text-[11px] font-black uppercase tracking-wider text-amber-300">🥤 Meal Deal Upgrade</p>}
               <button
                 type="button"
                 onClick={() => setMeal((v) => !v)}
@@ -370,7 +469,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
                   </div>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
 
@@ -380,12 +479,12 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
             Close
           </button>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {stepIndex > 0 && (
+            {!expressMode && stepIndex > 0 && (
               <button type="button" onClick={() => setStepIndex((i) => Math.max(0, i - 1))} className="rounded-xl border border-white/20 px-4 py-3 text-xs font-black uppercase tracking-wider text-white hover:bg-white/10">
                 Previous
               </button>
             )}
-            {stepIndex < steps.length - 1 && (
+            {!expressMode && stepIndex < steps.length - 1 && (
               <button type="button" onClick={() => setStepIndex((i) => Math.min(steps.length - 1, i + 1))} className="rounded-xl border border-sky-400/50 bg-sky-500/15 px-4 py-3 text-xs font-black uppercase tracking-wider text-sky-200 hover:bg-sky-500/25">
                 Next
               </button>

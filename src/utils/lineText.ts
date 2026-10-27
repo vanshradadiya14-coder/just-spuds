@@ -68,3 +68,44 @@ export function modifierText(m: CartLineModifier): string {
       return m.name
   }
 }
+
+export type KitchenStation = 'spuds' | 'grill' | 'pass' | 'drinks'
+
+export const KITCHEN_STATIONS: { id: 'all' | KitchenStation; label: string; shortLabel: string; icon: string }[] = [
+  { id: 'all', label: 'All Stations', shortLabel: 'All', icon: '👨‍🍳' },
+  { id: 'spuds', label: 'Spud Ovens', shortLabel: 'Ovens', icon: '🥔' },
+  { id: 'grill', label: 'Grill & Hot Pass', shortLabel: 'Grill', icon: '🔥' },
+  { id: 'pass', label: 'Cold Pass & Deli', shortLabel: 'Cold Pass', icon: '🥗' },
+  { id: 'drinks', label: 'Drinks & Front', shortLabel: 'Drinks', icon: '🥤' },
+]
+
+/**
+ * Resolves the kitchen prep station for any order line, whether placed online
+ * (where `line.station` is omitted) or rung up on the counter till.
+ */
+export function stationForLine(line: Pick<CartLine, 'category' | 'station'>): KitchenStation {
+  if (line.station && ['spuds', 'grill', 'pass', 'drinks'].includes(line.station)) {
+    return line.station
+  }
+  switch (line.category) {
+    case 'COLD_DRINKS':
+    case 'HOT_DRINKS':
+    case 'MILKSHAKES_SMOOTHIES':
+      return 'drinks'
+    case 'BAGUETTES':
+    case 'SALADS':
+    case 'DESSERTS':
+    case 'CRISPS_SNACKS':
+      return 'pass'
+    case 'PANINIS':
+    case 'WRAPS':
+    case 'RICE_BOXES':
+    case 'CHICKEN_STRIPS':
+    case 'HOT_SIDES':
+    case 'KIDS_MEALS':
+      return 'grill'
+    default:
+      return 'spuds'
+  }
+}
+

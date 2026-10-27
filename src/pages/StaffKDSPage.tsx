@@ -11,6 +11,7 @@ import {
   setKitchenPause,
   resumeKitchenOrders,
   subscribeKitchenPause,
+  getKDSColumnBucket,
   PAUSE_REASON_PRESETS,
   type Order,
   type OrderStatus,
@@ -49,6 +50,7 @@ import MenuPopover from '../components/MenuPopover'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
 import { cx, gbp } from '../utils/format'
+import { KITCHEN_STATIONS, stationForLine, type KitchenStation } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { useFullscreen } from '../hooks/useFullscreen'
 type StaffTab = 'active' | 'new' | 'baking' | 'dispatched' | 'completed' | 'stock'
@@ -74,6 +76,8 @@ export default function StaffKDSPage() {
   const [activeTab, setActiveTab] = useState<StaffTab>('active')
   const [stockOverrides, setStockOverrides] = useState<Record<string, boolean>>({})
   const [searchQuery, setSearchQuery] = useState('')
+  const [stationFilter, setStationFilter] = useState<'all' | KitchenStation>('all')
+  const [channelFilter, setChannelFilter] = useState<'all' | 'delivery' | 'pickup' | 'scheduled'>('all')
   const [kitchenPause, setKitchenPauseState] = useState<KitchenPauseState>(() => getKitchenPauseState())
 
   // Incoming online order alarm — rings until someone accepts / declines / silences.
@@ -360,11 +364,33 @@ export default function StaffKDSPage() {
   // Changing a ticket's payment or total is a manager action, not a line cook's.
   const canManualFix = hasRole(user, MANAGEMENT_ROLES)
 
-  // Active counts
-  const newOrders = orders.filter((o) => ['placed', 'accepted'].includes(o.status))
-  const bakingOrders = orders.filter((o) => ['baking', 'quality_check'].includes(o.status))
-  const dispatchedOrders = orders.filter((o) => ['out_for_delivery', 'ready_for_pickup'].includes(o.status))
-  const completedOrders = orders.filter((o) => ['delivered', 'collected'].includes(o.status))
+  // Filtered & station-routed orders
+  const filteredOrders = orders.filter((o) => {
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      const matchesOrder =
+        o.shortId.toLowerCase().includes(q) ||
+        o.customer.name.toLowerCase().includes(q) ||
+        o.customer.phone.toLowerCase().includes(q) ||
+        (o.customer.postcode || '').toLowerCase().includes(q) ||
+        o.lines.some((l) => l.name.toLowerCase().includes(q))
+      if (!matchesOrder) return false
+    }
+    if (stationFilter !== 'all') {
+      const hasStationItem = o.lines.some((l) => stationForLine(l) === stationFilter)
+      if (!hasStationItem) return false
+    }
+    if (channelFilter === 'delivery' && o.fulfilment !== 'delivery') return false
+    if (channelFilter === 'pickup' && o.fulfilment !== 'pickup') return false
+    if (channelFilter === 'scheduled' && !o.isScheduled) return false
+    return true
+  })
+
+  // Active counts using canonical KDS column buckets
+  const newOrders = filteredOrders.filter((o) => getKDSColumnBucket(o.status) === 'new')
+  const bakingOrders = filteredOrders.filter((o) => getKDSColumnBucket(o.status) === 'cooking')
+  const dispatchedOrders = filteredOrders.filter((o) => getKDSColumnBucket(o.status) === 'dispatch')
+  const completedOrders = filteredOrders.filter((o) => getKDSColumnBucket(o.status) === 'completed')
 
   // Filter list
   return (
@@ -570,48 +596,99 @@ export default function StaffKDSPage() {
         {/* KITCHEN KANBAN BOARD */}
         <div className="flex flex-col flex-1 min-h-0">
           {/* Top Control Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4 mb-4">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-display font-bold text-white whitespace-nowrap">Live Kitchen Flow</h2>
-              <div className="flex items-center gap-2 whitespace-nowrap">
-                <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-xs text-white/60 font-body uppercase tracking-wider font-bold">Live Sync</span>
+          <div className="flex flex-col gap-3 border-b border-white/10 pb-4 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h2 className="text-xl font-display font-bold text-white whitespace-nowrap">Live Kitchen Flow</h2>
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                  <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-xs text-white/60 font-body uppercase tracking-wider font-bold">Live Sync</span>
+                </div>
+              </div>
+
+              <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1 sm:justify-end">
+                <div className="relative flex-1 sm:flex-none sm:w-64 min-w-0">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search order #, customer, item..."
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2 font-body text-xs text-white placeholder:text-white/40 focus:border-amber-400 focus:outline-none"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-2 text-white/50 hover:text-white text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab(activeTab === 'stock' ? 'active' : 'stock')}
+                  className={cx(
+                    'shrink-0 whitespace-nowrap rounded-xl px-4 py-2 font-body text-xs font-black uppercase tracking-wider transition shadow-glow',
+                    activeTab === 'stock' ? 'bg-amber-400 text-ink' : 'bg-white/10 text-white hover:bg-white/20'
+                  )}
+                >
+                  📦 86 Items / Stock
+                </button>
               </div>
             </div>
 
-            <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1 sm:justify-end">
-              <div className="relative flex-1 sm:flex-none sm:w-64 min-w-0">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by order #, customer..."
-                  className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-2 font-body text-xs text-white placeholder:text-white/40 focus:border-amber-400 focus:outline-none"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-2 text-white/50 hover:text-white text-xs"
-                  >
-                    ✕
-                  </button>
-                )}
+            {/* Station Routing & Channel Filters */}
+            {activeTab !== 'stock' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Kitchen station filter">
+                  {KITCHEN_STATIONS.map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setStationFilter(st.id)}
+                      className={cx(
+                        'rounded-xl border px-3 py-1.5 font-body text-xs font-bold transition flex items-center gap-1.5',
+                        stationFilter === st.id
+                          ? 'border-amber-400 bg-amber-400 text-ink font-black shadow'
+                          : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white'
+                      )}
+                    >
+                      <span>{st.icon}</span>
+                      <span>{st.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Fulfilment channel filter">
+                  {(
+                    [
+                      { id: 'all', label: 'All Channels' },
+                      { id: 'delivery', label: '🛵 Delivery' },
+                      { id: 'pickup', label: '🛍️ Pick Up' },
+                      { id: 'scheduled', label: '📅 Pre-Orders' },
+                    ] as const
+                  ).map((ch) => (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => setChannelFilter(ch.id)}
+                      className={cx(
+                        'rounded-xl border px-3 py-1.5 font-body text-[11px] font-bold transition',
+                        channelFilter === ch.id
+                          ? 'border-emerald-400 bg-emerald-400/20 text-emerald-200 font-black'
+                          : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
+                      )}
+                    >
+                      {ch.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab(activeTab === 'stock' ? 'active' : 'stock')}
-                className={cx(
-                  'shrink-0 whitespace-nowrap rounded-xl px-4 py-2 font-body text-xs font-black uppercase tracking-wider transition shadow-glow',
-                  activeTab === 'stock' ? 'bg-amber-400 text-ink' : 'bg-white/10 text-white hover:bg-white/20'
-                )}
-              >
-                📦 86 Items / Stock
-              </button>
-            </div>
+            )}
           </div>
 
-          {activeTab !== 'stock' && <AllDayBar orders={orders} />}
+          {activeTab !== 'stock' && <AllDayBar orders={filteredOrders} stationFilter={stationFilter} />}
 
           {activeTab === 'stock' ? (
             /* TAB: STOCK AVAILABILITY */
@@ -683,6 +760,7 @@ export default function StaffKDSPage() {
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
                         setFixingOrder={canManualFix ? setFixingOrder : undefined}
+                        stationFilter={stationFilter}
                       />
                     ))}
                     {newOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No new tickets</div>}
@@ -709,6 +787,7 @@ export default function StaffKDSPage() {
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
                         setFixingOrder={canManualFix ? setFixingOrder : undefined}
+                        stationFilter={stationFilter}
                       />
                     ))}
                     {bakingOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">Oven is empty</div>}
@@ -735,6 +814,7 @@ export default function StaffKDSPage() {
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
                         setFixingOrder={canManualFix ? setFixingOrder : undefined}
+                        stationFilter={stationFilter}
                       />
                     ))}
                     {dispatchedOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No waiting dispatches</div>}
@@ -761,6 +841,7 @@ export default function StaffKDSPage() {
                         setPrintingOrder={setPrintingOrder} 
                         sendOrderToDrivers={sendOrderToDrivers} 
                         setFixingOrder={canManualFix ? setFixingOrder : undefined}
+                        stationFilter={stationFilter}
                       />
                     ))}
                     {completedOrders.length === 0 && <div className="text-center text-white/30 text-xs py-8 font-body italic border border-dashed border-white/10 rounded-xl">No recent completions</div>}

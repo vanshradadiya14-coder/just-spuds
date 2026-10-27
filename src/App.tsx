@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { Suspense, lazy } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
@@ -20,7 +20,7 @@ const CustomerFacingDisplayPage = lazy(() => import('./pages/CustomerFacingDispl
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
 import ProtectedRoute from './components/ProtectedRoute'
-import { MANAGEMENT_ROLES, SHOP_FLOOR_ROLES } from './services/authStore'
+import { ADMIN_CONSOLE_ROLES, MANAGEMENT_ROLES, SHOP_FLOOR_ROLES } from './services/authStore'
 
 export type SubdomainMode = 'admin' | 'pos' | 'storefront'
 
@@ -39,26 +39,8 @@ export function detectSubdomain(): SubdomainMode {
   return 'storefront'
 }
 
-function ExternalRedirect({ to }: { to: string }) {
-  useEffect(() => {
-    window.location.replace(to)
-  }, [to])
-  return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center p-4">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-      <p className="font-bold text-sm text-slate-200">Redirecting to secure portal...</p>
-      <a href={to} className="text-xs text-amber-400 hover:underline">
-        Click here if not redirected automatically ({to})
-      </a>
-    </div>
-  )
-}
-
 export default function App() {
   const subdomain = detectSubdomain()
-  const isProduction =
-    typeof window !== 'undefined' &&
-    (window.location.hostname === 'justspuds.uk' || window.location.hostname === 'www.justspuds.uk')
 
   return (
     <ErrorBoundary>
@@ -77,7 +59,7 @@ export default function App() {
                 <Route
                   path="/"
                   element={
-                    <ProtectedRoute allowedRoles={MANAGEMENT_ROLES} portalName="Management Admin Console" loginTab="admin">
+                    <ProtectedRoute allowedRoles={ADMIN_CONSOLE_ROLES} requireAdminVault portalName="Management Admin Console" loginTab="admin">
                       <AdminPage />
                     </ProtectedRoute>
                   }
@@ -85,7 +67,7 @@ export default function App() {
                 <Route
                   path="admin/*"
                   element={
-                    <ProtectedRoute allowedRoles={MANAGEMENT_ROLES} portalName="Management Admin Console" loginTab="admin">
+                    <ProtectedRoute allowedRoles={ADMIN_CONSOLE_ROLES} requireAdminVault portalName="Management Admin Console" loginTab="admin">
                       <AdminPage />
                     </ProtectedRoute>
                   }
@@ -94,7 +76,7 @@ export default function App() {
                 <Route
                   path="*"
                   element={
-                    <ProtectedRoute allowedRoles={MANAGEMENT_ROLES} portalName="Management Admin Console" loginTab="admin">
+                    <ProtectedRoute allowedRoles={ADMIN_CONSOLE_ROLES} requireAdminVault portalName="Management Admin Console" loginTab="admin">
                       <AdminPage />
                     </ProtectedRoute>
                   }
@@ -106,7 +88,7 @@ export default function App() {
                 <Route
                   path="/"
                   element={
-                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
                       <StaffPOSPage />
                     </ProtectedRoute>
                   }
@@ -114,7 +96,7 @@ export default function App() {
                 <Route
                   path="pos/*"
                   element={
-                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
                       <StaffPOSPage />
                     </ProtectedRoute>
                   }
@@ -122,7 +104,7 @@ export default function App() {
                 <Route
                   path="till/*"
                   element={
-                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
                       <StaffPOSPage />
                     </ProtectedRoute>
                   }
@@ -130,25 +112,39 @@ export default function App() {
                 <Route
                   path="staff/*"
                   element={
-                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Kitchen Display System" loginTab="staff">
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Kitchen Display System" loginTab="staff">
                       <StaffKDSPage />
                     </ProtectedRoute>
                   }
                 />
-                <Route path="cfd" element={<CustomerFacingDisplayPage />} />
-                <Route path="customer-display" element={<CustomerFacingDisplayPage />} />
+                <Route
+                  path="cfd"
+                  element={
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Customer Facing Display" loginTab="staff">
+                      <CustomerFacingDisplayPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="customer-display"
+                  element={
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Customer Facing Display" loginTab="staff">
+                      <CustomerFacingDisplayPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="login" element={<LoginPage />} />
                 <Route
                   path="*"
                   element={
-                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
                       <StaffPOSPage />
                     </ProtectedRoute>
                   }
                 />
               </Routes>
             ) : (
-              /* SUBDOMAIN 3: PUBLIC CUSTOMER STOREFRONT (www.justspuds.uk / justspuds.uk) */
+              /* SUBDOMAIN 3: PUBLIC CUSTOMER STOREFRONT & SECURED PORTAL PATHS */
               <Routes>
                 <Route element={<Layout />}>
                   <Route index element={<HomePage />} />
@@ -162,57 +158,54 @@ export default function App() {
                   <Route path="*" element={<NotFoundPage />} />
                 </Route>
 
-                {/* Redirect production storefront URLs to their dedicated subdomains */}
                 <Route
                   path="admin"
                   element={
-                    isProduction ? (
-                      <ExternalRedirect to="https://admin.justspuds.uk" />
-                    ) : (
-                      <ProtectedRoute allowedRoles={MANAGEMENT_ROLES} portalName="Management Admin Console" loginTab="admin">
-                        <AdminPage />
-                      </ProtectedRoute>
-                    )
+                    <ProtectedRoute allowedRoles={ADMIN_CONSOLE_ROLES} requireAdminVault portalName="Management Admin Console" loginTab="admin">
+                      <AdminPage />
+                    </ProtectedRoute>
                   }
                 />
                 <Route
                   path="pos"
                   element={
-                    isProduction ? (
-                      <ExternalRedirect to="https://pos.justspuds.uk" />
-                    ) : (
-                      <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
-                        <StaffPOSPage />
-                      </ProtectedRoute>
-                    )
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
+                      <StaffPOSPage />
+                    </ProtectedRoute>
                   }
                 />
                 <Route
                   path="till"
                   element={
-                    isProduction ? (
-                      <ExternalRedirect to="https://pos.justspuds.uk" />
-                    ) : (
-                      <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Food Till & POS" loginTab="staff">
-                        <StaffPOSPage />
-                      </ProtectedRoute>
-                    )
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
+                      <StaffPOSPage />
+                    </ProtectedRoute>
                   }
                 />
                 <Route
                   path="staff"
                   element={
-                    isProduction ? (
-                      <ExternalRedirect to="https://pos.justspuds.uk" />
-                    ) : (
-                      <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} portalName="Kitchen Display System" loginTab="staff">
-                        <StaffKDSPage />
-                      </ProtectedRoute>
-                    )
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Kitchen Display System" loginTab="staff">
+                      <StaffKDSPage />
+                    </ProtectedRoute>
                   }
                 />
-                <Route path="cfd" element={<CustomerFacingDisplayPage />} />
-                <Route path="customer-display" element={<CustomerFacingDisplayPage />} />
+                <Route
+                  path="cfd"
+                  element={
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Customer Facing Display" loginTab="staff">
+                      <CustomerFacingDisplayPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="customer-display"
+                  element={
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Customer Facing Display" loginTab="staff">
+                      <CustomerFacingDisplayPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="driver"
                   element={

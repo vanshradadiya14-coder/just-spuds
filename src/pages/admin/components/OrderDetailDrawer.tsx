@@ -33,7 +33,7 @@ export default function OrderDetailDrawer({ order, onClose, onAdvance, onPrint, 
 
   const isDelivery = order.fulfilment === 'delivery'
   const next = nextStepLabel(order)
-  const nextStatus = order.status === 'placed' ? 'accepted' : order.status === 'accepted' ? 'baking' : order.status === 'baking' ? (isDelivery ? 'out_for_delivery' : 'ready_for_pickup') : order.status === 'out_for_delivery' ? 'delivered' : order.status === 'ready_for_pickup' ? 'collected' : order.status
+  const nextStatus = order.status === 'placed' ? 'accepted' : order.status === 'accepted' ? 'baking' : order.status === 'baking' || order.status === 'quality_check' ? (isDelivery ? 'out_for_delivery' : 'ready_for_pickup') : order.status === 'out_for_delivery' ? 'delivered' : order.status === 'ready_for_pickup' ? 'collected' : order.status
   const blocker = next ? getStatusChangeBlocker(order, nextStatus) : null
   const isFinal = ['delivered', 'collected', 'cancelled'].includes(order.status)
   const src = sourceBadge(order)

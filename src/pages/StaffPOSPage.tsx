@@ -29,6 +29,7 @@ import {
   recordReceiptDelivery,
   getMenuStockOverrides,
   subscribeStock,
+  getKDSColumnBucket,
   type Order,
   type OrderStatus,
   type PaymentMethod,
@@ -59,6 +60,7 @@ import {
   hasRole,
   verifyManagerPin,
   isManagerOrAdmin,
+  isAdminConsoleRole,
   SHOP_FLOOR_ROLES,
   type AuthUser,
 } from '../services/authStore'
@@ -67,7 +69,7 @@ import { logAuditEvent } from '../services/auditStore'
 import { extrasFor, MEAL_DEAL, type Product } from '../data/menu'
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { gbp } from '../utils/format'
-import { lineExtras, mealText, modifierText, saucesText } from '../utils/lineText'
+import { lineExtras, mealText, modifierText, saladsText, saucesText, KITCHEN_STATIONS, stationForLine, type KitchenStation } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { playPOSTouchTone } from '../services/printerBridge'
 import TillSettingsModal from '../components/TillSettingsModal'
@@ -201,6 +203,7 @@ export default function StaffPOSPage() {
   // Unified System Mode: 'till' = Till Register | 'kitchen' = Live Kitchen Display Flow
   const [terminalMode, setTerminalMode] = useState<'till' | 'kitchen'>('till')
   const [kdsSearchQuery, setKdsSearchQuery] = useState('')
+  const [kdsStationFilter, setKdsStationFilter] = useState<'all' | KitchenStation>('all')
   const [alertSoundState, setAlertSoundState] = useState<AlertSoundState>({ sounding: false, blocked: false, deferredToOtherTab: false, engine: null, enabled: true })
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null)
   const [rejectionPresetId, setRejectionPresetId] = useState(REJECTION_REASON_PRESETS[0].id)
@@ -375,32 +378,27 @@ export default function StaffPOSPage() {
           o.shortId?.toLowerCase().includes(q) ||
           o.id.toLowerCase().includes(q) ||
           o.customer?.name?.toLowerCase().includes(q) ||
-          o.customer?.phone?.includes(q)
+          o.customer?.phone?.includes(q) ||
+          o.lines?.some((l) => l.name.toLowerCase().includes(q))
       )
     }
+    if (kdsStationFilter !== 'all') {
+      list = list.filter((o) => o.lines?.some((l) => stationForLine(l) === kdsStationFilter))
+    }
     return list
-  }, [allOrdersList, kdsSearchQuery])
+  }, [allOrdersList, kdsSearchQuery, kdsStationFilter])
 
-  const newOrders = useMemo(() => filteredKdsOrders.filter((o) => o.status === 'placed'), [filteredKdsOrders])
+  const newOrders = useMemo(() => filteredKdsOrders.filter((o) => getKDSColumnBucket(o.status) === 'new'), [filteredKdsOrders])
   const bakingOrders = useMemo(
-    () => filteredKdsOrders.filter((o) => o.status === 'accepted' || o.status === 'baking' || o.status === 'quality_check'),
+    () => filteredKdsOrders.filter((o) => getKDSColumnBucket(o.status) === 'cooking'),
     [filteredKdsOrders]
   )
   const dispatchedOrders = useMemo(
-    () =>
-      filteredKdsOrders.filter(
-        (o) =>
-          o.status === 'ready_for_delivery' ||
-          o.status === 'driver_assigned' ||
-          o.status === 'driver_arrived_at_store' ||
-          o.status === 'order_collected' ||
-          o.status === 'out_for_delivery' ||
-          o.status === 'ready_for_pickup'
-      ),
+    () => filteredKdsOrders.filter((o) => getKDSColumnBucket(o.status) === 'dispatch'),
     [filteredKdsOrders]
   )
   const completedOrders = useMemo(
-    () => filteredKdsOrders.filter((o) => o.status === 'delivered' || o.status === 'collected'),
+    () => filteredKdsOrders.filter((o) => getKDSColumnBucket(o.status) === 'completed'),
     [filteredKdsOrders]
   )
   const activeKitchenCount = newOrders.length + bakingOrders.length
@@ -1416,6 +1414,7 @@ export default function StaffPOSPage() {
                     <span className="font-mono text-white/50">{gbp(x.unit * x.count)}</span>
                   </p>
                 ))}
+                {line.salads && line.salads.length > 0 && <p className="pl-3 text-[11px] text-emerald-300/90">🥗 Salad: {saladsText(line)}</p>}
                 {line.sauces.length > 0 && <p className="pl-3 text-[11px] text-amber-200/80">Sauce: {saucesText(line)}</p>}
                 {line.meal && (
                   <p className="pl-3 text-[11px] font-bold text-emerald-300 flex justify-between gap-2">
@@ -1780,7 +1779,24 @@ export default function StaffPOSPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1" role="group" aria-label="Kitchen station filter">
+                  {KITCHEN_STATIONS.map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setKdsStationFilter(st.id)}
+                      className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition flex items-center gap-1 ${
+                        kdsStationFilter === st.id
+                          ? 'border-amber-400 bg-amber-400 text-ink font-black'
+                          : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <span>{st.icon}</span>
+                      <span className="hidden xl:inline">{st.shortLabel}</span>
+                    </button>
+                  ))}
+                </div>
                 {cartLines.length > 0 && (
                   <button
                     type="button"
@@ -1824,7 +1840,12 @@ export default function StaffPOSPage() {
             </div>
 
             {/* All Day Summary Counter Bar */}
-            <AllDayBar orders={filteredKdsOrders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.status !== 'collected')} />
+            <div className="px-3 pt-2">
+              <AllDayBar
+                orders={filteredKdsOrders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.status !== 'collected')}
+                stationFilter={kdsStationFilter}
+              />
+            </div>
 
             {/* Kanban Columns */}
             <div className="flex-1 overflow-x-auto overflow-y-hidden p-3">
@@ -1849,6 +1870,7 @@ export default function StaffPOSPage() {
                         handleOpenRejectModal={handleOpenRejectModal}
                         setPrintingOrder={setReceiptOrder}
                         sendOrderToDrivers={sendOrderToDrivers}
+                        stationFilter={kdsStationFilter}
                       />
                     ))}
                     {newOrders.length === 0 && (
@@ -1877,6 +1899,7 @@ export default function StaffPOSPage() {
                         handleOpenRejectModal={handleOpenRejectModal}
                         setPrintingOrder={setReceiptOrder}
                         sendOrderToDrivers={sendOrderToDrivers}
+                        stationFilter={kdsStationFilter}
                       />
                     ))}
                     {bakingOrders.length === 0 && (
@@ -1905,6 +1928,7 @@ export default function StaffPOSPage() {
                         handleOpenRejectModal={handleOpenRejectModal}
                         setPrintingOrder={setReceiptOrder}
                         sendOrderToDrivers={sendOrderToDrivers}
+                        stationFilter={kdsStationFilter}
                       />
                     ))}
                     {dispatchedOrders.length === 0 && (
@@ -1933,6 +1957,7 @@ export default function StaffPOSPage() {
                         handleOpenRejectModal={handleOpenRejectModal}
                         setPrintingOrder={setReceiptOrder}
                         sendOrderToDrivers={sendOrderToDrivers}
+                        stationFilter={kdsStationFilter}
                       />
                     ))}
                     {completedOrders.length === 0 && (
@@ -2198,7 +2223,7 @@ export default function StaffPOSPage() {
           shiftNumber={shift.shiftNumber}
           floatPence={shift.startingFloat}
           canReprint={Boolean(lastOrder)}
-          isManager={isManagerOrAdmin(user?.role)}
+          isManager={isAdminConsoleRole(user?.role)}
           onAction={handleSideMenu}
           onClose={() => setIsSideMenuOpen(false)}
         />

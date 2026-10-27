@@ -150,14 +150,16 @@ export default function TillSideMenu({
           ))}
 
           <div>
-            <p className="px-2.5 pb-1 pt-1 text-[10px] font-black uppercase tracking-[0.2em] text-white/35">Back office</p>
-            <Link to="/admin" className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 hover:bg-white/10">
-              <span className="text-lg" aria-hidden>🏢</span>
-              <span>
-                <span className="block text-sm font-bold">Back office</span>
-                <span className="block text-[11px] text-white/45">Menu, prices, staff, reports{isManager ? '' : ' — manager PIN'}</span>
-              </span>
-            </Link>
+            <p className="px-2.5 pb-1 pt-1 text-[10px] font-black uppercase tracking-[0.2em] text-white/35">Stations &amp; Admin</p>
+            {isManager && (
+              <Link to="/admin" className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 hover:bg-white/10">
+                <span className="text-lg" aria-hidden>🛡️</span>
+                <span>
+                  <span className="block text-sm font-bold">Admin Vault</span>
+                  <span className="block text-[11px] text-white/45">Menu, prices, staff, reports — Admin PIN required</span>
+                </span>
+              </Link>
+            )}
             <Link to="/staff" className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 hover:bg-white/10">
               <span className="text-lg" aria-hidden>👨‍🍳</span>
               <span className="block text-sm font-bold">Kitchen screen</span>

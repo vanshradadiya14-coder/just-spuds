@@ -3,8 +3,9 @@ import { computeVat, isVatRegistered } from '../services/vat'
 import { Link } from 'react-router-dom'
 import { subscribeCFDState, type CFDTicketState, EMPTY_CFD_STATE } from '../services/cfdBus'
 import { lineUnitPrice } from '../hooks/useCart'
+import { MEAL_DEAL } from '../data/menu'
 import { gbp } from '../utils/format'
-import { extrasText, mealText, saucesText } from '../utils/lineText'
+import { extrasText, mealText, saladsText, saucesText } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { SITE } from '../data/site'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
@@ -97,7 +98,7 @@ export default function CustomerFacingDisplayPage() {
                 <span className="rounded-md bg-amber-400 px-2 py-0.5 text-[10px] font-black uppercase text-ink">
                   Deal Saver
                 </span>
-                <span className="font-mono text-xs font-bold text-amber-300">+£1.80 Only</span>
+                <span className="font-mono text-xs font-bold text-amber-300">+{gbp(MEAL_DEAL.price)} Only</span>
               </div>
               <h3 className="font-black text-sm text-white">Upgrade to a Meal Deal</h3>
               <p className="text-xs text-white/60">
@@ -180,10 +181,16 @@ export default function CustomerFacingDisplayPage() {
                         </div>
                       )}
 
-                      {/* Extras & Sauces */}
+                      {/* Extras, Salads & Sauces */}
                       {line.extras && line.extras.length > 0 && (
                         <p className="text-[11px] text-white/60 pl-8">
                           + {extrasText(line)}
+                        </p>
+                      )}
+
+                      {line.salads && line.salads.length > 0 && (
+                        <p className="text-[11px] text-emerald-300/90 pl-8">
+                          🥗 Salad: {saladsText(line)}
                         </p>
                       )}
 

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../../utils/format'
+import { extrasText, mealText, saladsText, saucesText } from '../../../utils/lineText'
 import { type Order } from '../../../services/orderStore'
 import OrderDetailDrawer from './OrderDetailDrawer'
 import { nextStepLabel, sourceBadge, statusTone } from './orderLabels'
@@ -157,9 +158,15 @@ export default function AdminLiveOrders({
                       {ord.lines.map((l, i) => (
                         <div key={i} className="text-[11px]">
                           <span className="font-bold text-white">{l.qty}x {l.name}</span>
-                          {l.meal && <span className="text-amber-400 font-bold ml-1">(Meal Deal)</span>}
+                          {l.meal && <span className="text-amber-400 font-bold ml-1">(Meal{mealText(l) ? `: ${mealText(l)}` : ''})</span>}
                           {l.extras.length > 0 && (
-                            <p className="text-[10px] text-white/60 truncate">+ {l.extras.join(', ')}</p>
+                            <p className="text-[10px] text-white/60 truncate">+ {extrasText(l)}</p>
+                          )}
+                          {l.salads && l.salads.length > 0 && (
+                            <p className="text-[10px] text-emerald-300/80 truncate">🥗 {saladsText(l)}</p>
+                          )}
+                          {l.sauces.length > 0 && (
+                            <p className="text-[10px] text-amber-200/70 truncate">🥫 {saucesText(l)}</p>
                           )}
                         </div>
                       ))}

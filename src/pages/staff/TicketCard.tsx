@@ -1,9 +1,26 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { cx, gbp } from '../../utils/format'
-import { getFirstOrderOfferCheck, getPriceCheck, getStatusChangeBlocker, type Order } from '../../services/orderStore'
+import {
+  getFirstOrderOfferCheck,
+  getOrderPrepTiming,
+  getPriceCheck,
+  getStatusChangeBlocker,
+  recallCompletedOrder,
+  toggleOrderLineChecked,
+  type Order,
+} from '../../services/orderStore'
 import { parseKitchenNotes } from '../../utils/kitchenNotes'
-import { extrasText, mealText, modifierText, saladsText, saucesText } from '../../utils/lineText'
+import {
+  extrasText,
+  KITCHEN_STATIONS,
+  mealText,
+  modifierText,
+  saladsText,
+  saucesText,
+  stationForLine,
+  type KitchenStation,
+} from '../../utils/lineText'
 
 export default function TicketCard({
   ord,
@@ -12,6 +29,7 @@ export default function TicketCard({
   setPrintingOrder,
   sendOrderToDrivers,
   setFixingOrder,
+  stationFilter = 'all',
 }: {
   ord: Order
   handleStatusChange: any
@@ -19,6 +37,7 @@ export default function TicketCard({
   setPrintingOrder: any
   sendOrderToDrivers: any
   setFixingOrder?: (o: Order) => void
+  stationFilter?: 'all' | KitchenStation
 }) {
   const isDelivery = ord.fulfilment === 'delivery'
   const isCancelled = ord.status === 'cancelled'
@@ -35,8 +54,15 @@ export default function TicketCard({
   const elapsedMs = Math.max(0, now - new Date(ord.createdAt).getTime())
   const elapsedMins = Math.floor(elapsedMs / 60000)
   const elapsedSecs = Math.floor((elapsedMs % 60000) / 1000)
-  const isLate = !isComplete && !isCancelled && elapsedMins >= 20
-  const isWarning = !isComplete && !isCancelled && elapsedMins >= 10 && elapsedMins < 20
+  const prepTiming = getOrderPrepTiming(ord, new Date(now))
+  const isLate = !isComplete && !isCancelled && prepTiming.isOverdue
+  const isWarning = !isComplete && !isCancelled && prepTiming.isWarn
+  const isScheduledHold = !isComplete && !isCancelled && prepTiming.isScheduledHold
+
+  const checkedSet = new Set(ord.checkedLineIds || [])
+  const checkedCount = ord.lines.filter((l) => checkedSet.has(l.lineId)).length
+  const totalLines = ord.lines.length
+  const allLinesPlated = totalLines > 0 && checkedCount === totalLines
 
   const source = ord.source
   const notes = parseKitchenNotes(ord.kitchenNotes)
@@ -52,9 +78,11 @@ export default function TicketCard({
           ? 'border-red-500 bg-gradient-to-b from-red-950/60 to-slate-900 ring-4 ring-red-500/50 shadow-red-950/50'
           : isCancelled
           ? 'border-red-500/40 bg-red-950/20'
+          : isScheduledHold
+          ? 'border-indigo-400/50 bg-gradient-to-b from-indigo-950/40 to-slate-900'
           : ord.status === 'placed'
           ? 'border-amber-400 bg-gradient-to-b from-amber-950/40 to-slate-900 ring-2 ring-amber-400/40'
-          : ord.status === 'baking'
+          : ord.status === 'baking' || ord.status === 'quality_check'
           ? 'border-orange-500/50 bg-gradient-to-b from-orange-950/30 to-slate-900'
           : 'border-white/10 bg-white/[0.04]'
       )}
@@ -68,18 +96,50 @@ export default function TicketCard({
               'px-2.5 py-1 rounded-xl text-xs font-black font-mono tracking-wider flex items-center gap-1.5 shadow-sm',
               isLate
                 ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                : isScheduledHold
+                ? 'bg-indigo-500/30 text-indigo-200 border border-indigo-400/40'
                 : isWarning
                 ? 'bg-amber-500 text-slate-950 ring-1 ring-amber-300'
                 : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
             )}
           >
-            <span>⏱️</span>
+            <span>{isScheduledHold ? '📅' : '⏱️'}</span>
             <span>
-              {elapsedMins}m {elapsedSecs < 10 ? '0' : ''}{elapsedSecs}s
+              {ord.isScheduled && (isScheduledHold || isWarning)
+                ? prepTiming.timerLabel
+                : `${elapsedMins}m ${elapsedSecs < 10 ? '0' : ''}${elapsedSecs}s`}
             </span>
-            {isLate && <span className="text-[10px] bg-white text-red-700 px-1 rounded uppercase font-black">LATE</span>}
+            {prepTiming.badgeLabel && (
+              <span
+                className={cx(
+                  'text-[10px] px-1 rounded uppercase font-black',
+                  isLate
+                    ? 'bg-white text-red-700'
+                    : isScheduledHold
+                    ? 'bg-indigo-400 text-slate-950'
+                    : 'bg-slate-950 text-amber-300'
+                )}
+              >
+                {prepTiming.badgeLabel}
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {!isCancelled && totalLines > 0 && (
+              <span
+                className={cx(
+                  'rounded px-1.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-wider border transition',
+                  allLinesPlated
+                    ? 'bg-emerald-500 text-slate-950 border-emerald-400'
+                    : checkedCount > 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-white/5 text-white/40 border-white/10'
+                )}
+                title="Tap items below as you plate or bag them"
+              >
+                ✓ {checkedCount}/{totalLines}
+              </span>
+            )}
             <span className="font-body text-[11px] text-white/50">
               {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
@@ -200,63 +260,114 @@ export default function TicketCard({
           </div>
         )}
 
-        {/* Food Lines List */}
-        <div className="space-y-3 divide-y divide-white/6">
-          {ord.lines.map((l) => (
-            <div key={l.lineId} className="pt-2.5 first:pt-0">
-              <div className="flex items-start justify-between text-sm font-bold text-white">
-                <div className="text-base font-bold text-white leading-tight">
-                  <span className="text-amber-400 mr-2 text-lg font-black">{l.qty}x</span>
-                  <span>{l.name}</span>
-                </div>
-              </div>
+        {/* Food Lines List — interactive check-off per item for kitchen assembly */}
+        <div className="space-y-2.5 divide-y divide-white/6">
+          {ord.lines.map((l) => {
+            const isChecked = checkedSet.has(l.lineId)
+            const lineStation = stationForLine(l)
+            const stationMeta = KITCHEN_STATIONS.find((s) => s.id === lineStation)
+            const isDimmedByStation = stationFilter !== 'all' && lineStation !== stationFilter
 
-              {/* Leave-offs and swaps from the till ("NO BUTTER", "GARLIC BUTTER") */}
-              {l.conversationalModifiers && l.conversationalModifiers.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1 pl-6">
-                  {l.conversationalModifiers.map((m, i) => (
+            return (
+              <div
+                key={l.lineId}
+                onClick={() => {
+                  if (!isCancelled && !isComplete) {
+                    toggleOrderLineChecked(ord.id, l.lineId)
+                  }
+                }}
+                role={!isCancelled && !isComplete ? 'button' : undefined}
+                tabIndex={!isCancelled && !isComplete ? 0 : undefined}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ' ') && !isCancelled && !isComplete) {
+                    e.preventDefault()
+                    toggleOrderLineChecked(ord.id, l.lineId)
+                  }
+                }}
+                title={!isCancelled && !isComplete ? 'Tap to toggle item plated / packed' : undefined}
+                className={cx(
+                  'pt-2.5 first:pt-0 rounded-xl transition select-none',
+                  !isCancelled && !isComplete && 'cursor-pointer hover:bg-white/[0.04] px-2 py-1.5 -mx-2',
+                  isChecked && 'opacity-55 bg-emerald-500/[0.06]',
+                  isDimmedByStation && 'opacity-35'
+                )}
+              >
+                <div className="flex items-start justify-between gap-2 text-sm font-bold text-white">
+                  <div className="flex items-start gap-2 text-base font-bold text-white leading-tight min-w-0">
+                    {!isCancelled && (
+                      <span
+                        className={cx(
+                          'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border text-[11px] font-black transition',
+                          isChecked
+                            ? 'border-emerald-400 bg-emerald-500 text-slate-950'
+                            : 'border-white/25 bg-white/5 text-transparent'
+                        )}
+                      >
+                        ✓
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <span className="text-amber-400 mr-2 text-lg font-black">{l.qty}x</span>
+                      <span className={cx(isChecked && 'line-through text-emerald-200')}>{l.name}</span>
+                    </div>
+                  </div>
+                  {stationMeta && (
                     <span
-                      key={i}
-                      className={`rounded-md px-2 py-0.5 font-body text-xs font-black uppercase tracking-wide ${m.type === 'no' ? 'bg-rose-500 text-white' : 'bg-white/15 text-white'}`}
+                      className="shrink-0 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 font-body text-[9px] font-bold uppercase tracking-wider text-white/60"
+                      title={`Station: ${stationMeta.label}`}
                     >
-                      {modifierText(m)}
+                      {stationMeta.icon} {stationMeta.shortLabel}
                     </span>
-                  ))}
+                  )}
                 </div>
-              )}
 
-              {l.extras && l.extras.length > 0 && (
-                <p className="font-body text-xs text-amber-200 mt-1 font-semibold pl-6">
-                  + {extrasText(l)}
-                </p>
-              )}
+                {/* Leave-offs and swaps from the till ("NO BUTTER", "GARLIC BUTTER") */}
+                {l.conversationalModifiers && l.conversationalModifiers.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1 pl-7">
+                    {l.conversationalModifiers.map((m, i) => (
+                      <span
+                        key={i}
+                        className={`rounded-md px-2 py-0.5 font-body text-xs font-black uppercase tracking-wide ${m.type === 'no' ? 'bg-rose-500 text-white' : 'bg-white/15 text-white'}`}
+                      >
+                        {modifierText(m)}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
-              {l.salads && l.salads.length > 0 && (
-                <p className="font-body text-xs text-emerald-300 font-semibold mt-0.5 pl-6">
-                  🥗 Salad: {saladsText(l)}
-                </p>
-              )}
+                {l.extras && l.extras.length > 0 && (
+                  <p className="font-body text-xs text-amber-200 mt-1 font-semibold pl-7">
+                    + {extrasText(l)}
+                  </p>
+                )}
 
-              {l.sauces && l.sauces.length > 0 && (
-                <p className="font-body text-xs text-amber-300 font-semibold mt-0.5 pl-6">
-                  🥫 Sauce: {saucesText(l)}
-                </p>
-              )}
+                {l.salads && l.salads.length > 0 && (
+                  <p className="font-body text-xs text-emerald-300 font-semibold mt-0.5 pl-7">
+                    🥗 Salad: {saladsText(l)}
+                  </p>
+                )}
 
-              {l.meal && (
-                <div className="mt-1.5 ml-6 inline-flex flex-wrap items-center gap-1.5 rounded-md bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300">
-                  <span>🥤 Meal Deal:</span>
-                  <span>{mealText(l) || 'drink + snack'}</span>
-                </div>
-              )}
+                {l.sauces && l.sauces.length > 0 && (
+                  <p className="font-body text-xs text-amber-300 font-semibold mt-0.5 pl-7">
+                    🥫 Sauce: {saucesText(l)}
+                  </p>
+                )}
 
-              {l.notes && (
-                <div className="mt-1 ml-6 rounded-lg bg-red-950/60 border border-red-500/40 px-2 py-0.5 inline-block text-xs font-bold text-red-200">
-                  ⚠️ Special: {l.notes}
-                </div>
-              )}
-            </div>
-          ))}
+                {l.meal && (
+                  <div className="mt-1.5 ml-7 inline-flex flex-wrap items-center gap-1.5 rounded-md bg-white/10 px-2.5 py-1 text-xs font-bold text-amber-300">
+                    <span>🥤 Meal Deal:</span>
+                    <span>{mealText(l) || 'drink + snack'}</span>
+                  </div>
+                )}
+
+                {l.notes && (
+                  <div className="mt-1 ml-7 rounded-lg bg-red-950/60 border border-red-500/40 px-2 py-0.5 inline-block text-xs font-bold text-red-200">
+                    ⚠️ Special: {l.notes}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -302,6 +413,21 @@ export default function TicketCard({
             </span>
           </div>
         </div>
+
+        {/* Completed Order Recall Button */}
+        {isComplete && (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => recallCompletedOrder(ord.id)}
+              className="w-full rounded-xl border border-white/15 bg-white/5 py-2.5 font-body text-xs font-bold text-white/75 hover:bg-white/15 hover:text-white transition flex items-center justify-center gap-1.5"
+              title="Bumped by mistake? Recall this ticket back to the active pass"
+            >
+              <span>↩️</span>
+              <span>Recall to Pass (Undo Bump)</span>
+            </button>
+          </div>
+        )}
 
         {/* 1-Click Ticket Status & Decision Action Bar */}
         {!isCancelled && !isComplete && (
@@ -349,9 +475,19 @@ export default function TicketCard({
               </div>
             )}
 
-            {ord.status === 'baking' && (
+            {(ord.status === 'baking' || ord.status === 'quality_check') && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
+                  {ord.status === 'baking' && (
+                    <button
+                      type="button"
+                      onClick={() => handleStatusChange(ord.id, 'quality_check')}
+                      className="rounded-xl border border-orange-400/40 bg-orange-500/15 px-3 py-3 font-body text-[11px] font-bold text-orange-200 hover:bg-orange-500/25 transition"
+                      title="Move to Quality Check & Bagging on the pass"
+                    >
+                      🔍 QC Pass
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() =>
@@ -385,32 +521,72 @@ export default function TicketCard({
                 <p className="text-[11px] text-white/60">
                   Dispatched to online Just Spuds couriers
                 </p>
+                <button
+                  type="button"
+                  onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
+                  className="w-full rounded-lg border border-amber-400/40 bg-amber-400/15 py-1.5 font-body text-[11px] font-bold text-amber-200 hover:bg-amber-400/25"
+                >
+                  📦 Handed to In-House Driver (Mark Out for Delivery)
+                </button>
               </div>
             )}
 
             {ord.status === 'driver_assigned' && (
-              <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-center space-y-1 font-body">
-                <span className="text-emerald-300 text-xs font-bold block">
-                  🛵 Driver Assigned: {ord.deliveryDetails?.assignedDriverName || ord.driver?.name}
-                </span>
-                <span className="text-[11px] text-white/60">
-                  {ord.deliveryDetails?.assignedDriverVehicle || 'Moped'} &bull; Heading to store
-                </span>
+              <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-center space-y-2 font-body">
+                <div>
+                  <span className="text-emerald-300 text-xs font-bold block">
+                    🛵 Driver Assigned: {ord.deliveryDetails?.assignedDriverName || ord.driver?.name}
+                  </span>
+                  <span className="text-[11px] text-white/60">
+                    {ord.deliveryDetails?.assignedDriverVehicle || 'Moped'} &bull; Heading to store
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
+                  className="w-full rounded-lg bg-emerald-500/20 border border-emerald-400/40 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/30"
+                >
+                  📦 Hand Food Over (Out for Delivery) &rarr;
+                </button>
               </div>
             )}
 
-            {ord.status === 'driver_arrived_at_store' && (
+            {(ord.status === 'driver_arrived_at_store' || ord.status === 'order_collected') && (
               <div className="space-y-2 font-body">
                 <div className="rounded-2xl border border-emerald-400 bg-emerald-500/20 p-2.5 text-center text-xs font-bold text-emerald-200 animate-bounce">
-                  📍 {ord.deliveryDetails?.assignedDriverName || 'Driver'} is at the counter!
+                  📍 {ord.deliveryDetails?.assignedDriverName || 'Driver'} {ord.status === 'order_collected' ? 'collected the bag!' : 'is at the counter!'}
                 </div>
                 <button
                   type="button"
                   onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
                   className="w-full rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink shadow hover:bg-amber-300"
                 >
-                  📦 Hand Food Over (Out for Delivery) &rarr;
+                  📦 Confirm Out for Delivery &rarr;
                 </button>
+              </div>
+            )}
+
+            {ord.status === 'failed_delivery' && (
+              <div className="space-y-2 font-body">
+                <div className="rounded-xl border border-red-500/50 bg-red-950/50 p-2.5 text-center text-xs font-bold text-red-200">
+                  🚨 Delivery Failed: {ord.deliveryDetails?.failedReason || 'Customer unreachable'}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => sendOrderToDrivers(ord.id)}
+                    className="rounded-xl bg-amber-400 py-2.5 text-xs font-black uppercase text-ink hover:bg-amber-300"
+                  >
+                    🔄 Re-Dispatch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRejectModal(ord)}
+                    className="rounded-xl border border-red-500/40 bg-red-950/40 py-2.5 text-xs font-bold uppercase text-red-300 hover:bg-red-900/60"
+                  >
+                    ✕ Cancel
+                  </button>
+                </div>
               </div>
             )}
 

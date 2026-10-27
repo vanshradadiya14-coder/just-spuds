@@ -60,8 +60,14 @@ export default function TerminalAuthorityBanner({
           <button
             type="button"
             onClick={() => {
-              claimMasterTerminal(actor)
-              onClaimed?.()
+              requireManagerAuth(
+                'Enroll Master Store Till',
+                `Enroll and bind this workstation (${getLocalDeviceName()}) as the official Master Counter Till`,
+                (mgr) => {
+                  claimMasterTerminal(mgr || actor)
+                  onClaimed?.()
+                },
+              )
             }}
             className="rounded-lg bg-amber-400 px-3 py-1 font-body text-[11px] font-black uppercase tracking-wider text-ink hover:bg-amber-300 shadow transition"
           >

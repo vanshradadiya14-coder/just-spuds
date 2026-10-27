@@ -494,7 +494,7 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
 
             {/* Step: Meal Deal Upgrade */}
             <div className="mt-8">
-              <Step n={availableExtras.length > 0 ? "4" : "3"} label="Make it a Meal Deal" hint="+£1.95 · Save £1.50" />
+              <Step n={availableExtras.length > 0 ? "5" : "4"} label="Make it a Meal Deal" hint="+£1.95 · Save £1.50" />
               <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 sm:p-5">
                 <label className="flex cursor-pointer items-start gap-3.5">
                   <input
@@ -616,10 +616,10 @@ export default function Builder({ embedded = false }: { embedded?: boolean } = {
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {(extras.length > 0 || sauces.length > 0 || meal) && (
+                  {(extras.length > 0 || salads.length > 0 || sauces.length > 0 || meal) && (
                     <button
                       type="button"
-                      onClick={() => { setExtras([]); setSauces([]); setMeal(false); setNotes(''); setActivePreset(null) }}
+                      onClick={() => { setExtras([]); setSalads([]); setSauces([]); setMeal(false); setNotes(''); setActivePreset(null) }}
                       className="font-body text-[11px] font-bold uppercase tracking-[0.14em] text-white/40 transition hover:text-white"
                     >
                       Reset

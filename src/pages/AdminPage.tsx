@@ -55,11 +55,11 @@ import {
 import {
   getCurrentUser,
   subscribeAuth,
-  loginWithPin,
+  loginAdminConsole,
   logout,
   hasRole,
   isPinTaken,
-  MANAGEMENT_ROLES,
+  ADMIN_CONSOLE_ROLES,
   type AuthUser,
 } from '../services/authStore'
 import {
@@ -248,7 +248,7 @@ export default function AdminPage() {
 
   const handleAdminPinSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const res = loginWithPin(adminPin, MANAGEMENT_ROLES)
+    const res = loginAdminConsole(adminPin)
     if (res.ok) {
       setAdminPin('')
       setAdminPinError(null)
@@ -258,7 +258,7 @@ export default function AdminPage() {
     }
   }
 
-  const isAuthorized = hasRole(user, MANAGEMENT_ROLES)
+  const isAuthorized = hasRole(user, ADMIN_CONSOLE_ROLES)
 
   // Detailed business analytics for overview tab
   const analytics = useMemo(() => {
@@ -811,13 +811,13 @@ export default function AdminPage() {
           </div>
           <h1 className="display text-2xl text-white font-bold">Admin Management Gate</h1>
           
-          {user && !hasRole(user, MANAGEMENT_ROLES) && user.role !== 'CUSTOMER' ? (
+          {user && !hasRole(user, ADMIN_CONSOLE_ROLES) && user.role !== 'CUSTOMER' ? (
             <p className="rounded-xl border border-amber-400/40 bg-amber-950/40 p-2.5 font-body text-xs text-amber-300 mt-2 mb-4 text-left">
-              ⚠️ <strong>Staff Account:</strong> Kitchen line cook accounts do not have permission to view revenue, audit logs, or edit menu pricing. Enter Manager or Admin PIN to elevate privileges.
+              ⚠️ <strong>Restricted Account:</strong> Non-admin staff accounts do not have permission to view revenue, audit logs, or edit menu pricing. Only the Store Admin / Owner PIN can unlock this console.
             </p>
           ) : (
             <p className="font-body text-xs text-white/60 mt-1 mb-6">
-              Enter a supervisor, manager or owner PIN to open sales, menu and staff controls.
+              Enter Store Admin / Owner PIN to unlock sales, menu and staff controls.
             </p>
           )}
 

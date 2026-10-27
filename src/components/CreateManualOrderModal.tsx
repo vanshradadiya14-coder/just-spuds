@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { getProducts } from '../services/menuStore'
-import { createManualCounterOrder, type Order, type PaymentMethod } from '../services/orderStore'
-import { type Product } from '../data/menu'
+import { getProducts, getSauces } from '../services/menuStore'
+import { createManualCounterOrder, type Order, type OrderSource, type PaymentMethod } from '../services/orderStore'
+import { getDeliverySettings } from '../services/deliverySettingsStore'
+import { extrasFor, FRESH_SALAD_OPTIONS, MEAL_DEAL, type Product } from '../data/menu'
 import { gbp, cx } from '../utils/format'
-import type { CartLine } from '../hooks/useCart'
+import { lineUnitPrice, type CartLine } from '../hooks/useCart'
+import { extrasText, mealText, saladsText, saucesText, stationForLine } from '../utils/lineText'
 
 interface CreateManualOrderModalProps {
   isOpen: boolean
@@ -22,22 +24,35 @@ export default function CreateManualOrderModal({
 
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
+  const [source, setSource] = useState<OrderSource>('PHONE')
   const [fulfilment, setFulfilment] = useState<'pickup' | 'delivery'>('pickup')
   const [streetAddress, setStreetAddress] = useState('')
   const [postcode, setPostcode] = useState('HP20')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('in_store')
-  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending_store' | 'pending_delivery'>('paid')
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending_store' | 'pending_delivery'>('pending_store')
   const [notes, setNotes] = useState('')
 
   // Order lines
   const [selectedProductId, setSelectedProductId] = useState<string>(products[0]?.id || '')
   const [selectedQty, setSelectedQty] = useState<number>(1)
+  const [selectedExtras, setSelectedExtras] = useState<string[]>([])
+  const [selectedSalads, setSelectedSalads] = useState<string[]>([])
+  const [selectedSauces, setSelectedSauces] = useState<string[]>([])
   const [isMealDeal, setIsMealDeal] = useState(false)
+  const [mealDrink, setMealDrink] = useState<string>(MEAL_DEAL.drinkOptions[0].id)
+  const [mealSnack, setMealSnack] = useState<string>(MEAL_DEAL.snackOptions[0].id)
   const [orderLines, setOrderLines] = useState<CartLine[]>([])
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   if (!isOpen) return null
+
+  const activeProd = products.find((p) => p.id === selectedProductId)
+  const availableExtras = activeProd ? extrasFor(activeProd) : []
+  const availableSauces = activeProd?.sauces ? getSauces() : []
+  const hasSalads = activeProd ? ['SPUDS', 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS'].includes(activeProd.category) : false
+
+  const toggleItem = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
 
   const handleAddLine = () => {
     const prod = products.find((p) => p.id === selectedProductId)
@@ -51,15 +66,22 @@ export default function CreateManualOrderModal({
       name: prod.name,
       base: basePrice,
       meal: isMealDeal,
-      extras: [],
-      sauces: [],
+      mealDrink: isMealDeal ? mealDrink : undefined,
+      mealSnack: isMealDeal ? mealSnack : undefined,
+      extras: selectedExtras,
+      salads: selectedSalads.length > 0 ? selectedSalads : undefined,
+      sauces: selectedSauces,
       image: prod.image,
       category: prod.category,
+      station: stationForLine({ category: prod.category }),
       qty: selectedQty,
     }
 
     setOrderLines((prev) => [...prev, newLine])
     setSelectedQty(1)
+    setSelectedExtras([])
+    setSelectedSalads([])
+    setSelectedSauces([])
     setIsMealDeal(false)
   }
 
@@ -67,11 +89,16 @@ export default function CreateManualOrderModal({
     setOrderLines((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const getLineTotal = (l: CartLine) => (l.base + (l.meal ? 250 : 0)) * l.qty
+  const getLineTotal = (l: CartLine) => lineUnitPrice(l) * l.qty
   const subtotal = orderLines.reduce((acc, l) => acc + getLineTotal(l), 0)
-  const deliveryFee = fulfilment === 'delivery' ? 399 : 0
-  const serviceFee = 99
-  const total = subtotal + deliveryFee + serviceFee
+  const delivCfg = getDeliverySettings()
+  const deliveryFee =
+    fulfilment === 'delivery' && orderLines.length > 0
+      ? subtotal >= delivCfg.freeDeliveryThresholdPence
+        ? 0
+        : delivCfg.deliveryFeePence
+      : 0
+  const total = subtotal + deliveryFee
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -99,6 +126,7 @@ export default function CreateManualOrderModal({
           paymentMethod,
           paymentStatus,
           notes: notes.trim() || undefined,
+          source,
         },
         currentActorName
       )
@@ -143,44 +171,78 @@ export default function CreateManualOrderModal({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6 text-xs">
-          {/* FULFILMENT TOGGLE */}
-          <div className="space-y-1.5">
-            <label className="block text-[11px] uppercase tracking-wider font-bold text-white/70">
-              Fulfilment Type
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setFulfilment('pickup')
-                  setPaymentMethod('in_store')
-                  setPaymentStatus('paid')
-                }}
-                className={cx(
-                  'rounded-xl py-2.5 px-4 font-bold text-center border transition flex items-center justify-center gap-2',
-                  fulfilment === 'pickup'
-                    ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black shadow'
-                    : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                )}
-              >
-                <span>🛍️</span> Store Pick Up (At Counter)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setFulfilment('delivery')
-                  setPaymentMethod('driver_device')
-                  setPaymentStatus('pending_delivery')
-                }}
-                className={cx(
-                  'rounded-xl py-2.5 px-4 font-bold text-center border transition flex items-center justify-center gap-2',
-                  fulfilment === 'delivery'
-                    ? 'bg-amber-400 text-ink border-amber-300 font-black shadow'
-                    : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                )}
-              >
-                <span>🛵</span> Home Delivery
-              </button>
+          {/* CHANNEL & FULFILMENT TOGGLE */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="block text-[11px] uppercase tracking-wider font-bold text-white/70">
+                Order Source
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSource('PHONE')}
+                  className={cx(
+                    'rounded-xl py-2.5 px-3 font-bold text-center border transition flex items-center justify-center gap-1.5',
+                    source === 'PHONE'
+                      ? 'bg-amber-400 text-ink border-amber-300 font-black shadow'
+                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                  )}
+                >
+                  <span>📞</span> Phone Order
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSource('TILL')}
+                  className={cx(
+                    'rounded-xl py-2.5 px-3 font-bold text-center border transition flex items-center justify-center gap-1.5',
+                    source === 'TILL'
+                      ? 'bg-purple-400 text-ink border-purple-300 font-black shadow'
+                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                  )}
+                >
+                  <span>🖥️</span> Counter Walk-In
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-[11px] uppercase tracking-wider font-bold text-white/70">
+                Fulfilment Type
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFulfilment('pickup')
+                    setPaymentMethod('in_store')
+                    setPaymentStatus('pending_store')
+                  }}
+                  className={cx(
+                    'rounded-xl py-2.5 px-3 font-bold text-center border transition flex items-center justify-center gap-1.5',
+                    fulfilment === 'pickup'
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black shadow'
+                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                  )}
+                >
+                  <span>🛍️</span> Pick Up
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFulfilment('delivery')
+                    setPaymentMethod('driver_device')
+                    setPaymentStatus('pending_delivery')
+                  }}
+                  className={cx(
+                    'rounded-xl py-2.5 px-3 font-bold text-center border transition flex items-center justify-center gap-1.5',
+                    fulfilment === 'delivery'
+                      ? 'bg-amber-400 text-ink border-amber-300 font-black shadow'
+                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                  )}
+                >
+                  <span>🛵</span> Delivery
+                </button>
+              </div>
             </div>
           </div>
 
@@ -249,12 +311,18 @@ export default function CreateManualOrderModal({
           {/* ITEM BUILDER */}
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
             <span className="text-[11px] uppercase tracking-wider font-black text-white/80">
-              Add Items to Ticket:
+              Add Items &amp; Modifiers to Ticket:
             </span>
             <div className="flex flex-col sm:flex-row gap-2">
               <select
                 value={selectedProductId}
-                onChange={(e) => setSelectedProductId(e.target.value)}
+                onChange={(e) => {
+                  setSelectedProductId(e.target.value)
+                  setSelectedExtras([])
+                  setSelectedSalads([])
+                  setSelectedSauces([])
+                  setIsMealDeal(false)
+                }}
                 className="flex-1 rounded-xl border border-white/20 bg-slate-800 px-3 py-2 text-xs text-white focus:border-amber-400 focus:outline-none"
               >
                 {products.map((p) => (
@@ -273,15 +341,17 @@ export default function CreateManualOrderModal({
                   onChange={(e) => setSelectedQty(Math.max(1, parseInt(e.target.value) || 1))}
                   className="w-16 rounded-xl border border-white/20 bg-slate-800 px-2 py-2 text-xs text-center font-bold text-white focus:border-amber-400 focus:outline-none"
                 />
-                <label className="flex items-center gap-1.5 text-white/70 text-[11px] cursor-pointer whitespace-nowrap">
-                  <input
-                    type="checkbox"
-                    checked={isMealDeal}
-                    onChange={(e) => setIsMealDeal(e.target.checked)}
-                    className="rounded border-white/20"
-                  />
-                  + Meal (+£2.50)
-                </label>
+                {activeProd?.mealEligible && (
+                  <label className="flex items-center gap-1.5 text-white/80 text-[11px] cursor-pointer whitespace-nowrap font-bold">
+                    <input
+                      type="checkbox"
+                      checked={isMealDeal}
+                      onChange={(e) => setIsMealDeal(e.target.checked)}
+                      className="rounded border-white/20"
+                    />
+                    + Meal (+{gbp(MEAL_DEAL.price)})
+                  </label>
+                )}
                 <button
                   type="button"
                   onClick={handleAddLine}
@@ -292,14 +362,113 @@ export default function CreateManualOrderModal({
               </div>
             </div>
 
+            {/* Optional Toppings / Salads / Sauces / Meal choices */}
+            {availableExtras.length > 0 && (
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase text-white/50">Paid Extras:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableExtras.map((ext) => {
+                    const active = selectedExtras.includes(ext.id)
+                    return (
+                      <button
+                        key={ext.id}
+                        type="button"
+                        onClick={() => setSelectedExtras((prev) => toggleItem(prev, ext.id))}
+                        className={cx(
+                          'rounded-lg border px-2 py-1 text-[10px] font-bold transition',
+                          active ? 'border-amber-300 bg-amber-400 text-ink font-black' : 'border-white/10 bg-white/5 text-white/70 hover:text-white'
+                        )}
+                      >
+                        {active ? '✓ ' : '+ '}{ext.label} ({gbp(ext.price)})
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {hasSalads && (
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase text-emerald-300/80">🥗 Free Salads:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {FRESH_SALAD_OPTIONS.map((sal) => {
+                    const active = selectedSalads.includes(sal.id)
+                    return (
+                      <button
+                        key={sal.id}
+                        type="button"
+                        onClick={() => setSelectedSalads((prev) => toggleItem(prev, sal.id))}
+                        className={cx(
+                          'rounded-lg border px-2 py-1 text-[10px] font-bold transition',
+                          active ? 'border-emerald-400 bg-emerald-500 text-ink font-black' : 'border-white/10 bg-white/5 text-white/70 hover:text-white'
+                        )}
+                      >
+                        {active ? '✓ ' : '+ '}{sal.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {availableSauces.length > 0 && (
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase text-amber-200/70">🥫 Free Sauces:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableSauces.map((sau) => {
+                    const active = selectedSauces.includes(sau.id)
+                    return (
+                      <button
+                        key={sau.id}
+                        type="button"
+                        onClick={() => setSelectedSauces((prev) => toggleItem(prev, sau.id))}
+                        className={cx(
+                          'rounded-lg border px-2 py-1 text-[10px] font-bold transition',
+                          active ? 'border-amber-300 bg-amber-400 text-ink font-black' : 'border-white/10 bg-white/5 text-white/70 hover:text-white'
+                        )}
+                      >
+                        {active ? '✓ ' : '+ '}{sau.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {isMealDeal && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <select
+                  value={mealDrink}
+                  onChange={(e) => setMealDrink(e.target.value)}
+                  className="rounded-xl border border-amber-400/40 bg-slate-800 px-3 py-1.5 text-[11px] text-white"
+                >
+                  {MEAL_DEAL.drinkOptions.map((d) => (
+                    <option key={d.id} value={d.id}>🥤 {d.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={mealSnack}
+                  onChange={(e) => setMealSnack(e.target.value)}
+                  className="rounded-xl border border-amber-400/40 bg-slate-800 px-3 py-1.5 text-[11px] text-white"
+                >
+                  {MEAL_DEAL.snackOptions.map((s) => (
+                    <option key={s.id} value={s.id}>🥨 {s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* ORDER LINES LIST */}
             {orderLines.length > 0 ? (
               <div className="divide-y divide-white/10 pt-2">
                 {orderLines.map((line, idx) => (
-                  <div key={idx} className="py-2 flex items-center justify-between">
+                  <div key={idx} className="py-2 flex items-start justify-between gap-2">
                     <div>
                       <span className="font-bold text-white">{line.qty}x {line.name}</span>
-                      {line.meal && <span className="text-amber-400 font-bold ml-1.5">(Meal Deal)</span>}
+                      {line.meal && <span className="text-amber-400 font-bold ml-1.5">(Meal: {mealText(line)})</span>}
+                      {line.extras.length > 0 && <p className="text-[10px] text-amber-200">+ {extrasText(line)}</p>}
+                      {line.salads && line.salads.length > 0 && <p className="text-[10px] text-emerald-300">🥗 {saladsText(line)}</p>}
+                      {line.sauces.length > 0 && <p className="text-[10px] text-white/60">🥫 {saucesText(line)}</p>}
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-mono font-bold text-amber-300">{gbp(getLineTotal(line))}</span>

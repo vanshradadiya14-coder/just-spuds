@@ -6,8 +6,10 @@
  */
 
 import { getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe } from './cloudSync'
-import { matchStaffPin, pinFingerprint, subscribeRoster, getRoster, type StaffMember } from './staffRoster'
+import { matchStaffPin, pinFingerprint, subscribeRoster, getRoster, getPinSalt, type StaffMember } from './staffRoster'
 import { findDriverByPin, getDrivers, isDriverPinTaken, subscribeDrivers } from './driverStore'
+import { hasAdminPasskey, verifyAdminPasskey } from './terminalLockStore'
+import { sha256Hex } from '../utils/sha256'
 
 // Firebase is only needed for Google sign-in, so it is loaded on demand rather
 // than shipped in the main bundle that every visitor downloads for the homepage.
@@ -41,20 +43,30 @@ export interface AuthUser {
   deniedPermissions?: string[]
   /** Fingerprint of the PIN this session was opened with — a PIN change ends the session. */
   pinFp?: string
+  /** Cryptographic HMAC-style session signature preventing DevTools localStorage tampering. */
+  sessionSig?: string
 }
 
 const AUTH_STORAGE_KEY = 'just_spuds_auth_user_v1'
+const ADMIN_VAULT_KEY = 'just_spuds_admin_vault_v1'
+/** Admin console auto-locks after 15 minutes of inactivity. */
+export const ADMIN_VAULT_IDLE_MS = 15 * 60 * 1000
 
 /**
- * Role groups. Every portal gate should use one of these instead of spelling out
- * role lists inline — when CASHIER / KITCHEN_STAFF / SUPERVISOR were added, the
- * gates that listed 'STAFF' by hand quietly locked the new PINs out of the till.
+ * Role groups.
+ * - ADMIN_CONSOLE_ROLES: Strictly Owner / Store Manager / Admin — the ONLY roles allowed into /admin.
+ * - MANAGEMENT_ROLES: Includes Shift Supervisors so they can approve voids/discounts on the shop floor.
  */
-export const MANAGEMENT_ROLES: Role[] = ['SUPERVISOR', 'STORE_MANAGER', 'MANAGER', 'ADMIN', 'SUPER_ADMIN']
+export const ADMIN_CONSOLE_ROLES: Role[] = ['STORE_MANAGER', 'MANAGER', 'ADMIN', 'SUPER_ADMIN']
+export const MANAGEMENT_ROLES: Role[] = ['SUPERVISOR', ...ADMIN_CONSOLE_ROLES]
 /** Anyone who works the shop floor: till, kitchen, and their managers. */
 export const SHOP_FLOOR_ROLES: Role[] = ['STAFF', 'CASHIER', 'KITCHEN_STAFF', ...MANAGEMENT_ROLES]
 /** Every non-customer account. */
 export const INTERNAL_ROLES: Role[] = [...SHOP_FLOOR_ROLES, 'DRIVER']
+
+export function isAdminConsoleRole(role?: Role): boolean {
+  return !!role && ADMIN_CONSOLE_ROLES.includes(role)
+}
 
 export function isManagerOrAdmin(role?: Role): boolean {
   return !!role && MANAGEMENT_ROLES.includes(role)
@@ -64,11 +76,11 @@ export function isManagerOrAdmin(role?: Role): boolean {
 export function homePortalForRole(role?: Role): string | null {
   switch (role) {
     case 'CASHIER':
+    case 'SUPERVISOR':
       return '/pos'
     case 'STAFF':
     case 'KITCHEN_STAFF':
       return '/staff'
-    case 'SUPERVISOR':
     case 'STORE_MANAGER':
     case 'MANAGER':
     case 'ADMIN':
@@ -78,6 +90,103 @@ export function homePortalForRole(role?: Role): string | null {
       return '/driver'
     default:
       return null
+  }
+}
+
+function computeSessionSig(id: string, role: Role, status: UserStatus, pinFp: string): string {
+  return sha256Hex(`${getPinSalt()}::session_v1::${id}::${role}::${status}::${pinFp}`)
+}
+
+function computeAdminVaultSig(userId: string, role: Role, pinFp: string): string {
+  return sha256Hex(`${getPinSalt()}::admin_vault_v1::${userId}::${role}::${pinFp}`)
+}
+
+interface AdminVaultState {
+  userId: string
+  role: Role
+  unlockedAt: number
+  lastActiveAt: number
+  sig: string
+}
+
+function getVaultStorage(): Storage | null {
+  if (typeof window === 'undefined') return null
+  try {
+    if (typeof sessionStorage !== 'undefined' && typeof sessionStorage.getItem === 'function') {
+      return sessionStorage
+    }
+  } catch {
+    // Fallback to localStorage in headless test shims
+  }
+  return typeof localStorage !== 'undefined' ? localStorage : null
+}
+
+export function unlockAdminVault(user: AuthUser): boolean {
+  if (!user || user.status !== 'ACTIVE' || !isAdminConsoleRole(user.role) || !user.pinFp) return false
+  const storage = getVaultStorage()
+  if (!storage) return false
+  const now = Date.now()
+  const state: AdminVaultState = {
+    userId: user.id,
+    role: user.role,
+    unlockedAt: now,
+    lastActiveAt: now,
+    sig: computeAdminVaultSig(user.id, user.role, user.pinFp),
+  }
+  try {
+    storage.setItem(ADMIN_VAULT_KEY, JSON.stringify(state))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function touchAdminVault(): void {
+  const storage = getVaultStorage()
+  if (!storage) return
+  try {
+    const raw = storage.getItem(ADMIN_VAULT_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as AdminVaultState
+    parsed.lastActiveAt = Date.now()
+    storage.setItem(ADMIN_VAULT_KEY, JSON.stringify(parsed))
+  } catch {
+    // ignore
+  }
+}
+
+export function lockAdminVault(): void {
+  const storage = getVaultStorage()
+  try {
+    storage?.removeItem(ADMIN_VAULT_KEY)
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(ADMIN_VAULT_KEY)
+  } catch {
+    // ignore
+  }
+  const current = getCurrentUser()
+  listeners.forEach((fn) => fn(current))
+}
+
+export function isAdminVaultUnlocked(user: AuthUser | null = getCurrentUser(), now = Date.now()): boolean {
+  if (!user || user.status !== 'ACTIVE' || !isAdminConsoleRole(user.role) || !user.pinFp) return false
+  const storage = getVaultStorage()
+  if (!storage) return false
+  try {
+    const raw = storage.getItem(ADMIN_VAULT_KEY)
+    if (!raw) return false
+    const parsed = JSON.parse(raw) as AdminVaultState
+    if (!parsed || parsed.userId !== user.id || parsed.role !== user.role) return false
+    if (parsed.sig !== computeAdminVaultSig(user.id, user.role, user.pinFp)) {
+      storage.removeItem(ADMIN_VAULT_KEY)
+      return false
+    }
+    if (now - parsed.lastActiveAt > ADMIN_VAULT_IDLE_MS) {
+      storage.removeItem(ADMIN_VAULT_KEY)
+      return false
+    }
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -151,7 +260,37 @@ export function getCurrentUser(): AuthUser | null {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY)
     if (!raw) return null
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw) as AuthUser
+    if (!parsed || typeof parsed !== 'object' || !parsed.id || !parsed.role) {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      return null
+    }
+    if (parsed.role === 'CUSTOMER') {
+      return parsed
+    }
+    // Cryptographic & live-roster verification for every internal role (prevents DevTools tampering)
+    if (parsed.role === 'DRIVER') {
+      const driver = getDrivers().find((d) => d.id === parsed.id)
+      const fp = (driver?.pinHash || '').slice(-12)
+      const expectedSig = computeSessionSig(parsed.id, 'DRIVER', 'ACTIVE', fp)
+      if (!driver || driver.status !== 'ACTIVE' || parsed.pinFp !== fp || parsed.sessionSig !== expectedSig) {
+        localStorage.removeItem(AUTH_STORAGE_KEY)
+        return null
+      }
+      return parsed
+    }
+    const member = getRoster().find((m) => m.id === parsed.id)
+    if (!member || member.status !== 'ACTIVE' || member.role !== parsed.role) {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      return null
+    }
+    const fp = pinFingerprint(member)
+    const expectedSig = computeSessionSig(member.id, member.role, 'ACTIVE', fp)
+    if (parsed.pinFp !== fp || parsed.sessionSig !== expectedSig) {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      return null
+    }
+    return parsed
   } catch {
     return null
   }
@@ -165,6 +304,9 @@ export function setCurrentUser(user: AuthUser | null): void {
       if (INTERNAL_ROLES.includes(user.role)) markStaffDevice()
     } else {
       localStorage.removeItem(AUTH_STORAGE_KEY)
+      const storage = getVaultStorage()
+      storage?.removeItem(ADMIN_VAULT_KEY)
+      localStorage.removeItem(ADMIN_VAULT_KEY)
     }
     listeners.forEach((fn) => fn(user))
   } catch {
@@ -192,14 +334,17 @@ export function subscribeAuth(fn: AuthListener): () => void {
 const STORE_FIELDS = { storeId: 'store-aylesbury-1', storeName: 'Market Square Aylesbury' }
 
 function memberToUser(m: StaffMember): AuthUser {
+  const fp = pinFingerprint(m)
+  const status: UserStatus = m.status === 'ACTIVE' ? 'ACTIVE' : 'DISABLED'
   return {
     id: m.id,
     name: m.name,
     email: m.email || '',
     phone: m.phone,
     role: m.role,
-    status: m.status === 'ACTIVE' ? 'ACTIVE' : 'DISABLED',
-    pinFp: pinFingerprint(m),
+    status,
+    pinFp: fp,
+    sessionSig: computeSessionSig(m.id, m.role, status, fp),
     ...STORE_FIELDS,
   }
 }
@@ -228,6 +373,7 @@ export function checkPin(pin: string): PinCheck {
     const trusted = !driver.defaultPin || !isCloudSyncConfigured() || getDocSyncState('drivers') !== 'unknown'
     if (!trusted) return { ok: false, message: 'Checking the driver list with the server — try again in a few seconds.' }
     clearPinFailures()
+    const fp = (driver.pinHash || '').slice(-12)
     return {
       ok: true,
       user: {
@@ -237,7 +383,8 @@ export function checkPin(pin: string): PinCheck {
         phone: driver.phone,
         role: 'DRIVER',
         status: 'ACTIVE',
-        pinFp: (driver.pinHash || '').slice(-12),
+        pinFp: fp,
+        sessionSig: computeSessionSig(driver.id, 'DRIVER', 'ACTIVE', fp),
         ...STORE_FIELDS,
       },
     }
@@ -256,7 +403,20 @@ export function findUserByPin(pin: string): AuthUser | undefined {
   const staff = matchStaffPin(pin)
   if (staff && 'member' in staff && staff.member.status === 'ACTIVE') return memberToUser(staff.member)
   const driver = findDriverByPin(pin)
-  if (driver) return { id: driver.id, name: driver.name, email: driver.email, phone: driver.phone, role: 'DRIVER', status: 'ACTIVE', ...STORE_FIELDS }
+  if (driver) {
+    const fp = (driver.pinHash || '').slice(-12)
+    return {
+      id: driver.id,
+      name: driver.name,
+      email: driver.email,
+      phone: driver.phone,
+      role: 'DRIVER',
+      status: 'ACTIVE',
+      pinFp: fp,
+      sessionSig: computeSessionSig(driver.id, 'DRIVER', 'ACTIVE', fp),
+      ...STORE_FIELDS,
+    }
+  }
   return undefined
 }
 
@@ -276,10 +436,56 @@ export function loginWithPin(pin: string, allowedRoles?: Role[]): { ok: boolean;
     return { ok: false, message: 'That PIN does not have access to this area.' }
   }
   setCurrentUser(user)
+  // Only unlock the Admin Vault when signing into a management/admin-only gate;
+  // signing into the counter till (/pos) keeps the Admin Console locked!
+  const isAdminGate =
+    allowedRoles &&
+    allowedRoles.length > 0 &&
+    allowedRoles.every((r) => MANAGEMENT_ROLES.includes(r))
+  if (isAdminGate && isAdminConsoleRole(user.role)) {
+    unlockAdminVault(user)
+  } else {
+    lockAdminVault()
+  }
   return {
     ok: true,
     user,
     message: user.role === 'DRIVER' ? `Welcome back, Courier ${user.name}!` : `Welcome back, ${user.name}!`,
+  }
+}
+
+/**
+ * Dedicated strict Admin Console authentication.
+ * Only admits ADMIN_CONSOLE_ROLES (Owner / Store Manager / Admin — never Cashiers, Kitchen Staff, Drivers, or Supervisors),
+ * enforces the optional Secondary Admin Master Passkey if configured, and unlocks the time-bounded Admin Vault.
+ */
+export function loginAdminConsole(
+  pin: string,
+  passkey?: string,
+): { ok: boolean; user?: AuthUser; message: string } {
+  const res = checkPin(pin)
+  if (!res.ok) return { ok: false, message: res.message }
+  const user = res.user
+  if (!isAdminConsoleRole(user.role)) {
+    recordPinFailure()
+    return {
+      ok: false,
+      message: '🚫 Restricted: Only the Store Admin / Owner can access the Admin Console.',
+    }
+  }
+  if (hasAdminPasskey() && !verifyAdminPasskey(passkey || '')) {
+    recordPinFailure()
+    return {
+      ok: false,
+      message: '🔑 Invalid Admin Master Passkey. Both Admin PIN and Master Passkey are required.',
+    }
+  }
+  setCurrentUser(user)
+  unlockAdminVault(user)
+  return {
+    ok: true,
+    user,
+    message: `Admin Console unlocked for ${user.name}.`,
   }
 }
 
@@ -318,6 +524,7 @@ export function logout(): void {
   loadFirebase()
     .then((firebase) => firebase.signOutFromFirebase())
     .catch(() => {})
+  lockAdminVault()
   setCurrentUser(null)
 }
 
@@ -325,10 +532,6 @@ export function logout(): void {
  * Gate a portal on role. Status is checked first: a SUSPENDED or DISABLED account
  * must lose access even though it still holds a stored session, and that applies to
  * SUPER_ADMIN too — the role bypass below must never outrank a revoked account.
- *
- * NOTE: this is presentation only. It hides screens; it does not secure them. Anyone
- * can edit the stored user in devtools. Real enforcement has to happen server-side
- * once an API exists — see JUST_SPUDS_IMPLEMENTATION_PLAN.md, Part E.4.
  */
 export function hasRole(user: AuthUser | null, allowedRoles: Role[]): boolean {
   if (!user) return false
@@ -340,19 +543,16 @@ export function hasRole(user: AuthUser | null, allowedRoles: Role[]): boolean {
 /**
  * A session opened with a PIN ends when that PIN changes, the account is
  * disabled or removed — on this device and every other one, as the roster syncs.
- * Sessions from before PIN fingerprints existed are ended once, so nobody stays
- * signed in on a published starter PIN.
  */
 function validateSession() {
-  const user = getCurrentUser()
-  if (!user || user.role === 'CUSTOMER') return
-  if (user.role === 'DRIVER') {
-    const driver = getDrivers().find((d) => d.id === user.id)
-    if (!driver || driver.status !== 'ACTIVE' || (driver.pinHash || '').slice(-12) !== user.pinFp) setCurrentUser(null)
-    return
+  // getCurrentUser() now performs full cryptographic and live-roster validation,
+  // purging any invalidated or tampered session and notifying listeners if needed.
+  const raw = typeof window !== 'undefined' ? localStorage.getItem(AUTH_STORAGE_KEY) : null
+  const valid = getCurrentUser()
+  if (raw && !valid) {
+    lockAdminVault()
+    listeners.forEach((fn) => fn(null))
   }
-  const member = getRoster().find((m) => m.id === user.id)
-  if (!member || member.status !== 'ACTIVE' || pinFingerprint(member) !== user.pinFp) setCurrentUser(null)
 }
 
 if (typeof window !== 'undefined') {

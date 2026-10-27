@@ -1317,6 +1317,195 @@ await test('"Start trading fresh" clears pre-launch orders, shifts and audit ent
 cloud.stopCloudSync()
 
 // ---------------------------------------------------------------------------
+section('🏭 Industrial KDS & Kitchen Workflow Engine')
+// ---------------------------------------------------------------------------
+
+const lineText = await load('/src/utils/lineText.ts')
+const supaSync = await load('/src/services/supabaseOrderSync.ts')
+
+await test('getKDSColumnBucket maps every active and dispatch status so no order ever vanishes from KDS', () => {
+  assert.equal(orderStore.getKDSColumnBucket('placed'), 'new')
+  assert.equal(orderStore.getKDSColumnBucket('accepted'), 'cooking')
+  assert.equal(orderStore.getKDSColumnBucket('baking'), 'cooking')
+  assert.equal(orderStore.getKDSColumnBucket('quality_check'), 'cooking')
+  assert.equal(orderStore.getKDSColumnBucket('ready_for_pickup'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('ready_for_delivery'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('driver_assigned'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('driver_arrived_at_store'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('order_collected'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('out_for_delivery'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('failed_delivery'), 'dispatch')
+  assert.equal(orderStore.getKDSColumnBucket('collected'), 'completed')
+  assert.equal(orderStore.getKDSColumnBucket('delivered'), 'completed')
+  assert.equal(orderStore.getKDSColumnBucket('cancelled'), 'other')
+})
+
+await test('stationForLine routes online and till items deterministically to their kitchen station', () => {
+  const spudProduct = menuStore.getProducts().find((p) => p.category === 'SPUDS')
+  const wrapProduct = menuStore.getProducts().find((p) => p.category === 'WRAPS')
+  const baguetteProduct = menuStore.getProducts().find((p) => p.category === 'BAGUETTES')
+  const drinkProduct = menuStore.getProducts().find((p) => p.category === 'DRINKS')
+
+  assert.equal(lineText.stationForLine(line(spudProduct, 1)), 'spuds')
+  if (wrapProduct) assert.equal(lineText.stationForLine(line(wrapProduct, 1)), 'grill')
+  if (baguetteProduct) assert.equal(lineText.stationForLine(line(baguetteProduct, 1)), 'pass')
+  if (drinkProduct) assert.equal(lineText.stationForLine(line(drinkProduct, 1)), 'drinks')
+  // Explicit station override takes precedence
+  assert.equal(lineText.stationForLine({ ...line(spudProduct, 1), station: 'grill' }), 'grill')
+})
+
+await test('toggleOrderLineChecked checks/unchecks items and survives Supabase row round-trip cleanly', () => {
+  const p = firstSpud()
+  const l1 = line(p, 1)
+  const l2 = line(p, 2)
+  const ord = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer, lines: [l1, l2], paymentMethod: 'cash', paymentStatus: 'paid' },
+    'Cashier'
+  )
+
+  const afterCheck1 = orderStore.toggleOrderLineChecked(ord.id, l1.lineId)
+  assert.deepEqual(afterCheck1.checkedLineIds, [l1.lineId])
+
+  // Round-trip through Supabase row conversion
+  const row = supaSync.orderToRow(afterCheck1)
+  const unpacked = supaSync.rowToOrder(row)
+  assert.deepEqual(unpacked.checkedLineIds, [l1.lineId])
+  assert.equal(unpacked.deliveryDetails, undefined, 'pickup order should not leak _x into deliveryDetails')
+
+  // Uncheck the item
+  const afterUncheck1 = orderStore.toggleOrderLineChecked(ord.id, l1.lineId)
+  assert.deepEqual(afterUncheck1.checkedLineIds, [])
+})
+
+await test('recallCompletedOrder restores a bumped order back to the pass while updateOrderStatus remains guarded', () => {
+  const p = firstSpud()
+  const ord = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' },
+    'Cashier'
+  )
+  orderStore.updateOrderStatus(ord.id, 'collected', undefined, 'Cashier')
+  assert.equal(orderStore.getOrderById(ord.id).status, 'collected')
+
+  // Normal updateOrderStatus still blocks accidental mutation of completed orders
+  orderStore.updateOrderStatus(ord.id, 'preparing', undefined, 'Cashier')
+  assert.equal(orderStore.getOrderById(ord.id).status, 'collected')
+
+  // Explicit KDS recall brings it back to ready_for_pickup
+  const recalled = orderStore.recallCompletedOrder(ord.id, 'Kitchen Expo')
+  assert.equal(recalled.status, 'ready_for_pickup')
+  assert.equal(orderStore.getOrderById(ord.id).status, 'ready_for_pickup')
+})
+
+await test('getOrderPrepTiming holds scheduled pre-orders until prep window opens and alerts when due/late', () => {
+  const p = firstSpud()
+  const baseNow = new Date('2026-10-27T12:00:00.000Z').getTime()
+  const dueInTwoHours = new Date(baseNow + 120 * 60000).toISOString()
+
+  const preOrder = {
+    id: 'pre-1',
+    shortId: 'JS-PRE-1',
+    createdAt: new Date(baseNow - 30 * 60000).toISOString(), // placed 30m ago
+    fulfilment: 'pickup',
+    status: 'accepted',
+    isScheduled: true,
+    scheduledFor: dueInTwoHours,
+    customer,
+    lines: [line(p, 1)],
+    payment: { method: 'card', status: 'paid', subtotal: p.price, deliveryFee: 0, serviceFee: 0, tip: 0, discount: 0, total: p.price },
+    timeline: [],
+    etaMinutes: 20,
+  }
+
+  // 2 hours before slot -> HOLD (not overdue even though placed 30m ago!)
+  const holdTiming = orderStore.getOrderPrepTiming(preOrder, baseNow)
+  assert.equal(holdTiming.isScheduledHold, true)
+  assert.equal(holdTiming.isOverdue, false)
+  assert.equal(holdTiming.isWarn, false)
+  assert.match(holdTiming.badgeLabel, /HOLD/i)
+
+  // 15 minutes before pickup slot (inside 20m pickup prep window) -> PREP NOW
+  const insideWindowNow = new Date(dueInTwoHours).getTime() - 15 * 60000
+  const fireTiming = orderStore.getOrderPrepTiming(preOrder, insideWindowNow)
+  assert.equal(fireTiming.isScheduledHold, false)
+  assert.equal(fireTiming.isWarn, true)
+  assert.equal(fireTiming.isOverdue, false)
+  assert.match(fireTiming.badgeLabel, /PREP NOW/i)
+
+  // 3 minutes past scheduled slot -> LATE
+  const pastDueNow = new Date(dueInTwoHours).getTime() + 3 * 60000
+  const lateTiming = orderStore.getOrderPrepTiming(preOrder, pastDueNow)
+  assert.equal(lateTiming.isOverdue, true)
+  assert.match(lateTiming.badgeLabel, /LATE/i)
+})
+
+// ---------------------------------------------------------------------------
+section('🛡️ Store Hardware Lock & Admin Vault Security')
+// ---------------------------------------------------------------------------
+
+const terminalLock = await load('/src/services/terminalLockStore.ts')
+
+await test('DevTools localStorage tampering to fake SUPER_ADMIN or escalate a cashier is rejected and wiped', () => {
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+  // 1. Fake injected SUPER_ADMIN session without valid cryptographic sessionSig
+  localStorage.setItem(
+    'just_spuds_auth_user_v1',
+    JSON.stringify({ id: 'usr-admin-1', name: 'Attacker', email: 'x@x.com', role: 'SUPER_ADMIN', status: 'ACTIVE' }),
+  )
+  assert.equal(authStore.getCurrentUser(), null, 'forged session must be rejected')
+  assert.equal(localStorage.getItem('just_spuds_auth_user_v1'), null, 'forged session must be purged from localStorage')
+
+  // 2. Cashier signs in honestly, then edits their role to SUPER_ADMIN in localStorage
+  roster.setStaffPin('usr-cashier-1', '492817', 'Admin')
+  const cashierLogin = authStore.loginWithPin('492817')
+  assert.equal(cashierLogin.ok, true)
+  assert.equal(authStore.getCurrentUser()?.role, 'CASHIER')
+
+  const rawSession = JSON.parse(localStorage.getItem('just_spuds_auth_user_v1'))
+  localStorage.setItem('just_spuds_auth_user_v1', JSON.stringify({ ...rawSession, role: 'SUPER_ADMIN' }))
+  assert.equal(authStore.getCurrentUser(), null, 'escalated role in localStorage invalidates sessionSig')
+})
+
+await test('Admin Vault only admits Admin/Owner roles, stays locked on till logins, and supports 2FA Master Passkey', () => {
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+  // Cashier and Shift Supervisor are strictly refused by loginAdminConsole
+  assert.equal(authStore.loginAdminConsole('492817').ok, false, 'cashier refused at Admin Vault')
+  assert.equal(authStore.loginAdminConsole('3333').ok, false, 'shift supervisor refused at Admin Vault')
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+
+  // Store Owner / Admin PIN unlocks Admin Vault
+  const ownerLogin = authStore.loginAdminConsole('2468')
+  assert.equal(ownerLogin.ok, true)
+  assert.equal(authStore.isAdminVaultUnlocked(), true)
+
+  // If the Owner signs into the Counter Till (/pos), Admin Vault is automatically locked
+  authStore.loginWithPin('2468', authStore.SHOP_FLOOR_ROLES)
+  assert.equal(authStore.isAdminVaultUnlocked(), false, 'till sign-in must not leave Admin Vault unlocked')
+
+  // Enabling 2FA Admin Master Passkey requires both PIN and Passkey
+  const pkRes = terminalLock.setAdminPasskey('SpudVault2026', 'Sunny')
+  assert.equal(pkRes.ok, true)
+  assert.equal(authStore.loginAdminConsole('2468').ok, false, 'PIN alone refused when Master Passkey is active')
+  assert.equal(authStore.loginAdminConsole('2468', 'WrongKey').ok, false, 'wrong Master Passkey refused')
+  localStorage.removeItem('just_spuds_pin_lock_v1')
+  assert.equal(authStore.loginAdminConsole('2468', 'SpudVault2026').ok, true, 'correct PIN + Master Passkey unlocks Admin Vault')
+  terminalLock.clearAdminPasskey('Sunny')
+})
+
+await test('Store Hardware Lock enrolls authorized store terminals and revokes them immediately', () => {
+  const devId = terminalLock.getLocalDeviceId()
+  terminalLock.revokeEnrolledTerminal(devId, 'Sunny')
+  assert.equal(terminalLock.isTerminalEnrolled(), false, 'unenrolled device is locked out of store till')
+
+  const token = terminalLock.enrollAndClaimMasterTerminal('Sunny', 'Market Square Till #1', 'master_till')
+  assert.ok(token.startsWith('JSP-REG-'))
+  assert.equal(terminalLock.isTerminalEnrolled(), true, 'enrolled store device is authorized')
+  assert.equal(terminalLock.getEnrolledTerminals().length, 1)
+
+  terminalLock.revokeEnrolledTerminal(devId, 'Sunny')
+  assert.equal(terminalLock.isTerminalEnrolled(), false, 'revoked device immediately loses store till access')
+})
+
+// ---------------------------------------------------------------------------
 await vite.close()
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

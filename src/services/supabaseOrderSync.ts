@@ -53,6 +53,7 @@ interface PackedExtras {
   isTest?: boolean
   adminNotes?: Order['adminNotes']
   manualOverrides?: Order['manualOverrides']
+  checkedLineIds?: string[]
   scheduleDate?: string
   scheduleTime?: string
 }
@@ -62,6 +63,7 @@ export function orderToRow(order: Order): SupabaseOrderRow {
   if (order.isTest) extras.isTest = true
   if (order.adminNotes?.length) extras.adminNotes = order.adminNotes
   if (order.manualOverrides?.length) extras.manualOverrides = order.manualOverrides
+  if (order.checkedLineIds?.length) extras.checkedLineIds = order.checkedLineIds
   if (order.scheduleDate) extras.scheduleDate = order.scheduleDate
   if (order.scheduleTime) extras.scheduleTime = order.scheduleTime
   const details = Object.keys(extras).length > 0 ? { ...(order.deliveryDetails || {}), _x: extras } : order.deliveryDetails
@@ -121,6 +123,7 @@ export function rowToOrder(row: SupabaseOrderRow): Order {
     ...(extras.isTest ? { isTest: true } : {}),
     ...(extras.adminNotes ? { adminNotes: extras.adminNotes } : {}),
     ...(extras.manualOverrides ? { manualOverrides: extras.manualOverrides } : {}),
+    ...(extras.checkedLineIds ? { checkedLineIds: extras.checkedLineIds } : {}),
     ...(extras.scheduleDate ? { scheduleDate: extras.scheduleDate } : {}),
     ...(extras.scheduleTime ? { scheduleTime: extras.scheduleTime } : {}),
   }

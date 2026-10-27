@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   loginWithPin,
+  loginAdminConsole,
   loginWithGoogle,
   getCurrentUser,
   homePortalForRole,
+  isAdminConsoleRole,
+  ADMIN_CONSOLE_ROLES,
   MANAGEMENT_ROLES,
   SHOP_FLOOR_ROLES,
 } from '../services/authStore'
@@ -13,29 +16,63 @@ import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import { detectSubdomain } from '../App'
 import { playPOSTouchTone } from '../services/printerBridge'
 import FullscreenButton from '../components/FullscreenButton'
-import { getLocalDeviceName } from '../services/terminalLockStore'
+import {
+  getLocalDeviceName,
+  isTerminalEnrolled,
+  isStoreHardwareLockEnforced,
+  hasAdminPasskey,
+} from '../services/terminalLockStore'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const redirect = params.get('redirect') || '/'
   const subdomain = detectSubdomain()
+  const tabParam = params.get('tab')
+  const rawRedirect = params.get('redirect') || ''
+
+  const portalMode: 'admin' | 'pos' | 'customer' =
+    subdomain === 'admin' || tabParam === 'admin' || rawRedirect.startsWith('/admin')
+      ? 'admin'
+      : subdomain === 'pos' ||
+        tabParam === 'staff' ||
+        ['/pos', '/till', '/staff', '/cfd', '/customer-display', '/driver'].some((p) => rawRedirect.startsWith(p))
+      ? 'pos'
+      : 'customer'
+
+  const isDriverTarget = rawRedirect.startsWith('/driver')
+  const defaultTarget =
+    portalMode === 'admin'
+      ? subdomain === 'admin'
+        ? '/'
+        : rawRedirect || '/admin'
+      : portalMode === 'pos'
+      ? subdomain === 'pos'
+        ? '/'
+        : rawRedirect || '/pos'
+      : rawRedirect || '/'
 
   useDocumentMeta({
     title:
-      subdomain === 'pos'
+      portalMode === 'pos'
         ? 'Store Till & POS Station Sign In | Just Spuds'
-        : subdomain === 'admin'
-        ? 'Store Management Console Sign In | Just Spuds'
+        : portalMode === 'admin'
+        ? 'Store Admin Security Gate | Just Spuds'
         : 'Sign In | Just Spuds Aylesbury',
     description: 'Secure sign in for Just Spuds Aylesbury portals.',
   })
 
-  // PIN state
+  // PIN & Passkey state
   const [pin, setPin] = useState('')
+  const [passkey, setPasskey] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loadingGoogle, setLoadingGoogle] = useState(false)
-  const [timeStr, setTimeStr] = useState(() => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+  const [timeStr, setTimeStr] = useState(() =>
+    new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  )
+
+  const terminalEnrolled = isTerminalEnrolled()
+  const hardwareLockActive = isStoreHardwareLockEnforced() && !isDriverTarget
+  const requirePasskey = portalMode === 'admin' && hasAdminPasskey()
 
   // Keep live clock running for POS terminal aesthetic
   useEffect(() => {
@@ -45,65 +82,105 @@ export default function LoginPage() {
     return () => clearInterval(timer)
   }, [])
 
-  // Auto-submit when 4 digits are entered on the POS terminal
-  useEffect(() => {
-    if ((subdomain === 'pos' || subdomain === 'admin') && pin.length >= 4) {
-      // Auto attempt login if 4 digits
-      const allowedRoles = subdomain === 'pos' ? SHOP_FLOOR_ROLES : MANAGEMENT_ROLES
-      const res = loginWithPin(pin, allowedRoles)
-      if (res.ok) {
-        playPOSTouchTone('action')
-        navigate(subdomain === 'pos' ? '/' : subdomain === 'admin' ? '/' : redirect)
-      } else {
-        // If length reached 4 and failed, check if it's a driver attempting till access
-        if (pin === '7777' || pin === '7778' || pin === '7779') {
-          setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
-        } else {
-          setError(res.message || 'Invalid PIN.')
-        }
-        playPOSTouchTone('numpad')
-        setPin('')
-      }
-    }
-  }, [pin, subdomain, redirect, navigate])
+  const submitPinLogin = useCallback(
+    (pinToUse: string) => {
+      const cleanPin = pinToUse.trim()
+      if (!cleanPin) return
 
-  const handleKeypadPress = (num: string) => {
+      if (portalMode === 'admin') {
+        const res = loginAdminConsole(cleanPin, requirePasskey ? passkey : undefined)
+        if (res.ok) {
+          playPOSTouchTone('action')
+          navigate(defaultTarget, { replace: true })
+        } else {
+          setError(res.message || 'Invalid Admin PIN. Only Store Admin can access this console.')
+          playPOSTouchTone('numpad')
+          setPin('')
+        }
+        return
+      }
+
+      if (portalMode === 'pos') {
+        // If this physical device is NOT enrolled as an in-store terminal, only the Store Admin PIN can open it to enroll hardware!
+        if (hardwareLockActive && !terminalEnrolled) {
+          const adminRes = loginAdminConsole(cleanPin)
+          if (adminRes.ok) {
+            playPOSTouchTone('action')
+            navigate(defaultTarget, { replace: true })
+          } else {
+            setError(
+              '🔒 In-Store Hardware Lock: This device is not enrolled as a store terminal. Only the Store Admin PIN can authorize new store hardware.',
+            )
+            playPOSTouchTone('numpad')
+            setPin('')
+          }
+          return
+        }
+
+        const allowedRoles = isDriverTarget ? (['DRIVER', ...MANAGEMENT_ROLES] as const) : SHOP_FLOOR_ROLES
+        const res = loginWithPin(cleanPin, [...allowedRoles])
+        if (res.ok) {
+          playPOSTouchTone('action')
+          navigate(defaultTarget, { replace: true })
+        } else {
+          if (!isDriverTarget && (cleanPin === '7777' || cleanPin === '7778' || cleanPin === '7779')) {
+            setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
+          } else {
+            setError(res.message || 'Invalid PIN.')
+          }
+          playPOSTouchTone('numpad')
+          setPin('')
+        }
+      }
+    },
+    [portalMode, requirePasskey, passkey, defaultTarget, navigate, hardwareLockActive, terminalEnrolled, isDriverTarget],
+  )
+
+  const handleKeypadPress = useCallback((num: string) => {
     playPOSTouchTone('numpad')
     setError(null)
     setPin((prev) => (prev.length < 8 ? prev + num : prev))
-  }
+  }, [])
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
     playPOSTouchTone('tap')
     setPin('')
     setError(null)
-  }
+  }, [])
 
-  const handleBackspace = () => {
+  const handleBackspace = useCallback(() => {
     playPOSTouchTone('tap')
     setPin((prev) => prev.slice(0, -1))
     setError(null)
-  }
+  }, [])
+
+  // Support physical keyboard numpad on POS & Admin login screens
+  useEffect(() => {
+    if (portalMode === 'customer') return
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      if (/^\d$/.test(e.key)) {
+        e.preventDefault()
+        handleKeypadPress(e.key)
+      } else if (e.key === 'Backspace') {
+        e.preventDefault()
+        handleBackspace()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        handleClear()
+      } else if (e.key === 'Enter' && pin.length >= 4) {
+        e.preventDefault()
+        submitPinLogin(pin)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [portalMode, pin, handleKeypadPress, handleBackspace, handleClear, submitPinLogin])
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!pin.trim()) return
-
-    const allowedRoles = subdomain === 'pos' ? SHOP_FLOOR_ROLES : subdomain === 'admin' ? MANAGEMENT_ROLES : undefined
-    const res = loginWithPin(pin, allowedRoles)
-
-    if (res.ok) {
-      playPOSTouchTone('action')
-      navigate(subdomain === 'pos' ? '/' : subdomain === 'admin' ? '/' : redirect)
-    } else {
-      if (pin === '7777' || pin === '7778' || pin === '7779') {
-        setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
-      } else {
-        setError(res.message || 'Invalid PIN.')
-      }
-      playPOSTouchTone('numpad')
-      setPin('')
-    }
+    submitPinLogin(pin)
   }
 
   const handleGoogleSignIn = async () => {
@@ -112,7 +189,7 @@ export default function LoginPage() {
     try {
       const res = await loginWithGoogle()
       if (res.ok && res.user) {
-        navigate(redirect || homePortalForRole(res.user.role) || '/')
+        navigate(defaultTarget || homePortalForRole(res.user.role) || '/')
       } else {
         setError(res.message || 'Google sign in failed.')
       }
@@ -126,11 +203,11 @@ export default function LoginPage() {
   const currentUser = getCurrentUser()
 
   /* =========================================================================
-     VIEW 1: DEDICATED IN-STORE POS & STAFF TERMINAL (pos.justspuds.uk)
+     VIEW 1: DEDICATED IN-STORE POS & STAFF TERMINAL (/pos, /staff, /driver)
      - 100% viewport height, NO scrollbar, NO customer links, NO admin tabs.
-     - Ultra tactile, responsive numeric PIN pad with status bar.
+     - Enforces Store Hardware Enrollment for in-store till & KDS.
      ========================================================================= */
-  if (subdomain === 'pos') {
+  if (portalMode === 'pos') {
     return (
       <div className="relative h-[100dvh] w-screen overflow-hidden flex flex-col justify-between items-center bg-slate-950 font-body text-slate-100 select-none p-3 sm:p-4">
         <FixedAmbientBackdrop variant="portal" />
@@ -145,8 +222,19 @@ export default function LoginPage() {
               <div className="flex items-center gap-2">
                 <span className="font-display text-sm font-black tracking-wider text-white">JUST SPUDS</span>
                 <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-300 border border-amber-400/30">
-                  POS REGISTER
+                  {isDriverTarget ? 'COURIER DISPATCH' : 'IN-STORE POS REGISTER'}
                 </span>
+                {!isDriverTarget && (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider border ${
+                      terminalEnrolled
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                    }`}
+                  >
+                    {terminalEnrolled ? '✓ Store Hardware Enrolled' : '🔒 Unenrolled Hardware'}
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-slate-400">
                 {getLocalDeviceName()} &bull; Market Square, Aylesbury
@@ -166,27 +254,28 @@ export default function LoginPage() {
         {/* CENTER AUTHENTICATION CARD (FITS 100% WITHOUT SCROLLING) */}
         <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center py-2">
           <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-4 sm:p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
-            
             {/* Terminal Title */}
             <div className="text-center mb-3">
               <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-lg ring-2 ring-amber-400/50">
-                👨‍🍳
+                {isDriverTarget ? '🛵' : '👨‍🍳'}
               </div>
               <h1 className="text-lg sm:text-xl font-black text-white uppercase tracking-wider">
-                Staff Register Sign-In
+                {isDriverTarget ? 'Courier Hub Sign-In' : 'In-Store Till Sign-In'}
               </h1>
               <p className="text-[11px] text-slate-400">
-                Enter your 4-digit staff PIN to unlock till &amp; kitchen
+                {hardwareLockActive && !terminalEnrolled
+                  ? '🔒 Device not enrolled — Enter Store Admin PIN to enroll this store machine'
+                  : 'Enter your 4–8 digit PIN to unlock store terminal'}
               </p>
             </div>
 
-            {/* If currently signed in, offer fast continue */}
-            {currentUser && SHOP_FLOOR_ROLES.includes(currentUser.role) && (
+            {/* If currently signed in on an enrolled terminal, offer fast continue */}
+            {currentUser && SHOP_FLOOR_ROLES.includes(currentUser.role) && (!hardwareLockActive || terminalEnrolled) && (
               <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-2 text-center text-xs text-emerald-200 flex items-center justify-between">
                 <span>Signed in as <strong>{currentUser.name}</strong></span>
                 <button
                   type="button"
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate(defaultTarget, { replace: true })}
                   className="rounded-lg bg-emerald-600 px-2 py-0.5 font-bold text-white text-[11px] hover:bg-emerald-500"
                 >
                   Open Till &rarr;
@@ -194,14 +283,14 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* PIN Dots Indicator */}
-            <div className="mb-3 flex justify-center gap-3">
-              {[0, 1, 2, 3].map((idx) => {
+            {/* PIN Dots Indicator (supports 4–8 digits) */}
+            <div className="mb-3 flex justify-center gap-2.5">
+              {Array.from({ length: Math.max(4, pin.length) }).map((_, idx) => {
                 const filled = pin.length > idx
                 return (
                   <div
                     key={idx}
-                    className={`h-4 w-4 rounded-full border-2 transition-all duration-150 ${
+                    className={`h-3.5 w-3.5 rounded-full border-2 transition-all duration-150 ${
                       filled
                         ? 'border-amber-400 bg-amber-400 shadow-glow scale-110'
                         : 'border-slate-600 bg-slate-800'
@@ -257,9 +346,12 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                className="w-full rounded-2xl bg-amber-400 py-2.5 sm:py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 active:scale-[0.99] transition mt-2"
+                disabled={pin.length < 4}
+                className="w-full rounded-2xl bg-amber-400 py-2.5 sm:py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 active:scale-[0.99] transition mt-2 disabled:opacity-40"
               >
-                Unlock Counter Till &rarr;
+                {hardwareLockActive && !terminalEnrolled
+                  ? 'Verify Admin & Enroll Store Hardware →'
+                  : 'Unlock Store Terminal →'}
               </button>
             </form>
           </div>
@@ -267,19 +359,19 @@ export default function LoginPage() {
 
         {/* BOTTOM TERMINAL FOOTER */}
         <footer className="relative z-10 w-full border-t border-white/10 pt-2 px-2 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
-          <span>In-Store Master Register &bull; Single Authority Mode</span>
-          <span className="font-mono text-slate-400">Ver 2.4.0 &bull; SSL Secured</span>
+          <span>In-Store Authorized Hardware Only &bull; Single Authority Mode</span>
+          <span className="font-mono text-slate-400">Ver 2.5.0 &bull; Hardware Guard Active</span>
         </footer>
       </div>
     )
   }
 
   /* =========================================================================
-     VIEW 2: DEDICATED MANAGEMENT ADMIN CONSOLE (admin.justspuds.uk)
-     - Executive dark theme, Manager/Supervisor PIN only.
-     - NO customer tab, NO till staff controls.
+     VIEW 2: DEDICATED STORE ADMIN SECURITY VAULT (/admin)
+     - Strictly Admin / Owner ONLY (No Cashiers, Kitchen Staff, Drivers, or Supervisors).
+     - Enforces Admin Vault session + optional Secondary Admin Master Passkey.
      ========================================================================= */
-  if (subdomain === 'admin') {
+  if (portalMode === 'admin') {
     return (
       <div className="relative h-[100dvh] w-screen overflow-hidden flex flex-col justify-between items-center bg-slate-950 font-body text-slate-100 select-none p-4">
         <FixedAmbientBackdrop variant="portal" />
@@ -293,10 +385,10 @@ export default function LoginPage() {
               <div className="flex items-center gap-2">
                 <span className="font-display text-sm font-black tracking-wider text-white">JUST SPUDS</span>
                 <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-300 border border-rose-500/30">
-                  MANAGEMENT PORTAL
+                  ADMIN VAULT ONLY
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">Owner &bull; General Manager &bull; Shift Supervisor</p>
+              <p className="text-[11px] text-slate-400">Strictly Store Owner / Admin Access &bull; Auto-Locks After 15m Idle</p>
             </div>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-1 font-mono text-xs text-amber-300">
@@ -308,11 +400,19 @@ export default function LoginPage() {
           <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
             <div className="text-center mb-4">
               <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-lg ring-2 ring-amber-400/50">
-                📊
+                🔒
               </div>
-              <h1 className="text-xl font-black text-white uppercase tracking-wider">Manager Authorization</h1>
-              <p className="text-xs text-slate-400 mt-0.5">Enter Manager / Owner PIN for console access</p>
+              <h1 className="text-xl font-black text-white uppercase tracking-wider">Store Admin Vault</h1>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Restricted exclusively to Store Owner / Admin ({ADMIN_CONSOLE_ROLES.length} authorized roles)
+              </p>
             </div>
+
+            {currentUser && !isAdminConsoleRole(currentUser.role) && (
+              <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-950/50 p-2 text-center text-[11px] text-amber-200">
+                ⚠️ Currently signed in on till as <strong>{currentUser.name} ({currentUser.role})</strong>. Only an Admin PIN can unlock this console.
+              </div>
+            )}
 
             {error && (
               <div className="mb-3 rounded-xl border border-red-500/40 bg-red-950/60 p-2.5 text-center text-xs font-semibold text-red-200">
@@ -320,9 +420,9 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* PIN Dots */}
-            <div className="mb-4 flex justify-center gap-3">
-              {[0, 1, 2, 3, 4, 5].map((idx) => (
+            {/* PIN Dots (4–8 digits) */}
+            <div className="mb-3 flex justify-center gap-2.5">
+              {Array.from({ length: Math.max(4, pin.length) }).map((_, idx) => (
                 <div
                   key={idx}
                   className={`h-3.5 w-3.5 rounded-full border-2 transition-all duration-150 ${
@@ -334,7 +434,20 @@ export default function LoginPage() {
               ))}
             </div>
 
-            <form onSubmit={handleManualSubmit} className="space-y-2">
+            <form onSubmit={handleManualSubmit} className="space-y-2.5">
+              {requirePasskey && (
+                <div>
+                  <input
+                    type="password"
+                    value={passkey}
+                    onChange={(e) => setPasskey(e.target.value)}
+                    placeholder="Admin Master Passkey (Required)"
+                    aria-label="Admin Master Passkey"
+                    className="w-full rounded-xl border border-amber-400/40 bg-slate-950 px-3 py-2 text-center font-mono text-xs text-white focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-3 gap-2">
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
                   <button
@@ -371,17 +484,18 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition mt-2"
+                disabled={pin.length < 4}
+                className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition mt-2 disabled:opacity-40"
               >
-                Access Management Console &rarr;
+                Unlock Admin Vault &rarr;
               </button>
             </form>
           </div>
         </main>
 
         <footer className="relative z-10 w-full border-t border-white/10 pt-2 px-2 flex items-center justify-between text-xs text-slate-500 shrink-0">
-          <span>Enterprise Management Audit Active</span>
-          <span className="font-mono text-slate-400">admin.justspuds.uk</span>
+          <span>Cryptographic Session Guard &bull; Admin-Only Policy</span>
+          <span className="font-mono text-slate-400">Admin Security Vault</span>
         </footer>
       </div>
     )

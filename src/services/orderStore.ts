@@ -167,6 +167,8 @@ export interface Order {
   review?: OrderReview
   manualOverrides?: OrderManualOverride[]
   adminNotes?: OrderAdminNote[]
+  /** Line IDs checked off (plated/packed) by kitchen staff on the KDS. */
+  checkedLineIds?: string[]
   /** Last local change — used to keep the newer copy when devices disagree. */
   updatedAt?: string
   /** Created by "Simulate rush" for training: never counted in takings or reports. */
@@ -748,6 +750,7 @@ export function advanceOrderStatus(orderId: string): Order | undefined {
       nextStatus = 'baking'
       break
     case 'baking':
+    case 'quality_check':
       nextStatus = isDelivery ? 'out_for_delivery' : 'ready_for_pickup'
       break
     case 'out_for_delivery':
@@ -762,6 +765,251 @@ export function advanceOrderStatus(orderId: string): Order | undefined {
     return updateOrderStatus(order.id, nextStatus)
   }
   return order
+}
+
+export type KDSColumnBucket = 'new' | 'cooking' | 'dispatch' | 'completed' | 'other'
+
+/**
+ * Canonical KDS column mapping shared across standalone KDS (/staff) and
+ * counter EPOS KDS (/pos), ensuring orders in courier dispatch or quality check
+ * never fall between columns.
+ */
+export function getKDSColumnBucket(status: OrderStatus): KDSColumnBucket {
+  if (status === 'placed') return 'new'
+  if (status === 'accepted' || status === 'baking' || status === 'quality_check') return 'cooking'
+  if (
+    status === 'ready_for_delivery' ||
+    status === 'driver_assigned' ||
+    status === 'driver_arrived_at_store' ||
+    status === 'order_collected' ||
+    status === 'out_for_delivery' ||
+    status === 'ready_for_pickup' ||
+    status === 'failed_delivery'
+  ) {
+    return 'dispatch'
+  }
+  if (status === 'delivered' || status === 'collected') return 'completed'
+  return 'other'
+}
+
+/**
+ * Toggles the plated/packed check-off state of a single line item on a KDS ticket.
+ */
+export function toggleOrderLineChecked(orderId: string, lineId: string): Order | undefined {
+  const current = getStoredOrders()
+  const target = current.find((o) => o.id === orderId || o.shortId === orderId)
+  if (!target) return undefined
+
+  const existing = new Set(target.checkedLineIds || [])
+  if (existing.has(lineId)) {
+    existing.delete(lineId)
+  } else {
+    existing.add(lineId)
+  }
+  const updatedOrder: Order = {
+    ...target,
+    checkedLineIds: [...existing],
+  }
+  saveOrders(current.map((o) => (o.id === target.id ? updatedOrder : o)))
+  return updatedOrder
+}
+
+/**
+ * Recalls a recently bumped/completed order back to the active Ready/Dispatch
+ * column if a cook or cashier bumped it by mistake.
+ */
+export function recallCompletedOrder(orderId: string, actor = 'Kitchen Staff'): Order | undefined {
+  const current = getStoredOrders()
+  const target = current.find((o) => o.id === orderId || o.shortId === orderId)
+  if (!target) return undefined
+  if (target.status !== 'collected' && target.status !== 'delivered') return undefined
+
+  const recalledStatus: OrderStatus = target.fulfilment === 'delivery' ? 'ready_for_delivery' : 'ready_for_pickup'
+  const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const updatedOrder: Order = {
+    ...target,
+    status: recalledStatus,
+    etaMinutes: 5,
+    timeline: [
+      ...target.timeline,
+      {
+        status: recalledStatus,
+        timestamp: nowStr,
+        title: 'Recalled to Pass ↩️',
+        description: `Order recalled from completed to ${recalledStatus.replace(/_/g, ' ')} by ${actor}.`,
+      },
+    ],
+  }
+  saveOrders(current.map((o) => (o.id === target.id ? updatedOrder : o)))
+  playKitchenChime()
+  logAuditEvent(actor, 'order.recalled', `#${target.shortId}`, `Recalled from ${target.status} to ${recalledStatus}`)
+  return updatedOrder
+}
+
+export interface OrderPrepTiming {
+  elapsedMins: number
+  isCompleted: boolean
+  isScheduledHold: boolean
+  isOverdue: boolean
+  isWarn: boolean
+  timerLabel: string
+  badgeLabel: string
+  targetSlotLabel?: string
+  minsUntilFire?: number
+  minsUntilDue?: number
+}
+
+function parseScheduledTargetDate(
+  order: Pick<Order, 'createdAt' | 'isScheduled' | 'scheduleDate' | 'scheduleTime' | 'scheduledFor'>,
+  now: Date,
+): { targetDate: Date; slotTimeLabel: string } | null {
+  if (!order.isScheduled && !order.scheduledFor) return null
+  const rawTime = order.scheduleTime || (order.scheduledFor && order.scheduledFor.includes('@') ? order.scheduledFor.split('@')[1].trim() : '')
+  const rawDate = order.scheduleDate || (order.scheduledFor && order.scheduledFor.includes('@') ? order.scheduledFor.split('@')[0].trim() : 'Today')
+  if (!rawTime) {
+    if (order.scheduledFor) {
+      const isoParsed = new Date(order.scheduledFor)
+      if (!isNaN(isoParsed.getTime())) {
+        const slotTimeLabel = isoParsed.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+        return { targetDate: isoParsed, slotTimeLabel }
+      }
+    }
+    return null
+  }
+
+  const match = rawTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
+  if (!match) return null
+  let hours = parseInt(match[1], 10)
+  const minutes = parseInt(match[2], 10)
+  const meridiem = match[3].toUpperCase()
+  if (meridiem === 'PM' && hours !== 12) hours += 12
+  if (meridiem === 'AM' && hours === 12) hours = 0
+
+  const fmtDay = (d: Date) => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+  const baseRef = new Date(order.createdAt || now.toISOString())
+  let targetDay: Date | null = null
+
+  if (/^today$/i.test(rawDate)) {
+    targetDay = new Date(baseRef)
+  } else if (/^tomorrow$/i.test(rawDate)) {
+    targetDay = new Date(baseRef)
+    targetDay.setDate(targetDay.getDate() + 1)
+  } else {
+    for (let offset = -1; offset <= 7; offset++) {
+      const candidate = new Date(now)
+      candidate.setDate(candidate.getDate() + offset)
+      if (fmtDay(candidate) === rawDate) {
+        targetDay = candidate
+        break
+      }
+    }
+  }
+
+  if (!targetDay) return null
+  const targetDate = new Date(targetDay)
+  targetDate.setHours(hours, minutes, 0, 0)
+  return { targetDate, slotTimeLabel: rawTime }
+}
+
+/**
+ * Computes industrial KDS SLA timing, distinguishing scheduled pre-orders
+ * (which hold until their kitchen fire window) from immediate ASAP orders.
+ */
+export function getOrderPrepTiming(
+  order: Pick<Order, 'createdAt' | 'status' | 'fulfilment' | 'isScheduled' | 'scheduleDate' | 'scheduleTime' | 'scheduledFor'>,
+  nowInput: Date | number = new Date(),
+): OrderPrepTiming {
+  const now = typeof nowInput === 'number' ? new Date(nowInput) : nowInput
+  const elapsedMins = Math.max(0, Math.floor((now.getTime() - new Date(order.createdAt).getTime()) / 60000))
+  const isCompleted = ['delivered', 'collected', 'cancelled'].includes(order.status)
+  if (isCompleted) {
+    return {
+      elapsedMins,
+      isCompleted: true,
+      isScheduledHold: false,
+      isOverdue: false,
+      isWarn: false,
+      timerLabel: `${elapsedMins}m`,
+      badgeLabel: '',
+    }
+  }
+
+  const parsedSched = parseScheduledTargetDate(order, now)
+  if (parsedSched) {
+    const { targetDate, slotTimeLabel } = parsedSched
+    const prepLeadMins = order.fulfilment === 'delivery' ? 35 : 20
+    const fireAt = new Date(targetDate.getTime() - prepLeadMins * 60000)
+    const minsUntilDue = Math.round((targetDate.getTime() - now.getTime()) / 60000)
+    const minsUntilFire = Math.round((fireAt.getTime() - now.getTime()) / 60000)
+    const fireTimeStr = fireAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+
+    if (minsUntilFire > 0 && (order.status === 'placed' || order.status === 'accepted')) {
+      return {
+        elapsedMins,
+        isCompleted: false,
+        isScheduledHold: true,
+        isOverdue: false,
+        isWarn: false,
+        timerLabel: minsUntilFire > 90 ? `Fire ${fireTimeStr}` : `Fire in ${minsUntilFire}m`,
+        badgeLabel: 'HOLD',
+        targetSlotLabel: slotTimeLabel,
+        minsUntilFire,
+        minsUntilDue,
+      }
+    }
+    if (minsUntilDue < 0) {
+      return {
+        elapsedMins,
+        isCompleted: false,
+        isScheduledHold: false,
+        isOverdue: true,
+        isWarn: false,
+        timerLabel: `+${Math.abs(minsUntilDue)}m`,
+        badgeLabel: 'LATE',
+        targetSlotLabel: slotTimeLabel,
+        minsUntilFire,
+        minsUntilDue,
+      }
+    }
+    if (minsUntilDue <= 10) {
+      return {
+        elapsedMins,
+        isCompleted: false,
+        isScheduledHold: false,
+        isOverdue: false,
+        isWarn: true,
+        timerLabel: `Due ${minsUntilDue}m`,
+        badgeLabel: 'DUE SOON',
+        targetSlotLabel: slotTimeLabel,
+        minsUntilFire,
+        minsUntilDue,
+      }
+    }
+    return {
+      elapsedMins,
+      isCompleted: false,
+      isScheduledHold: false,
+      isOverdue: false,
+      isWarn: true,
+      timerLabel: `Due ${minsUntilDue}m`,
+      badgeLabel: 'PREP NOW',
+      targetSlotLabel: slotTimeLabel,
+      minsUntilFire,
+      minsUntilDue,
+    }
+  }
+
+  const isOverdue = elapsedMins >= 15
+  const isWarn = elapsedMins >= 10 && elapsedMins < 15
+  return {
+    elapsedMins,
+    isCompleted: false,
+    isScheduledHold: false,
+    isOverdue,
+    isWarn,
+    timerLabel: `${elapsedMins}m`,
+    badgeLabel: isOverdue ? 'LATE' : isWarn ? 'DUE SOON' : '',
+  }
 }
 
 export function cancelOrder(orderId: string, reason: string): { ok: boolean; order?: Order; message: string } {

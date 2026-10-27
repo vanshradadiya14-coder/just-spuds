@@ -6,6 +6,7 @@ import {
   logout,
   hasRole,
   homePortalForRole,
+  ADMIN_CONSOLE_ROLES,
   INTERNAL_ROLES,
   MANAGEMENT_ROLES,
   type AuthUser,
@@ -40,6 +41,7 @@ export default function StaffPortalDock() {
   const primaryPath = homePortalForRole(user.role) ?? '/staff'
   const primary = { path: primaryPath, ...(PORTALS[primaryPath] ?? { label: 'Staff Portal', icon: '⚡' }) }
   const isManagement = hasRole(user, MANAGEMENT_ROLES)
+  const isAdmin = hasRole(user, ADMIN_CONSOLE_ROLES)
 
   return (
     <aside
@@ -93,7 +95,7 @@ export default function StaffPortalDock() {
               </Link>
             )}
 
-            {isManagement && primary.path !== '/admin' && (
+            {isAdmin && primary.path !== '/admin' && (
               <Link
                 to="/admin"
                 className="hidden md:flex items-center gap-1 rounded-full border border-white/20 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/80 hover:bg-white/15 transition"

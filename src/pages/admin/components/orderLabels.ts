@@ -8,6 +8,7 @@ export function nextStepLabel(o: Order): string | null {
     case 'accepted':
       return '🔥 Start baking'
     case 'baking':
+    case 'quality_check':
       return o.fulfilment === 'delivery' ? '🛵 Out for delivery' : '🛍️ Ready to collect'
     case 'out_for_delivery':
       return '🎉 Delivered'
