@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   loginWithPin,
-  loginAdminConsole,
+  loginAdminConsoleVerified,
   loginWithGoogle,
   getCurrentUser,
   homePortalForRole,
@@ -28,7 +28,9 @@ export default function LoginPage() {
   const [params] = useSearchParams()
   const subdomain = detectSubdomain()
   const tabParam = params.get('tab')
-  const rawRedirect = params.get('redirect') || ''
+  // Only ever go back to a path on this site: "//evil.com" or "/\evil.com" would leave it.
+  const requested = params.get('redirect') || ''
+  const rawRedirect = /^\/(?![/\\])[^\\\s]*$/.test(requested) ? requested : ''
 
   const portalMode: 'admin' | 'pos' | 'customer' =
     subdomain === 'admin' || tabParam === 'admin' || rawRedirect.startsWith('/admin')
@@ -72,7 +74,9 @@ export default function LoginPage() {
 
   const terminalEnrolled = isTerminalEnrolled()
   const hardwareLockActive = isStoreHardwareLockEnforced() && !isDriverTarget
-  const requirePasskey = portalMode === 'admin' && hasAdminPasskey()
+  const [passkeyRequested, setPasskeyRequested] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const requirePasskey = (portalMode === 'admin' || (portalMode === 'pos' && hardwareLockActive && !terminalEnrolled)) && (hasAdminPasskey() || passkeyRequested)
 
   // Keep live clock running for POS terminal aesthetic
   useEffect(() => {
@@ -83,17 +87,27 @@ export default function LoginPage() {
   }, [])
 
   const submitPinLogin = useCallback(
-    (pinToUse: string) => {
+    async (pinToUse: string) => {
       const cleanPin = pinToUse.trim()
-      if (!cleanPin) return
+      if (!cleanPin || verifying) return
 
-      if (portalMode === 'admin') {
-        const res = loginAdminConsole(cleanPin, requirePasskey ? passkey : undefined)
+      // Admin console, or the owner enrolling a new store device: checked against
+      // the shop's security settings on the server (passkey), not just this browser.
+      const adminGate = portalMode === 'admin' || (portalMode === 'pos' && hardwareLockActive && !terminalEnrolled)
+      if (adminGate) {
+        setVerifying(true)
+        const res = await loginAdminConsoleVerified(cleanPin, requirePasskey ? passkey : undefined)
+        setVerifying(false)
         if (res.ok) {
           playPOSTouchTone('action')
           navigate(defaultTarget, { replace: true })
         } else {
-          setError(res.message || 'Invalid Admin PIN. Only Store Admin can access this console.')
+          if (res.needPasskey) setPasskeyRequested(true)
+          setError(
+            portalMode === 'pos' && !res.needPasskey
+              ? '🔒 This device is not enrolled as a store terminal yet. Only the Store Admin PIN can enrol new store hardware.'
+              : res.message || 'Invalid Admin PIN. Only Store Admin can access this console.',
+          )
           playPOSTouchTone('numpad')
           setPin('')
         }
@@ -101,21 +115,6 @@ export default function LoginPage() {
       }
 
       if (portalMode === 'pos') {
-        // If this physical device is NOT enrolled as an in-store terminal, only the Store Admin PIN can open it to enroll hardware!
-        if (hardwareLockActive && !terminalEnrolled) {
-          const adminRes = loginAdminConsole(cleanPin)
-          if (adminRes.ok) {
-            playPOSTouchTone('action')
-            navigate(defaultTarget, { replace: true })
-          } else {
-            setError(
-              '🔒 In-Store Hardware Lock: This device is not enrolled as a store terminal. Only the Store Admin PIN can authorize new store hardware.',
-            )
-            playPOSTouchTone('numpad')
-            setPin('')
-          }
-          return
-        }
 
         const allowedRoles = isDriverTarget ? (['DRIVER', ...MANAGEMENT_ROLES] as const) : SHOP_FLOOR_ROLES
         const res = loginWithPin(cleanPin, [...allowedRoles])
@@ -133,7 +132,7 @@ export default function LoginPage() {
         }
       }
     },
-    [portalMode, requirePasskey, passkey, defaultTarget, navigate, hardwareLockActive, terminalEnrolled, isDriverTarget],
+    [portalMode, requirePasskey, passkey, defaultTarget, navigate, hardwareLockActive, terminalEnrolled, isDriverTarget, verifying],
   )
 
   const handleKeypadPress = useCallback((num: string) => {

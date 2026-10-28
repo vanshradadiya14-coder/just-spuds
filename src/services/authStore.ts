@@ -5,7 +5,7 @@
  * and persistent auth state across tabs.
  */
 
-import { getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe } from './cloudSync'
+import { getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe, syncNow } from './cloudSync'
 import { matchStaffPin, pinFingerprint, subscribeRoster, getRoster, getPinSalt, type StaffMember } from './staffRoster'
 import { findDriverByPin, getDrivers, isDriverPinTaken, subscribeDrivers } from './driverStore'
 import { hasAdminPasskey, verifyAdminPasskey } from './terminalLockStore'
@@ -487,6 +487,34 @@ export function loginAdminConsole(
     user,
     message: `Admin Console unlocked for ${user.name}.`,
   }
+}
+
+/**
+ * Admin sign-in that also checks the shop's security settings on the server.
+ *
+ * A browser that has never synced holds no copy of the terminal registry, so
+ * `loginAdminConsole` alone cannot know an Admin master passkey exists and
+ * would let the PIN through on its own. This signs in, fetches the shop's
+ * private documents, then re-checks the passkey — and refuses if the server
+ * can't be reached, rather than trusting an empty local copy.
+ */
+export async function loginAdminConsoleVerified(
+  pin: string,
+  passkey?: string,
+): Promise<{ ok: boolean; user?: AuthUser; message: string; needPasskey?: boolean }> {
+  const res = loginAdminConsole(pin, passkey)
+  if (!res.ok || !isCloudSyncConfigured()) return res
+  await syncNow().catch(() => false)
+  if (getDocSyncState('terminal.registry') === 'unknown') {
+    logout()
+    return { ok: false, message: "Couldn't reach the server to check this shop's security settings. Check the internet connection and try again." }
+  }
+  if (hasAdminPasskey() && !verifyAdminPasskey(passkey || '')) {
+    logout()
+    recordPinFailure()
+    return { ok: false, needPasskey: true, message: '🔑 This shop uses an Admin master passkey — enter it as well as the PIN.' }
+  }
+  return res
 }
 
 export async function loginWithGoogle(): Promise<{ ok: boolean; user?: AuthUser; message: string }> {

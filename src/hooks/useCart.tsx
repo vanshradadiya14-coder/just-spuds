@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode,
 } from 'react'
 import { MEAL_DEAL, optionPrice, type Product } from '../data/menu'
-import { getConfiguredHours, getPromoCodes, getProducts, subscribeMenu } from '../services/menuStore'
+import { getConfiguredHours, getRedeemablePromo, getProducts, subscribeMenu } from '../services/menuStore'
 import { getStoreStatus, type StoreStatus } from '../data/site'
 import { validateDeliveryPostcode, type PostcodeValidationResult } from '../data/deliveryZones'
 import { FIRST_ORDER_CODE, getKitchenPauseState, hasPlacedOrderBefore, subscribeKitchenPause, type KitchenPauseState } from '../services/orderStore'
@@ -368,8 +368,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const discount = useMemo(() => {
     if (!promoCode) return 0
-    const promos = getPromoCodes()
-    const activePromo = promos.find((p) => p.code.toUpperCase() === promoCode.toUpperCase() && p.active)
+    const activePromo = getRedeemablePromo(promoCode)
     if (!activePromo) return 0
     // A voucher's minimum basket keeps applying after it was entered — taking
     // items out again must not leave the discount behind.
@@ -405,8 +404,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const applyPromo = useCallback((code: string) => {
     const trimmed = code.trim().toUpperCase()
-    const promos = getPromoCodes()
-    const found = promos.find((p) => p.code.toUpperCase() === trimmed && p.active)
+    const found = getRedeemablePromo(trimmed)
 
     if (found) {
       if (trimmed === FIRST_ORDER_CODE && hasPlacedOrderBefore()) {

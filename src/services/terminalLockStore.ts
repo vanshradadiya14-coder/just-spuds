@@ -9,7 +9,7 @@
  */
 
 import { logAuditEvent } from './auditStore'
-import { markDocChanged, registerDoc } from './cloudSync'
+import { getDocSyncState, isCloudSyncConfigured, markDocChanged, registerDoc, syncNow } from './cloudSync'
 import { sha256Hex } from '../utils/sha256'
 
 const STORAGE_DEVICE_ID = 'just_spuds_terminal_device_id_v1'
@@ -222,8 +222,10 @@ export function enrollAndClaimMasterTerminal(
   }
 
   const others = reg.enrolledTerminals.filter((t) => t.deviceId !== id)
-  const info: MasterTerminalInfo =
-    stationRole === 'master_till' || !reg.masterTerminal
+  // Only a till enrolled as the master till takes the cash-drawer authority; a
+  // kitchen screen enrolled first must not quietly become the master register.
+  const info: MasterTerminalInfo | null =
+    stationRole === 'master_till'
       ? {
           id,
           name,
@@ -248,6 +250,27 @@ export function enrollAndClaimMasterTerminal(
   )
   notifyListeners()
   return token
+}
+
+/**
+ * Enrol this device, after making sure it holds the shop's current terminal
+ * list. Enrolling from an empty local copy would publish a registry with only
+ * this device in it — newer by timestamp, so it would replace the server's and
+ * un-enrol every other till (and drop the admin passkey).
+ */
+export async function enrollThisDevice(
+  actor: string,
+  customName?: string,
+  stationRole: StationRole = 'master_till',
+): Promise<{ ok: boolean; message: string }> {
+  if (isCloudSyncConfigured()) {
+    await syncNow().catch(() => false)
+    if (getDocSyncState(TERMINAL_REGISTRY_DOC) === 'unknown') {
+      return { ok: false, message: "Couldn't reach the server to load this shop's till list. Check the internet connection and try again." }
+    }
+  }
+  enrollAndClaimMasterTerminal(actor, customName, stationRole)
+  return { ok: true, message: 'This device is now an enrolled store terminal.' }
 }
 
 /** Revoke an enrolled terminal remotely or locally so it can no longer open /pos or /staff */

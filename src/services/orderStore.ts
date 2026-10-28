@@ -13,6 +13,7 @@ import { logAuditEvent } from './auditStore'
 import { getSharedAudioContext } from './printerBridge'
 import { deductStockForOrderLines, getBusinessDetails, getProducts, restoreStockForOrderLines } from './menuStore'
 import { recordOnlineOrderInShift, recordTillRefund } from './tillStore'
+import { settleLoyaltyFromOrders } from './loyaltyStore'
 import { SITE } from '../data/site'
 
 /** The "your first one's on us" voucher — valid on a customer's first order only. */
@@ -298,6 +299,8 @@ if (typeof window !== 'undefined') {
       if (!changed) return
       const merged = [...byId.values()].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       writeRemoteOrders(merged)
+      // Spud Club: this customer's order was collected / delivered (earns) or cancelled (doesn't).
+      settleLoyaltyFromOrders(merged)
     },
     customerIds: () => {
       const active = getActiveCustomerOrderId()
@@ -317,6 +320,9 @@ if (typeof window !== 'undefined') {
       if (kept.length !== current.length) writeRemoteOrders(kept)
     },
   })
+
+  // Orders that completed while this browser was closed still earn their points.
+  settleLoyaltyFromOrders(getStoredOrders())
 
   registerDoc({
     name: 'kitchen.pause',

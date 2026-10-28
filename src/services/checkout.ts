@@ -24,7 +24,8 @@ import {
   type CustomerInfo,
 } from './orderStore'
 import { isPhoneBlacklisted } from './blacklistStore'
-import { getBusinessDetails, getConfiguredHours, getProducts, getPromoCodes, isProductSoldOut } from './menuStore'
+import { getBusinessDetails, getConfiguredHours, getProducts, getRedeemablePromo, isProductSoldOut } from './menuStore'
+import { markRewardVoucherUsed, recordLoyaltyOrder } from './loyaltyStore'
 import { getDeliverySettings } from './deliverySettingsStore'
 import { getStoreStatus } from '../data/site'
 import { validateDeliveryPostcode } from '../data/deliveryZones'
@@ -97,7 +98,7 @@ export function priceBasket(payload: Pick<CheckoutPayload, 'lines' | 'fulfilment
   let promoRejected: string | undefined
   const code = payload.promoCode?.trim().toUpperCase()
   if (code) {
-    const promo = getPromoCodes().find((p) => p.code.toUpperCase() === code && p.active)
+    const promo = getRedeemablePromo(code)
     if (!promo) promoRejected = `Voucher ${code} is no longer valid.`
     else if (code === FIRST_ORDER_CODE && hasPlacedOrderBefore()) promoRejected = `${code} is for your first order only — welcome back!`
     else if (promo.minOrderPence && subtotal < promo.minOrderPence)
@@ -240,6 +241,9 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
       total: priced.total,
       paymentMethod: payload.paymentMethod || (payload.fulfilment === 'delivery' ? 'driver_device' : 'in_store'),
     })
+    // A Spud Club voucher is spent once; the order earns points when it is collected / delivered.
+    if (priced.discount > 0 && payload.promoCode) markRewardVoucherUsed(payload.promoCode, order.id)
+    if (!order.isTest) recordLoyaltyOrder(order.id, priced.subtotal - priced.discount)
     return {
       ok: true,
       orderId: order.id,

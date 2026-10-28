@@ -216,6 +216,17 @@ Deliveroo tablet or a Subway KDS behaves.
   expected cash and show on the Z-report; a shift can't close over unpaid checks.
 - **Customers** can cancel from the tracking page only until the kitchen
   accepts — after that it's a phone call.
+- **Allergen filter** (`utils/allergens.ts`, the 14 UK allergens): an item is
+  shown as safe only if its allergen list is filled in and names none of the
+  ticked allergens (with synonyms — "wheat" counts as gluten, "milk" as dairy).
+  Items with no allergen data are never shown as safe; they say *Ask staff
+  before ordering*.
+- **Spud Club** (`services/loyaltyStore.ts`): everyone starts at 0. Online
+  orders earn 10 points per £1 and a stamp only once they are collected or
+  delivered (cancelled orders earn nothing); 6 stamps issue a free-spud voucher.
+  Claiming a reward makes a one-off code (`FREESPUD-XXXXXX`), checked at
+  checkout like any voucher and spent once. The reward names are not shop-wide
+  promo codes. Points live in that browser only.
 - **Admin › Live Orders**: click any row for the full order (ticket, customer,
   payment, timeline, notes) with one-tap next-step / print / cancel.
 
@@ -243,6 +254,16 @@ Sync hides other people's data from customer browsers and checks prices on
 staff screens, but the real fix is server-side: give staff devices a Supabase
 Auth login and tighten the Row Level Security policies so the anon role can
 only place orders and read the public menu. Worth doing in the first weeks.
+The same applies to staff PINs: the roster (salted PIN hashes) is a public
+document, so a 4-digit PIN can be guessed offline; the fix is a server-side
+PIN check (a Supabase function) once staff devices have their own login.
+
+**Till enrolment.** A new till or kitchen screen enrols with one owner PIN. It
+first loads the shop's till list from the server, and refuses if it can't, so
+enrolling never wipes the other tills or the admin passkey. Only a till
+(not a kitchen screen) can become the master till. The admin console also
+checks the server before it lets anyone in, and asks for the passkey when one
+is set.
 
 ### VAT
 

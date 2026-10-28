@@ -2,31 +2,17 @@ import { useState, useMemo } from 'react'
 import { getOnlineProducts } from '../services/menuStore'
 import { SPUD_EXTRAS } from '../data/menu'
 import { gbp } from '../utils/format'
+import { UK_14_ALLERGENS, hasAllergenInfo, isSafeFor, listedAllergens, type AllergenId } from '../utils/allergens'
 
 export interface AllergenMatrixModalProps {
   isOpen: boolean
   onClose: () => void
 }
 
-export const UK_14_ALLERGENS = [
-  { id: 'gluten', name: 'Gluten (Wheat/Barley)', icon: '🌾' },
-  { id: 'dairy', name: 'Milk / Dairy', icon: '🥛' },
-  { id: 'egg', name: 'Eggs', icon: '🥚' },
-  { id: 'fish', name: 'Fish', icon: '🐟' },
-  { id: 'mustard', name: 'Mustard', icon: '🌭' },
-  { id: 'celery', name: 'Celery', icon: '🥬' },
-  { id: 'sesame', name: 'Sesame', icon: '🥯' },
-  { id: 'soya', name: 'Soya', icon: '🌱' },
-  { id: 'peanuts', name: 'Peanuts', icon: '🥜' },
-  { id: 'nuts', name: 'Tree Nuts', icon: '🌰' },
-  { id: 'crustaceans', name: 'Crustaceans', icon: '🦐' },
-  { id: 'molluscs', name: 'Molluscs', icon: '🦪' },
-  { id: 'lupin', name: 'Lupin', icon: '🌸' },
-  { id: 'sulphites', name: 'Sulphites', icon: '🍷' },
-]
+export { UK_14_ALLERGENS }
 
 export default function AllergenMatrixModal({ isOpen, onClose }: AllergenMatrixModalProps) {
-  const [selectedAllergens, setSelectedAllergens] = useState<string[]>([])
+  const [selectedAllergens, setSelectedAllergens] = useState<AllergenId[]>([])
   const [dietaryFilter, setDietaryFilter] = useState<'all' | 'veg' | 'gf' | 'halal'>('all')
   const [activeTab, setActiveTab] = useState<'matrix' | 'disclaimer'>('matrix')
 
@@ -34,7 +20,7 @@ export default function AllergenMatrixModal({ isOpen, onClose }: AllergenMatrixM
 
   if (!isOpen) return null
 
-  const toggleAllergen = (id: string) => {
+  const toggleAllergen = (id: AllergenId) => {
     setSelectedAllergens((prev) =>
       prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
     )
@@ -51,21 +37,8 @@ export default function AllergenMatrixModal({ isOpen, onClose }: AllergenMatrixM
     if (dietaryFilter === 'gf' && !p.glutenFree) return false
     if (dietaryFilter === 'halal' && !p.halalFriendly) return false
 
-    // Check allergens
-    const productAllergens = (p.allergens || []).map((a) => a.toLowerCase())
-    for (const allergen of selectedAllergens) {
-      if (
-        (allergen === 'gluten' && (productAllergens.some((a) => a.includes('gluten') || a.includes('wheat')) || !p.glutenFree)) ||
-        (allergen === 'dairy' && productAllergens.some((a) => a.includes('dairy') || a.includes('milk') || a.includes('cheese'))) ||
-        (allergen === 'egg' && productAllergens.some((a) => a.includes('egg') || a.includes('mayo'))) ||
-        (allergen === 'fish' && productAllergens.some((a) => a.includes('fish') || a.includes('tuna'))) ||
-        (allergen === 'mustard' && productAllergens.some((a) => a.includes('mustard'))) ||
-        (allergen === 'celery' && productAllergens.some((a) => a.includes('celery')))
-      ) {
-        return false
-      }
-    }
-    return true
+    // All 14 allergens; items with no allergen information are never shown as safe.
+    return isSafeFor(p, selectedAllergens)
   })
 
   return (
@@ -238,9 +211,9 @@ export default function AllergenMatrixModal({ isOpen, onClose }: AllergenMatrixM
                           {p.calories ? `${p.calories} kcal` : '—'}
                         </td>
                         <td className="py-3 px-4">
-                          {p.allergens && p.allergens.length > 0 ? (
+                          {listedAllergens(p).length > 0 || (!p.glutenFree && !listedAllergens(p).some((a) => /gluten|wheat/i.test(a))) ? (
                             <div className="flex flex-wrap gap-1">
-                              {p.allergens.map((alg, i) => (
+                              {listedAllergens(p).map((alg, i) => (
                                 <span
                                   key={i}
                                   className="rounded bg-rose-50 border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-800"
@@ -248,11 +221,16 @@ export default function AllergenMatrixModal({ isOpen, onClose }: AllergenMatrixM
                                   {alg}
                                 </span>
                               ))}
+                              {!p.glutenFree && !listedAllergens(p).some((a) => /gluten|wheat/i.test(a)) && (
+                                <span className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                                  Not gluten-free
+                                </span>
+                              )}
                             </div>
+                          ) : hasAllergenInfo(p) ? (
+                            <span className="text-emerald-700 font-bold text-[11px]">None of the 14 listed</span>
                           ) : (
-                            <span className="text-emerald-700 font-bold text-[11px]">
-                              ✓ No major allergens
-                            </span>
+                            <span className="text-amber-700 font-bold text-[11px]">Ask staff before ordering</span>
                           )}
                         </td>
                         <td className="py-3 px-3">

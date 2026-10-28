@@ -1506,6 +1506,126 @@ await test('Store Hardware Lock enrolls authorized store terminals and revokes t
 })
 
 // ---------------------------------------------------------------------------
+section('🛡️ Audit fixes: allergens, Spud Club, terminal registry, price list')
+
+await test('the allergen filter covers all 14 allergens and never calls unknown items safe', async () => {
+  const allergens = await load('/src/utils/allergens.ts')
+  const snickers = { allergens: ['Dairy', 'Peanuts', 'Egg', 'Soya'], glutenFree: true }
+  assert.equal(allergens.isSafeFor(snickers, ['peanuts']), false, 'peanut filter hides a peanut item (it used to stay visible)')
+  assert.equal(allergens.isSafeFor(snickers, ['soya']), false)
+  assert.equal(allergens.isSafeFor(snickers, ['nuts']), false, 'tree-nut filter errs on the side of caution')
+  const water = { allergens: ['None'], glutenFree: true }
+  assert.equal(allergens.isSafeFor(water, ['peanuts', 'gluten']), true, 'an explicit "None" is safe')
+  assert.deepEqual(allergens.listedAllergens(water), [], '"None" is not shown as an allergen')
+  const unknown = { allergens: [], glutenFree: true }
+  assert.equal(allergens.isSafeFor(unknown, ['sesame']), false, 'no allergen data is never shown as safe')
+  assert.equal(allergens.isSafeFor({ allergens: ['None'], glutenFree: false }, ['gluten']), false, 'not gluten-free counts as gluten')
+  assert.equal(allergens.UK_14_ALLERGENS.length, 14)
+})
+
+await test('Spud Club: no free starting points, rewards are one-off codes, points only after collection', async () => {
+  localStorage.removeItem('just_spuds_loyalty_v2')
+  const loyalty = await load('/src/services/loyaltyStore.ts')
+  assert.equal(loyalty.getLoyaltyState().points, 0)
+  for (const code of ['FREESPUD', 'FREEDRINK', 'FREESIDE', 'EXTRACHEESE']) {
+    assert.equal(menuStore.getRedeemablePromo(code), undefined, `${code} is not a public voucher`)
+  }
+  assert.ok(menuStore.getRedeemablePromo('SPUD10'), 'shop promotions still work')
+
+  loyalty.recordLoyaltyOrder('ord-loyal-1', 2000)
+  loyalty.settleLoyaltyFromOrders([{ id: 'ord-loyal-1', status: 'baking' }])
+  assert.equal(loyalty.getLoyaltyState().points, 0, 'nothing until the order is collected')
+  loyalty.settleLoyaltyFromOrders([{ id: 'ord-loyal-1', status: 'collected' }])
+  assert.equal(loyalty.getLoyaltyState().points, 200, '£20 → 200 points')
+  assert.equal(loyalty.getLoyaltyState().stamps, 1)
+  loyalty.settleLoyaltyFromOrders([{ id: 'ord-loyal-1', status: 'collected' }])
+  assert.equal(loyalty.getLoyaltyState().points, 200, 'an order earns once')
+
+  loyalty.recordLoyaltyOrder('ord-loyal-2', 5000)
+  loyalty.settleLoyaltyFromOrders([{ id: 'ord-loyal-2', status: 'cancelled' }])
+  assert.equal(loyalty.getLoyaltyState().points, 200, 'a cancelled order earns nothing')
+
+  const claim = loyalty.redeemReward('reward-free-spud')
+  assert.equal(claim.ok, true)
+  assert.match(claim.promoCode, /^FREESPUD-[A-Z0-9]{6}$/)
+  assert.equal(loyalty.getLoyaltyState().points, 20)
+  const promo = menuStore.getRedeemablePromo(claim.promoCode)
+  assert.equal(promo.discountPence, 650, 'the issued voucher works at checkout')
+  loyalty.markRewardVoucherUsed(claim.promoCode, 'ord-x')
+  assert.equal(menuStore.getRedeemablePromo(claim.promoCode), undefined, 'and only once')
+})
+
+await test('enrolling a kitchen screen does not make it the master till', () => {
+  const devId = terminalLock.getLocalDeviceId()
+  terminalLock.revokeEnrolledTerminal(devId, 'Sunny')
+  terminalLock.releaseMasterTerminal('Sunny')
+  terminalLock.enrollAndClaimMasterTerminal('Sunny', 'Kitchen screen', 'kds_display')
+  assert.equal(terminalLock.isTerminalEnrolled(), true)
+  assert.equal(terminalLock.getMasterTerminalInfo(), null, 'no master till was claimed by a kitchen screen')
+  terminalLock.revokeEnrolledTerminal(devId, 'Sunny')
+})
+
+await test('a new device enrols only after loading the shop’s till list, so other tills and the passkey survive', async () => {
+  const mem2 = createMemoryBackend()
+  const PRIV = (n) => `just_spuds::priv::${n}`
+  const at = later()
+  const shopRegistry = {
+    enforceStoreHardwareLock: true,
+    masterTerminal: { id: 'term_front', name: 'Front till', claimedAt: at },
+    enrolledTerminals: [
+      { deviceId: 'term_front', name: 'Front till', stationRole: 'master_till', tokenHash: 'x', enrolledAt: at, enrolledBy: 'Sunny' },
+      { deviceId: 'term_kitchen', name: 'Kitchen', stationRole: 'kds_display', tokenHash: 'y', enrolledAt: at, enrolledBy: 'Sunny' },
+    ],
+    adminPasskeyHash: 'salt$hash',
+    updatedAt: at,
+  }
+  mem2.kv.set(PRIV('terminal.registry'), { key: PRIV('terminal.registry'), value: { data: shopRegistry, at, by: 'dev-other' }, updatedAt: at })
+  // A fresh browser: no local copy of the registry and nothing waiting to upload.
+  localStorage.removeItem('just_spuds_terminal_registry_v1')
+  localStorage.removeItem('just_spuds_master_terminal_v1')
+  const meta = JSON.parse(localStorage.getItem('just_spuds_sync_meta_v1') || '{}')
+  delete meta['terminal.registry']
+  localStorage.setItem('just_spuds_sync_meta_v1', JSON.stringify(meta))
+  assert.equal(authStore.loginWithPin('2468').ok, true)
+  await cloud.startCloudSync({ backend: mem2, timers: false })
+  const res = await terminalLock.enrollThisDevice('Sunny', 'Back till', 'secondary_till')
+  assert.equal(res.ok, true)
+  await cloud.syncNow()
+  const published = mem2.kv.get(PRIV('terminal.registry')).value.data
+  assert.deepEqual(
+    published.enrolledTerminals.map((t) => t.deviceId).sort(),
+    ['term_front', 'term_kitchen', terminalLock.getLocalDeviceId()].sort(),
+    'the other tills are still enrolled',
+  )
+  assert.equal(published.adminPasskeyHash, 'salt$hash', 'the admin passkey survives')
+  assert.equal(published.masterTerminal.id, 'term_front', 'a secondary till does not take over the drawer')
+  cloud.stopCloudSync()
+})
+
+await test('a staff device that already held the old topping list publishes the counter prices after a sync', async () => {
+  const mem3 = createMemoryBackend()
+  const old = [
+    { id: 'beans', label: 'Heinz Baked Beans', price: 150 },
+    { id: 'cheese', label: 'Mature Cheddar', price: 150 },
+  ]
+  const at = later()
+  mem3.kv.set(DOC('menu.extras'), { key: DOC('menu.extras'), value: { data: old, at, by: 'dev-other' }, updatedAt: at })
+  // This device already has exactly that server copy (as live tills did before the price change shipped).
+  localStorage.setItem('just_spuds_dynamic_extras_v1', JSON.stringify(old))
+  const meta = JSON.parse(localStorage.getItem('just_spuds_sync_meta_v1') || '{}')
+  meta['menu.extras'] = { dirty: false, localAt: at, remoteAt: at }
+  localStorage.setItem('just_spuds_sync_meta_v1', JSON.stringify(meta))
+  await cloud.startCloudSync({ backend: mem3, timers: false })
+  await cloud.syncNow()
+  await tick()
+  await cloud.syncNow()
+  const published = mem3.kv.get(DOC('menu.extras')).value.data
+  assert.equal(published.find((o) => o.id === 'beans').price, 100, 'counter price published')
+  assert.ok(published.some((o) => o.id === 'tuna'), 'new toppings published')
+  cloud.stopCloudSync()
+})
+
+// ---------------------------------------------------------------------------
 await vite.close()
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

@@ -41,9 +41,10 @@ export default function LoyaltyModal({ isOpen, onClose }: LoyaltyModalProps) {
 
   // Tier metadata
   const tierBadges = {
-    BRONZE: { label: 'Bronze Spud Member', color: 'from-amber-700 to-amber-900', perk: 'Earn 10 pts per £1' },
-    SILVER: { label: 'Silver Potato Connoisseur', color: 'from-slate-400 to-slate-600', perk: 'Free extra cheese on every order' },
-    GOLDEN_VIP: { label: 'Golden King Edward VIP 👑', color: 'from-amber-400 to-yellow-500 text-ink', perk: 'VIP Priority Oven Slot & Birthday Spud' },
+    // Tiers are recognition only — no perks are promised that the shop doesn't deliver.
+    BRONZE: { label: 'Bronze Spud Member', color: 'from-amber-700 to-amber-900' },
+    SILVER: { label: 'Silver Potato Connoisseur', color: 'from-slate-400 to-slate-600' },
+    GOLDEN_VIP: { label: 'Golden King Edward VIP 👑', color: 'from-amber-400 to-yellow-500 text-ink' },
   }
   const currentTier = tierBadges[loyalty.tier]
 
@@ -132,7 +133,7 @@ export default function LoyaltyModal({ isOpen, onClose }: LoyaltyModalProps) {
             <div className="mt-4 rounded-2xl bg-black/40 p-3.5 border border-white/10">
               <div className="flex items-center justify-between text-[11px] font-bold text-amber-200 mb-2">
                 <span>Free Meal Stamp Card:</span>
-                <span>{6 - loyalty.stamps} orders to next Free Spud!</span>
+                <span>{6 - loyalty.stamps} more completed order{6 - loyalty.stamps === 1 ? '' : 's'} to a free spud</span>
               </div>
               <div className="grid grid-cols-6 gap-2">
                 {[0, 1, 2, 3, 4, 5].map((idx) => {
@@ -203,9 +204,10 @@ export default function LoyaltyModal({ isOpen, onClose }: LoyaltyModalProps) {
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs font-body text-slate-600 space-y-1.5">
             <p className="font-bold text-ink">💡 How Spud Club Works:</p>
             <ul className="list-disc pl-4 space-y-1 text-[11px]">
-              <li>Earn 10 points for every £1 spent online or at our Market Square till.</li>
-              <li>Every order placed stamps 1 slot on your card. 6 stamps = 1 completely Free Potato!</li>
-              <li>Points never expire as long as your account remains active.</li>
+              <li>Earn 10 points for every £1 you spend ordering online, added once your order is collected or delivered.</li>
+              <li>Every completed online order stamps your card. 6 stamps = a free spud voucher.</li>
+              <li>Claiming a reward gives you a one-off voucher code that's added to your basket.</li>
+              <li>Points and vouchers are kept on this device and browser.</li>
             </ul>
           </div>
         </div>

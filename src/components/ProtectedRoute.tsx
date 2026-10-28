@@ -7,7 +7,7 @@ import {
   logout,
   isAdminVaultUnlocked,
   touchAdminVault,
-  loginAdminConsole,
+  loginAdminConsoleVerified,
   isAdminConsoleRole,
   type AuthUser,
   type Role,
@@ -15,7 +15,7 @@ import {
 import {
   isTerminalEnrolled,
   isStoreHardwareLockEnforced,
-  enrollAndClaimMasterTerminal,
+  enrollThisDevice,
   getLocalDeviceId,
   getLocalDeviceName,
   subscribeMasterTerminal,
@@ -59,6 +59,8 @@ export default function ProtectedRoute({
   const [adminPin, setAdminPin] = useState('')
   const [adminPasskey, setAdminPasskey] = useState('')
   const [enrollError, setEnrollError] = useState<string | null>(null)
+  const [enrolling, setEnrolling] = useState(false)
+  const [passkeyRequested, setPasskeyRequested] = useState(false)
 
   const location = useLocation()
 
@@ -174,18 +176,35 @@ export default function ProtectedRoute({
 
   // 5. Store Hardware Lock: /pos, /till, and /staff are strictly for enrolled in-store hardware
   if (requireStoreTerminal && hardwareLockEnforced && !terminalEnrolled) {
-    const needPasskey = hasAdminPasskey()
-    const handleAdminEnrollDevice = (e: React.FormEvent) => {
+    const needPasskey = hasAdminPasskey() || passkeyRequested
+    // The owner who just verified on the sign-in screen is not asked for the PIN a second time.
+    const alreadyVerified = isAdminConsoleRole(user.role) && vaultUnlocked
+    const handleAdminEnrollDevice = async (e: React.FormEvent) => {
       e.preventDefault()
+      if (enrolling) return
       setEnrollError(null)
-      const res = loginAdminConsole(adminPin, needPasskey ? adminPasskey : undefined)
-      if (!res.ok || !res.user) {
-        setEnrollError(res.message || 'Invalid Admin credentials. Only the Store Admin can enroll a store terminal.')
-        setAdminPin('')
-        return
+      setEnrolling(true)
+      try {
+        let actor = user.name
+        if (!alreadyVerified) {
+          const res = await loginAdminConsoleVerified(adminPin, needPasskey ? adminPasskey : undefined)
+          if (!res.ok || !res.user) {
+            if (res.needPasskey) setPasskeyRequested(true)
+            setEnrollError(res.message || 'Invalid Admin credentials. Only the Store Admin can enroll a store terminal.')
+            setAdminPin('')
+            return
+          }
+          actor = res.user.name
+        }
+        const enrolled = await enrollThisDevice(actor, stationName.trim() || getLocalDeviceName(), stationRole)
+        if (!enrolled.ok) {
+          setEnrollError(enrolled.message)
+          return
+        }
+        setTerminalEnrolled(true)
+      } finally {
+        setEnrolling(false)
       }
-      enrollAndClaimMasterTerminal(res.user.name, stationName.trim() || getLocalDeviceName(), stationRole)
-      setTerminalEnrolled(true)
     }
 
     return (
@@ -247,22 +266,28 @@ export default function ProtectedRoute({
               </select>
             </div>
 
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
-                Store Admin PIN (Required to Enroll Hardware)
-              </label>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={8}
-                value={adminPin}
-                onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="Enter Admin / Owner PIN"
-                className="w-full rounded-xl border border-amber-400/40 bg-black/60 px-3 py-2.5 text-center font-mono text-xl tracking-[0.35em] text-white focus:border-amber-400 focus:outline-none"
-              />
-            </div>
+            {alreadyVerified ? (
+              <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
+                ✓ Verified as <strong>{user.name}</strong> — choose a name and role for this device, then enrol it.
+              </p>
+            ) : (
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
+                  Store Admin PIN (Required to Enroll Hardware)
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={adminPin}
+                  onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Enter Admin / Owner PIN"
+                  className="w-full rounded-xl border border-amber-400/40 bg-black/60 px-3 py-2.5 text-center font-mono text-xl tracking-[0.35em] text-white focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            )}
 
-            {needPasskey && (
+            {needPasskey && !alreadyVerified && (
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
                   Admin Master Passkey
@@ -285,9 +310,10 @@ export default function ProtectedRoute({
 
             <button
               type="submit"
-              className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition"
+              disabled={enrolling}
+              className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition disabled:opacity-60"
             >
-              🛡️ Authorize &amp; Enroll Store Terminal &rarr;
+              {enrolling ? 'Checking with the server…' : <>🛡️ Authorize &amp; Enroll Store Terminal &rarr;</>}
             </button>
           </form>
 

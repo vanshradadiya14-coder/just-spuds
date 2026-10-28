@@ -20,7 +20,8 @@ import {
 } from '../data/menu'
 import { DEFAULT_STORE_HOURS, SITE, parseTimeToDecimalHours, type StoreHoursConfig } from '../data/site'
 import { logAuditEvent } from './auditStore'
-import { markDocChanged, queueStockDelta, queueStockSet, registerDoc, registerStock } from './cloudSync'
+import { findRewardVoucher, LOYALTY_REWARD_PREFIXES } from './loyaltyStore'
+import { getDocSyncState, markDocChanged, queueStockDelta, queueStockSet, registerDoc, registerStock, subscribeSyncStatus } from './cloudSync'
 import type { CartLine } from '../hooks/useCart'
 
 export interface PromoCode {
@@ -92,35 +93,10 @@ const DEFAULT_PROMOS: PromoCode[] = [
     description: 'Free Meal Deal Upgrade (£1.95 discount)',
     active: true,
   },
-  {
-    code: 'EXTRACHEESE',
-    discountPence: 100,
-    minOrderPence: 500,
-    description: 'Spud Club Reward: Free Melted British Cheddar Scoop (£1.00 off)',
-    active: true,
-  },
-  {
-    code: 'FREEDRINK',
-    discountPence: 275,
-    minOrderPence: 500,
-    description: 'Spud Club Reward: Free Barista Coffee or Cold Drink (£2.75 off)',
-    active: true,
-  },
-  {
-    code: 'FREESIDE',
-    discountPence: 150,
-    minOrderPence: 500,
-    description: 'Spud Club Reward: Free Crunchy Slaw or Crisps Side (£1.50 off)',
-    active: true,
-  },
-  {
-    code: 'FREESPUD',
-    discountPence: 650,
-    minOrderPence: 650,
-    description: 'Spud Club Reward: Free Handcrafted King Edward Spud (£6.50 off)',
-    active: true,
-  },
 ]
+// Spud Club rewards are NOT shop vouchers: each claim issues a one-off code to
+// that customer (services/loyaltyStore.ts). As plain codes, "FREESPUD" gave
+// anyone £6.50 off any order, as often as they liked.
 
 const defaultDailyHours = { openTime: '11:00', closeTime: '22:00', isClosed: false }
 
@@ -584,7 +560,10 @@ export function getPromoCodes(): PromoCode[] {
       localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(DEFAULT_PROMOS))
       return DEFAULT_PROMOS
     }
-    const stored: PromoCode[] = JSON.parse(raw)
+    const parsed: PromoCode[] = JSON.parse(raw)
+    // Drop the loyalty reward names a previous build merged in as public vouchers.
+    const stored = parsed.filter((p) => !LOYALTY_REWARD_PREFIXES.includes(p.code.toUpperCase()))
+    if (stored.length !== parsed.length) localStorage.setItem(PROMOS_STORAGE_KEY, JSON.stringify(stored))
     const existingCodes = new Set(stored.map((p) => p.code.toUpperCase()))
     let hasNew = false
     const merged = [...stored]
@@ -600,6 +579,26 @@ export function getPromoCodes(): PromoCode[] {
     return merged
   } catch {
     return DEFAULT_PROMOS
+  }
+}
+
+/**
+ * The voucher a customer typed, if they may use it: an active shop promotion,
+ * or a Spud Club reward voucher issued in this browser and not yet used.
+ */
+export function getRedeemablePromo(code: string): PromoCode | undefined {
+  const clean = code.trim().toUpperCase()
+  if (!clean) return undefined
+  const shop = getPromoCodes().find((p) => p.code.toUpperCase() === clean && p.active)
+  if (shop) return shop
+  const reward = findRewardVoucher(clean)
+  if (!reward) return undefined
+  return {
+    code: reward.code,
+    discountPence: reward.discountPence,
+    minOrderPence: reward.minOrderPence,
+    description: `Spud Club reward: ${reward.title}`,
+    active: true,
   }
 }
 
@@ -788,6 +787,22 @@ if (typeof window !== 'undefined') {
         setTimeout(() => markDocChanged('menu.extras'), 0)
       }
     },
+  })
+  // A device that already held the server's copy before the price list changed
+  // never re-applies it, so fromRemote above never ran there. Right after a sync
+  // the local copy IS the server's; if it is still on the old list, publish the
+  // migrated one (only staff devices publish).
+  subscribeSyncStatus((status) => {
+    if (status.state !== 'synced' || !status.staffDevice || getDocSyncState('menu.extras') !== 'remote') return
+    try {
+      const raw = localStorage.getItem(EXTRAS_STORAGE_KEY)
+      if (!raw) return
+      const { list, changed } = migrateSpudExtras(JSON.parse(raw))
+      if (!changed) return
+      localStorage.setItem(EXTRAS_STORAGE_KEY, JSON.stringify(list))
+      markDocChanged('menu.extras')
+      notifyListeners()
+    } catch {}
   })
   registerDoc({ name: 'menu.sauces', storageKey: SAUCES_STORAGE_KEY, notify: notifyListeners })
   registerDoc({ name: 'menu.promos', storageKey: PROMOS_STORAGE_KEY, notify: notifyListeners })
