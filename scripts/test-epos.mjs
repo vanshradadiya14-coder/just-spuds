@@ -68,7 +68,11 @@ process.env.VITE_SUPABASE_URL = 'https://placeholder.supabase.co'
 process.env.VITE_SUPABASE_ANON_KEY = 'placeholder'
 process.env.VITE_FIREBASE_API_KEY = ''
 
+// configFile: false — the app's vite.config.ts warms up the whole client app and
+// pre-bundles React at start-up; when that finished mid-run Vite reloaded its module
+// graph and the tests ended up talking to two copies of the same store.
 const vite = await createServer({
+  configFile: false,
   server: { middlewareMode: true, hmr: false, watch: null },
   appType: 'custom',
   logLevel: 'error',

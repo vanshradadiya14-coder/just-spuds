@@ -6,6 +6,7 @@
  */
 
 import { markDocChanged, registerDoc } from './cloudSync'
+import { isServerAuth } from './serverAuthState'
 import { checkSaltedPin, saltedPinHash } from './staffRoster'
 
 export interface DriverProfile {
@@ -140,7 +141,7 @@ export function getDrivers(): DriverProfile[] {
 /** The active driver whose PIN this is. */
 export function findDriverByPin(pin: string): DriverProfile | undefined {
   const clean = pin.trim()
-  if (!clean) return undefined
+  if (!clean || isServerAuth()) return undefined
   return getDrivers().find((d) => d.status === 'ACTIVE' && checkSaltedPin(d.pinHash, clean))
 }
 
@@ -195,15 +196,16 @@ export function updateDriverProfile(driver: Partial<DriverProfile> & { id: strin
 }
 
 export function createDriver(
-  driverData: Omit<DriverProfile, 'id' | 'createdAt' | 'deliveriesCompletedCount' | 'todayEarningsPence' | 'rating' | 'pinHash'> & { pin: string },
+  driverData: Omit<DriverProfile, 'id' | 'createdAt' | 'deliveriesCompletedCount' | 'todayEarningsPence' | 'rating' | 'pinHash'> & { pin: string; id?: string },
 ): DriverProfile {
   const drivers = getDrivers()
-  const { pin, ...profile } = driverData
+  const { pin, id, ...profile } = driverData
   const newDriver: DriverProfile = {
     ...profile,
-    pinHash: saltedPinHash(pin),
+    // With server sign-in the PIN goes to the server instead (pin is then empty).
+    pinHash: pin ? saltedPinHash(pin) : undefined,
     defaultPin: false,
-    id: `usr-driver-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    id: id || `usr-driver-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
     rating: 5.0,
     deliveriesCompletedCount: 0,
     todayEarningsPence: 0,

@@ -18,7 +18,7 @@ import {
   subscribeInstallPrompt,
   triggerInstallPrompt,
 } from '../../services/installPromptStore'
-import { isManagerOrAdmin, getCurrentUser, verifyManagerPin } from '../../services/authStore'
+import { isManagerOrAdmin, getCurrentUser, verifyManagerPinAsync } from '../../services/authStore'
 import { playPOSTouchTone } from '../../services/printerBridge'
 
 interface TerminalSoftwareEnrollmentModalProps {
@@ -62,10 +62,10 @@ export default function TerminalSoftwareEnrollmentModal({
 
   if (!isOpen) return null
 
-  const handleVerifyManagerPin = (e: React.FormEvent) => {
+  const handleVerifyManagerPin = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!managerPin.trim()) return
-    const res = verifyManagerPin(managerPin)
+    const res = await verifyManagerPinAsync(managerPin)
     if (res.ok) {
       playPOSTouchTone('action')
       setManagerAuthorized(true)

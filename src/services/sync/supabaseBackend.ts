@@ -29,6 +29,21 @@ export function createSupabaseBackend(): RemoteBackend | null {
   if (!client) return null
 
   return {
+    async rpc(fn, args) {
+      try {
+        const { data, error, status } = await client.rpc(fn, args)
+        if (!error) return { ok: true, data }
+        const code = (error as { code?: string }).code || ''
+        if (code === 'PGRST202' || status === 404) return { ok: false, kind: 'missing', message: error.message }
+        if (!status) return { ok: false, kind: 'network', message: error.message }
+        if (status === 401 || status === 403 || code === '28000' || code === '42501') return { ok: false, kind: 'denied', message: error.message }
+        warn(`rpc ${fn}`, error)
+        return { ok: false, kind: 'error', message: error.message }
+      } catch (err) {
+        return { ok: false, kind: 'network', message: err instanceof Error ? err.message : String(err) }
+      }
+    },
+
     async listKv(prefix, opts) {
       try {
         let q = client.from(KV_TABLE).select('store_id,settings,updated_at').like('store_id', `${prefix}%`)

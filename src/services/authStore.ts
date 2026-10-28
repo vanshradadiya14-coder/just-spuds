@@ -5,10 +5,21 @@
  * and persistent auth state across tabs.
  */
 
-import { getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe, syncNow } from './cloudSync'
+import { callServer, getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe, syncNow } from './cloudSync'
 import { matchStaffPin, pinFingerprint, subscribeRoster, getRoster, getPinSalt, type StaffMember } from './staffRoster'
 import { findDriverByPin, getDrivers, isDriverPinTaken, subscribeDrivers } from './driverStore'
 import { hasAdminPasskey, verifyAdminPasskey } from './terminalLockStore'
+import { getServerAuthMode, isDevicePaired, isServerAuth, setServerAuthMode, subscribeServerAuth } from './serverAuthState'
+import {
+  matchOfflinePin,
+  pruneOfflinePins,
+  rememberOfflinePin,
+  serverChangeMyPin,
+  serverCheckPin,
+  serverSession,
+  serverSignOut,
+  type ServerPerson,
+} from './staffAuth'
 import { sha256Hex } from '../utils/sha256'
 
 // Firebase is only needed for Google sign-in, so it is loaded on demand rather
@@ -45,6 +56,16 @@ export interface AuthUser {
   pinFp?: string
   /** Cryptographic HMAC-style session signature preventing DevTools localStorage tampering. */
   sessionSig?: string
+  /**
+   * How the PIN was checked: 'server' = by the shop's database (serverToken is
+   * the session), 'offline' = on this paired device while the server was
+   * unreachable. Unset = the old in-browser check.
+   */
+  authMode?: 'server' | 'offline'
+  serverToken?: string
+  /** Signed in with a temporary PIN: must choose their own before doing anything else. */
+  mustChangePin?: boolean
+  kind?: 'staff' | 'driver'
 }
 
 const AUTH_STORAGE_KEY = 'just_spuds_auth_user_v1'
@@ -267,6 +288,20 @@ export function getCurrentUser(): AuthUser | null {
     }
     if (parsed.role === 'CUSTOMER') {
       return parsed
+    }
+    if (parsed.authMode) {
+      // Checked by the server: valid on a paired device, for someone the shop
+      // still lists as active in that role. The session check below catches the rest.
+      if (!isServerAuth() || !isDevicePaired() || (parsed.authMode === 'server' && !parsed.serverToken) || !stillListed(parsed)) {
+        localStorage.removeItem(AUTH_STORAGE_KEY)
+        return null
+      }
+      return parsed
+    }
+    // A PIN session from before the shop switched to server sign-in.
+    if (isServerAuth()) {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      return null
     }
     // Cryptographic & live-roster verification for every internal role (prevents DevTools tampering)
     if (parsed.role === 'DRIVER') {
@@ -502,6 +537,26 @@ export async function loginAdminConsoleVerified(
   pin: string,
   passkey?: string,
 ): Promise<{ ok: boolean; user?: AuthUser; message: string; needPasskey?: boolean }> {
+  if (await usingServerSignIn()) {
+    const signed = await signInWithPin(pin)
+    if (!signed.ok || !signed.user) return signed
+    if (!isAdminConsoleRole(signed.user.role)) {
+      logout()
+      return { ok: false, message: '🚫 Restricted: Only the Store Admin / Owner can access the Admin Console.' }
+    }
+    await syncNow().catch(() => false)
+    if (getDocSyncState('terminal.registry') === 'unknown') {
+      logout()
+      return { ok: false, message: "Couldn't reach the server to check this shop's security settings. Check the internet connection and try again." }
+    }
+    if (hasAdminPasskey() && !verifyAdminPasskey(passkey || '')) {
+      logout()
+      recordPinFailure()
+      return { ok: false, needPasskey: true, message: '🔑 This shop uses an Admin master passkey — enter it as well as the PIN.' }
+    }
+    unlockAdminVault(signed.user)
+    return { ok: true, user: signed.user, message: `Admin Console unlocked for ${signed.user.name}.` }
+  }
   const res = loginAdminConsole(pin, passkey)
   if (!res.ok || !isCloudSyncConfigured()) return res
   await syncNow().catch(() => false)
@@ -515,6 +570,184 @@ export async function loginAdminConsoleVerified(
     return { ok: false, needPasskey: true, message: '🔑 This shop uses an Admin master passkey — enter it as well as the PIN.' }
   }
   return res
+}
+
+// ---------------------------------------------------------------------------
+// Server sign-in (supabase/migrations/20261028_staff_security.sql)
+// ---------------------------------------------------------------------------
+
+export interface SignInResult {
+  ok: boolean
+  user?: AuthUser
+  message: string
+  /** Signed in with a temporary PIN — the portal asks for a new one first. */
+  mustChangePin?: boolean
+}
+
+/** Is the shop's database checking PINs? Asks it once if this browser doesn't know yet. */
+export async function usingServerSignIn(): Promise<boolean> {
+  if (getServerAuthMode() === 'unknown' && isCloudSyncConfigured()) {
+    const res = await callServer('jsp_auth_status', {})
+    if (res.ok && (res.data as { enabled?: boolean } | null)?.enabled) setServerAuthMode('server')
+    else if (!res.ok && res.kind === 'missing') setServerAuthMode('legacy')
+  }
+  return isServerAuth()
+}
+
+function serverUser(person: Pick<ServerPerson, 'id' | 'name' | 'role' | 'kind'> & { email?: string }, mode: 'server' | 'offline', token?: string, mustChange = false): AuthUser {
+  return {
+    id: person.id,
+    name: person.name,
+    email: person.email || '',
+    role: person.role,
+    status: 'ACTIVE',
+    kind: person.kind,
+    authMode: mode,
+    serverToken: token,
+    mustChangePin: mustChange,
+    // Ties the admin vault to this session.
+    pinFp: sha256Hex(`${mode}:${token || person.id}`).slice(0, 12),
+    ...STORE_FIELDS,
+  }
+}
+
+/** Is a server-checked account still listed as active in that role on this device? */
+function stillListed(user: AuthUser): boolean {
+  if (user.role === 'DRIVER' || user.kind === 'driver') {
+    if (getDocSyncState('drivers') !== 'remote') return true
+    const driver = getDrivers().find((d) => d.id === user.id)
+    return !driver || driver.status === 'ACTIVE'
+  }
+  if (getDocSyncState('staff.roster') !== 'remote') return true
+  const member = getRoster().find((m) => m.id === user.id)
+  // Someone added since this device last synced isn't listed yet; the server session check covers them.
+  return !member || (member.status === 'ACTIVE' && member.role === user.role)
+}
+
+function mirrorServerLock(retryAfterSeconds: number) {
+  writePinLock({ fails: PIN_MAX_ATTEMPTS, until: Date.now() + retryAfterSeconds * 1000 })
+}
+
+const OFFLINE_HINT = 'Only people who have signed in on this device in the last 7 days can sign in while it is offline.'
+
+/** Identify someone by PIN without opening a session (manager approval, time clock). */
+export async function verifyPinAsync(pin: string): Promise<PinCheck> {
+  if (!(await usingServerSignIn())) return checkPin(pin)
+  const remaining = getPinLockRemainingMs()
+  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
+  const res = await serverCheckPin(pin, false)
+  if (res.ok) {
+    clearPinFailures()
+    void rememberOfflinePin(res.person, pin)
+    return { ok: true, user: serverUser(res.person, 'server', undefined, res.mustChange) }
+  }
+  if (res.error === 'network') {
+    const offline = await matchOfflinePin(pin)
+    if (offline) {
+      clearPinFailures()
+      return { ok: true, user: serverUser(offline, 'offline') }
+    }
+    recordPinFailure()
+    return { ok: false, message: `${res.message} ${OFFLINE_HINT}` }
+  }
+  if (res.error === 'locked' && res.retryAfter) mirrorServerLock(res.retryAfter)
+  return { ok: false, message: res.message }
+}
+
+export async function verifyManagerPinAsync(pin: string): Promise<{ ok: boolean; managerName?: string; role?: Role; message?: string }> {
+  if (!(await usingServerSignIn())) return verifyManagerPin(pin)
+  const res = await verifyPinAsync(pin)
+  if (!res.ok) return { ok: false, message: res.message }
+  if (isManagerOrAdmin(res.user.role)) return { ok: true, managerName: res.user.name, role: res.user.role }
+  return { ok: false, message: 'That PIN is not a supervisor or manager PIN.' }
+}
+
+/**
+ * Sign in with a PIN. On a shop whose database checks PINs this asks the
+ * server (from a paired device); otherwise it is the old in-browser check.
+ */
+export async function signInWithPin(pin: string, allowedRoles?: Role[]): Promise<SignInResult> {
+  if (!(await usingServerSignIn())) return loginWithPin(pin, allowedRoles)
+  const remaining = getPinLockRemainingMs()
+  if (remaining > 0) return { ok: false, message: pinLockMessage(remaining) }
+
+  const res = await serverCheckPin(pin, true)
+  let user: AuthUser
+  if (res.ok && res.session) {
+    clearPinFailures()
+    user = serverUser(res.person, 'server', res.session.token, res.mustChange)
+    void rememberOfflinePin(res.person, pin)
+  } else if (!res.ok && res.error === 'network') {
+    const offline = await matchOfflinePin(pin)
+    if (!offline) {
+      recordPinFailure()
+      return { ok: false, message: `${res.message} ${OFFLINE_HINT}` }
+    }
+    clearPinFailures()
+    user = serverUser(offline, 'offline')
+  } else {
+    if (!res.ok && res.error === 'locked' && res.retryAfter) mirrorServerLock(res.retryAfter)
+    return { ok: false, message: res.ok ? 'Sign-in failed. Try again.' : res.message }
+  }
+
+  if (allowedRoles && !hasRole(user, allowedRoles)) {
+    if (user.serverToken) void serverSignOut(user.serverToken)
+    return { ok: false, message: 'That PIN does not have access to this area.' }
+  }
+  // Someone added since this device last synced: fetch the staff list first.
+  if (!getRoster().some((m) => m.id === user.id) && user.kind !== 'driver') await syncNow().catch(() => false)
+  const previous = getCurrentUser()
+  if (previous?.serverToken && previous.serverToken !== user.serverToken) void serverSignOut(previous.serverToken)
+  setCurrentUser(user)
+  const isAdminGate = allowedRoles && allowedRoles.length > 0 && allowedRoles.every((r) => MANAGEMENT_ROLES.includes(r))
+  if (isAdminGate && isAdminConsoleRole(user.role) && !user.mustChangePin) unlockAdminVault(user)
+  else lockAdminVault()
+  return {
+    ok: true,
+    user,
+    mustChangePin: user.mustChangePin,
+    message:
+      user.authMode === 'offline'
+        ? `Signed in offline as ${user.name}. Changes upload when the connection is back.`
+        : user.role === 'DRIVER'
+        ? `Welcome back, Courier ${user.name}!`
+        : `Welcome back, ${user.name}!`,
+  }
+}
+
+/** Choose your own PIN (required after a temporary one). Other devices you were signed in on are signed out. */
+export async function changeMyPin(newPin: string): Promise<{ ok: boolean; message: string }> {
+  const user = getCurrentUser()
+  if (!user?.serverToken) return { ok: false, message: 'Sign in again (online) to change your PIN.' }
+  const res = await serverChangeMyPin(user.serverToken, newPin)
+  if (!res.ok) {
+    if (res.error === 'session') logout()
+    return { ok: false, message: res.message }
+  }
+  setCurrentUser({ ...user, mustChangePin: false })
+  const fresh = await serverSession(user.serverToken)
+  if (fresh.ok) void rememberOfflinePin(fresh.person, newPin)
+  void syncNow().catch(() => false)
+  return { ok: true, message: res.message }
+}
+
+/** The signed-in person's server session, for the owner tools in Admin. */
+export function currentSessionToken(): string | null {
+  return getCurrentUser()?.serverToken || null
+}
+
+/** Ask the server whether this session is still good (PIN changed, disabled, device unpaired …). */
+export async function checkServerSession(): Promise<void> {
+  const user = getCurrentUser()
+  if (!user || user.authMode !== 'server' || !user.serverToken) return
+  const res = await serverSession(user.serverToken)
+  if (res.ok) {
+    if (res.mustChange !== Boolean(user.mustChangePin) || res.person.name !== user.name) {
+      setCurrentUser({ ...user, mustChangePin: res.mustChange, name: res.person.name })
+    }
+  } else if (res.error === 'session' || res.error === 'device') {
+    logout()
+  }
 }
 
 export async function loginWithGoogle(): Promise<{ ok: boolean; user?: AuthUser; message: string }> {
@@ -549,6 +782,8 @@ export async function loginWithGoogle(): Promise<{ ok: boolean; user?: AuthUser;
 }
 
 export function logout(): void {
+  const token = getCurrentUser()?.serverToken
+  if (token) void serverSignOut(token)
   loadFirebase()
     .then((firebase) => firebase.signOutFromFirebase())
     .catch(() => {})
@@ -592,6 +827,27 @@ if (typeof window !== 'undefined') {
       management: active && (user!.role === 'SUPER_ADMIN' || MANAGEMENT_ROLES.includes(user!.role)),
     }
   })
-  subscribeRoster(() => validateSession())
+  subscribeRoster((members) => {
+    // A PIN changed elsewhere, or someone was disabled: their offline sign-in on this device goes too.
+    if (isServerAuth()) {
+      pruneOfflinePins((entry) => {
+        const m = members.find((x) => x.id === entry.id)
+        if (!m) return true
+        return m.status === 'ACTIVE' && !(m.pinSetAt && entry.pinSetAt && m.pinSetAt !== entry.pinSetAt)
+      })
+    }
+    validateSession()
+  })
   subscribeDrivers(() => validateSession())
+  // Switching to server sign-in (or being unpaired) ends sessions from before.
+  subscribeServerAuth(() => validateSession())
+  const timer = setInterval(() => {
+    if (isServerAuth()) void checkServerSession()
+  }, 60_000)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && isServerAuth()) void checkServerSession()
+    })
+  }
 }

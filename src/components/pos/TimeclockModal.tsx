@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { checkPin, type AuthUser } from '../../services/authStore'
+import { verifyPinAsync, type AuthUser } from '../../services/authStore'
 import {
   clockIn,
   clockOut,
@@ -41,12 +41,13 @@ export default function TimeclockModal({ onClose, user }: TimeclockModalProps) {
     return subscribeTimeclock(() => setEntry(getActiveTimeclockEntry(who.id)))
   }, [who])
 
-  const identify = (e: React.FormEvent) => {
+  const identify = async (e: React.FormEvent) => {
     e.preventDefault()
     // Counts towards the PIN lockout like every other prompt — the time clock must
     // not be a way to try PINs without limit.
-    const res = checkPin(pin)
+    const typed = pin
     setPin('')
+    const res = await verifyPinAsync(typed)
     if (!res.ok) {
       setError(res.message)
       return

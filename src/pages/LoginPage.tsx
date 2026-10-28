@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
-  loginWithPin,
+  signInWithPin,
+  usingServerSignIn,
   loginAdminConsoleVerified,
   loginWithGoogle,
   getCurrentUser,
@@ -22,6 +23,8 @@ import {
   isStoreHardwareLockEnforced,
   hasAdminPasskey,
 } from '../services/terminalLockStore'
+import { isDevicePaired, isServerAuth, subscribeServerAuth } from '../services/serverAuthState'
+import PairDeviceScreen from '../components/PairDeviceScreen'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -76,6 +79,20 @@ export default function LoginPage() {
   const hardwareLockActive = isStoreHardwareLockEnforced() && !isDriverTarget
   const [passkeyRequested, setPasskeyRequested] = useState(false)
   const [verifying, setVerifying] = useState(false)
+  // Server sign-in: PINs only work on a device the shop has paired.
+  const [serverMode, setServerMode] = useState(() => isServerAuth())
+  const [paired, setPaired] = useState(() => isDevicePaired())
+  const needsPairing = serverMode && !paired && portalMode !== 'customer'
+
+  useEffect(() => {
+    const unsub = subscribeServerAuth(() => {
+      setServerMode(isServerAuth())
+      // Pairing itself is reported by the pairing screen once enrolment is done too.
+      if (!isDevicePaired()) setPaired(false)
+    })
+    void usingServerSignIn().then((on) => setServerMode(on))
+    return unsub
+  }, [])
   const requirePasskey = (portalMode === 'admin' || (portalMode === 'pos' && hardwareLockActive && !terminalEnrolled)) && (hasAdminPasskey() || passkeyRequested)
 
   // Keep live clock running for POS terminal aesthetic
@@ -117,12 +134,14 @@ export default function LoginPage() {
       if (portalMode === 'pos') {
 
         const allowedRoles = isDriverTarget ? (['DRIVER', ...MANAGEMENT_ROLES] as const) : SHOP_FLOOR_ROLES
-        const res = loginWithPin(cleanPin, [...allowedRoles])
+        setVerifying(true)
+        const res = await signInWithPin(cleanPin, [...allowedRoles])
+        setVerifying(false)
         if (res.ok) {
           playPOSTouchTone('action')
           navigate(defaultTarget, { replace: true })
         } else {
-          if (!isDriverTarget && (cleanPin === '7777' || cleanPin === '7778' || cleanPin === '7779')) {
+          if (!serverMode && !isDriverTarget && (cleanPin === '7777' || cleanPin === '7778' || cleanPin === '7779')) {
             setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
           } else {
             setError(res.message || 'Invalid PIN.')
@@ -132,7 +151,7 @@ export default function LoginPage() {
         }
       }
     },
-    [portalMode, requirePasskey, passkey, defaultTarget, navigate, hardwareLockActive, terminalEnrolled, isDriverTarget, verifying],
+    [portalMode, requirePasskey, passkey, defaultTarget, navigate, hardwareLockActive, terminalEnrolled, isDriverTarget, verifying, serverMode],
   )
 
   const handleKeypadPress = useCallback((num: string) => {
@@ -155,7 +174,7 @@ export default function LoginPage() {
 
   // Support physical keyboard numpad on POS & Admin login screens
   useEffect(() => {
-    if (portalMode === 'customer') return
+    if (portalMode === 'customer' || needsPairing) return
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
@@ -175,7 +194,7 @@ export default function LoginPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [portalMode, pin, handleKeypadPress, handleBackspace, handleClear, submitPinLogin])
+  }, [portalMode, pin, handleKeypadPress, handleBackspace, handleClear, submitPinLogin, needsPairing])
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -251,7 +270,10 @@ export default function LoginPage() {
         </header>
 
         {/* CENTER AUTHENTICATION CARD (FITS 100% WITHOUT SCROLLING) */}
-        <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center py-2">
+        <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center overflow-y-auto py-2">
+          {needsPairing ? (
+            <PairDeviceScreen portal={isDriverTarget ? 'driver' : 'pos'} onDone={() => setPaired(true)} />
+          ) : (
           <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-4 sm:p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
             {/* Terminal Title */}
             <div className="text-center mb-3">
@@ -348,12 +370,15 @@ export default function LoginPage() {
                 disabled={pin.length < 4}
                 className="w-full rounded-2xl bg-amber-400 py-2.5 sm:py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 active:scale-[0.99] transition mt-2 disabled:opacity-40"
               >
-                {hardwareLockActive && !terminalEnrolled
+                {verifying
+                  ? 'Checking…'
+                  : hardwareLockActive && !terminalEnrolled
                   ? 'Verify Admin & Enroll Store Hardware →'
                   : 'Unlock Store Terminal →'}
               </button>
             </form>
           </div>
+          )}
         </main>
 
         {/* BOTTOM TERMINAL FOOTER */}
@@ -395,7 +420,10 @@ export default function LoginPage() {
           </div>
         </header>
 
-        <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center py-2">
+        <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center overflow-y-auto py-2">
+          {needsPairing ? (
+            <PairDeviceScreen portal="admin" onDone={() => setPaired(true)} />
+          ) : (
           <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
             <div className="text-center mb-4">
               <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-lg ring-2 ring-amber-400/50">
@@ -486,10 +514,11 @@ export default function LoginPage() {
                 disabled={pin.length < 4}
                 className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition mt-2 disabled:opacity-40"
               >
-                Unlock Admin Vault &rarr;
+                {verifying ? 'Checking…' : <>Unlock Admin Vault &rarr;</>}
               </button>
             </form>
           </div>
+          )}
         </main>
 
         <footer className="relative z-10 w-full border-t border-white/10 pt-2 px-2 flex items-center justify-between text-xs text-slate-500 shrink-0">

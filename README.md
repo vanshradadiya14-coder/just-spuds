@@ -3,7 +3,8 @@
 ```bash
 npm install
 npm run dev        # http://localhost:5174
-npm test           # exercises the real store modules (stock, roles, till, checkout, sync, VAT)
+npm test           # exercises the real store modules (stock, roles, till, checkout, sync, VAT),
+                   # then runs the sign-in SQL in real Postgres (PGlite) and the app against it
 node scripts/probe-sync-readonly.mjs   # read-only check that the live Supabase queries are valid
 ```
 
@@ -13,9 +14,10 @@ Open **`/admin` → 🚀 Go-Live** on the owner's laptop. It checks everything l
 and links to each fix:
 
 1. **All devices in sync** — green once the laptop has talked to Supabase.
-2. **Change every starter PIN** (Staff PINs and Driver PINs). The starter PINs
-   ship with the source code, which is public — until they are changed anyone
-   who reads it could sign in. New PINs are 4–8 digits; use 6 for managers.
+2. **Switch on server sign-in** (see *Staff sign-in on the server* below). It
+   retires the starter PINs that ship with the public source code, moves PIN
+   checks to the database and makes every till, kitchen screen and phone pair
+   once with a code.
 3. **Business details** — shop phone, address and (only if VAT-registered) the
    VAT number. Receipts, the website footer and "call the shop" links use them.
 4. Set **opening hours** (Store Ops) and check **menu prices, VAT rates and
@@ -29,9 +31,9 @@ and links to each fix:
    device drops pre-launch orders, shifts, timecards and audit entries (menu,
    stock, staff and settings are kept). Then **switch online ordering on**.
 
-Every staff device needs one sign-in with a staff PIN to become a "staff
-device" — after that it receives all orders even while its PIN screen is locked
-(the kitchen tablet keeps ringing).
+Every staff device needs to be paired (server sign-in) or have one sign-in with
+a staff PIN to become a "staff device" — after that it receives all orders even
+while its PIN screen is locked (the kitchen tablet keeps ringing).
 
 That's it. **No asset step is required** — see below.
 
@@ -83,9 +85,10 @@ lands on its own portal and the shop-floor gates accept every shop-floor role.
 | `/cfd`    | Customer-facing display for the till     |
 
 Staff and PINs are managed in **Admin › Staff Accounts** (drivers in
-**Drivers & Fleet**). PINs are stored only as salted hashes and are never shown.
-The starter accounts' PINs are in `src/services/staffRoster.ts`; change them all
-before trading (see *Going live*).
+**Drivers & Fleet**). PINs are never shown. Until server sign-in is switched on
+(below) they are salted hashes in a shared document and the starter accounts'
+PINs are in `src/services/staffRoster.ts`; once it is on, the starter PINs stop
+working and PINs live only in the database.
 
 Manager-only actions on the till (refunds, no-sale, settings, price override,
 voiding a sent item) prompt for a supervisor-or-above PIN. Till settings (auto
@@ -93,13 +96,60 @@ receipt, drawer kick, siren, tap sounds, blind cash count, tip prompt, default
 float, USB printer) live behind ⚙️ on the till and sync to every open till tab.
 
 **PIN policy.** Staff sign in by PIN only — there is no email/password staff
-login, no on-screen PIN hints and no tap-to-sign-in profiles. Five wrong PINs
-lock every PIN prompt on that device for 30 s, doubling to a 5-minute cap.
-Changing someone's PIN (or disabling them) signs them out on every device. A
-browser that has never reached the server refuses the published starter PINs.
-The till locks itself after 5 idle minutes (⚙️ to change; optional "lock after
-every sale"). "Manual fix" (changing an order's payment or total) is a
-manager-only tool.
+login, no on-screen PIN hints and no tap-to-sign-in profiles. Changing
+someone's PIN (or disabling them) signs them out on every device. The till
+locks itself after 5 idle minutes (⚙️ to change; optional "lock after every
+sale"). "Manual fix" (changing an order's payment or total) is a manager-only
+tool. With server sign-in on (below), PINs are 4–8 digits and 6–8 for
+supervisors and managers; repeated, sequential and well-known PINs (including
+the old starter PINs) are refused.
+
+### Staff sign-in on the server
+
+`supabase/migrations/20261028_staff_security.sql` moves PINs off the browser:
+
+- **The database checks PINs.** They are stored as HMAC-SHA256 with a secret
+  key that never leaves the database, in a schema the website's public key
+  can't read. The public staff and driver lists carry no PIN data any more.
+- **Only paired devices can try a PIN.** A manager makes a one-time code in
+  **Admin › Staff Accounts › Paired devices** (8 characters, 15 minutes); typing
+  it on a till, kitchen screen or phone gives that device its own secret
+  token. Unpairing a lost device there signs out everyone on it.
+- **Wrong PINs lock the device on the server:** 5 in a row → 30 s, doubling to
+  15 min; 25 in a row blocks it until a manager presses Unblock.
+- **Temporary PINs.** A PIN a manager sets for someone else is temporary: that
+  person must choose their own at their first sign-in, and a temporary PIN
+  can't approve refunds or voids. Sessions are checked with the server every
+  minute, so a disabled account or changed PIN signs out everywhere.
+- **Offline.** If the internet drops, people who signed in on that device in
+  the last 7 days can still sign in there (a slow PBKDF2 copy of their own PIN
+  is kept on that device only). Everyone else waits for the connection.
+- **Settings table locked.** The public key can read the shop's public
+  documents (menu, prices, hours) and nothing else, and can't write at all.
+  Private documents (till list, blocked customers, shifts, timecards, audit
+  log) and every write go through functions that check the device's token.
+- The admin tab also lists recent sign-ins, wrong PINs and PIN changes.
+
+**Switching it on (once, in this order):**
+
+1. Deploy the app version that contains the migration file. It keeps using
+   the old sign-in until step 2, so nothing changes yet.
+2. Supabase › **SQL Editor** › New query › paste the whole file › **Run**. The
+   results panel shows a **temporary PIN** for each owner/manager account and a
+   **pairing code** (24 hours, up to 5 devices). Copy them somewhere safe.
+   (Running it before step 1 would lock the old app out — deploy first.)
+3. On the counter till open the till page → **Pair this device** → enter the
+   code, name it and pick what it is → sign in with the owner's temporary PIN →
+   choose a new PIN (6–8 digits).
+4. Pair the kitchen screen and any other device the same way (or make a fresh
+   code in Admin), then set a temporary PIN for each member of staff and each
+   driver in Admin. They choose their own at first sign-in.
+
+Every open device switches over by itself within a few minutes (or on reload)
+and asks to be paired. Re-running the SQL is safe: it keeps PINs and devices
+and only prints a new pairing code. Emergencies, from the SQL editor:
+`select jsp_private.reset_pin('usr-owner-1');` (new temporary PIN) and
+`select jsp_private.new_pairing_code();`.
 
 **Screens.** Everything works from a phone up to a kitchen monitor. Below
 1024px the till turns into a tablet layout: categories become a swipeable
@@ -247,23 +297,22 @@ Staff screens get changes instantly (realtime) and poll every 20 s as a
 backstop; customer browsers poll. Every staff header shows a **Synced /
 Offline · N waiting** pill — tap it to sync now.
 
-**Security — next step after launch.** The site still talks to Supabase with the
-public anon key, and the tables allow the anon role to read and write, so a
-technically-minded visitor could read orders or edit data through the API.
-Sync hides other people's data from customer browsers and checks prices on
-staff screens, but the real fix is server-side: give staff devices a Supabase
-Auth login and tighten the Row Level Security policies so the anon role can
-only place orders and read the public menu. Worth doing in the first weeks.
-The same applies to staff PINs: the roster (salted PIN hashes) is a public
-document, so a 4-digit PIN can be guessed offline; the fix is a server-side
-PIN check (a Supabase function) once staff devices have their own login.
+**Security — what's left.** Once server sign-in is on, the settings table is
+locked as above. Two tables are still open to the public key because customer
+browsers write to them directly: `orders` (customers place and track orders —
+so order details, names and phone numbers can be read through the API) and
+`menu_stock`. The next step is the same pattern: order placement, tracking and
+staff updates through functions, with row security on both tables. Writes from
+a paired device are trusted per device; checking the signed-in person's role
+on the server for menu, price and settings changes would follow.
 
-**Till enrolment.** A new till or kitchen screen enrols with one owner PIN. It
-first loads the shop's till list from the server, and refuses if it can't, so
-enrolling never wipes the other tills or the admin passkey. Only a till
-(not a kitchen screen) can become the master till. The admin console also
-checks the server before it lets anyone in, and asks for the passkey when one
-is set.
+**Till enrolment.** With server sign-in, pairing a device as a till or kitchen
+screen also enrols it. Without it, a new till or kitchen screen enrols with one
+owner PIN. Either way the device first loads the shop's till list from the
+server, and refuses if it can't, so enrolling never wipes the other tills or
+the admin passkey. Only a till (not a kitchen screen) can become the master
+till. The admin console also checks the server before it lets anyone in, and
+asks for the passkey when one is set.
 
 ### VAT
 

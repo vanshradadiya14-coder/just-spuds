@@ -20,7 +20,7 @@ import {
 import {
   getCurrentUser,
   subscribeAuth,
-  loginWithPin,
+  signInWithPin,
   logout,
   hasRole,
   SHOP_FLOOR_ROLES,
@@ -172,10 +172,10 @@ export default function StaffKDSPage() {
   const toggleAlarmSound = () => updateTillSettings({ soundAlerts: !tillSettings.soundAlerts }, user?.name || 'Kitchen Staff')
 
 
-  const handlePinSubmit = (e?: React.FormEvent) => {
+  const handlePinSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!pinInput.trim()) return
-    const res = loginWithPin(pinInput)
+    const res = await signInWithPin(pinInput)
     if (res.ok) {
       setPinInput('')
       setPinError(null)

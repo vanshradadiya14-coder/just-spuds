@@ -58,10 +58,10 @@ import { formatDuration, getActiveTimeclockEntry, isOnBreak, subscribeTimeclock,
 import {
   getCurrentUser,
   subscribeAuth,
-  loginWithPin,
+  signInWithPin,
   logout,
   hasRole,
-  verifyManagerPin,
+  verifyManagerPinAsync,
   isManagerOrAdmin,
   isAdminConsoleRole,
   SHOP_FLOOR_ROLES,
@@ -382,10 +382,10 @@ export default function StaffPOSPage() {
     return () => clearTimeout(id)
   }, [flash])
 
-  const handlePinSubmit = (e?: React.FormEvent) => {
+  const handlePinSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!pinInput.trim()) return
-    const res = loginWithPin(pinInput)
+    const res = await signInWithPin(pinInput)
     if (res.ok) {
       setPinInput('')
       setPinError(null)
@@ -2619,8 +2619,8 @@ export default function StaffPOSPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  const check = verifyManagerPin(managerPinInput)
+                onClick={async () => {
+                  const check = await verifyManagerPinAsync(managerPinInput)
                   if (check.ok) {
                     playPOSTouchTone('action')
                     onManagerApproved?.(check.managerName || 'Manager')

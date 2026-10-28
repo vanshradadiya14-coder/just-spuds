@@ -55,7 +55,8 @@ import {
 import {
   getCurrentUser,
   subscribeAuth,
-  loginAdminConsole,
+  loginAdminConsoleVerified,
+  currentSessionToken,
   logout,
   hasRole,
   isPinTaken,
@@ -93,6 +94,8 @@ import MenuPopover from '../components/MenuPopover'
 import { usingDefaultPins } from '../services/staffRoster'
 import { orderVat, ordersVat } from '../services/vat'
 import { validateNewPin } from '../services/staffRoster'
+import { isServerAuth } from '../services/serverAuthState'
+import { adminPeople, adminSavePerson, adminSetPin, type ServerPerson } from '../services/staffAuth'
 import AlertSoundSettingsModal from '../components/staff/AlertSoundSettingsModal'
 import { dismissOrderAlert, subscribeOrderAlerts, type OnlineOrderAlert } from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
@@ -162,6 +165,18 @@ export default function AdminPage() {
   const [driverFormReg, setDriverFormReg] = useState('')
   const [driverFormPin, setDriverFormPin] = useState('')
   const [driverFormError, setDriverFormError] = useState<string | null>(null)
+  // Server sign-in: who has a PIN and whose is still temporary (Drivers tab).
+  const [serverPeople, setServerPeople] = useState<Record<string, ServerPerson>>({})
+  const refreshServerPeople = async () => {
+    const token = currentSessionToken()
+    if (!isServerAuth() || !token) return
+    const res = await adminPeople(token)
+    if (res.ok) setServerPeople(Object.fromEntries(res.people.map((p) => [p.id, p])))
+  }
+  useEffect(() => {
+    if (activeTab === 'drivers') void refreshServerPeople()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
 
   // New Topping / Sauce Form state
   const [newToppingName, setNewToppingName] = useState('')
@@ -246,9 +261,9 @@ export default function AdminPage() {
     dismissOrderAlert(orderId)
   }
 
-  const handleAdminPinSubmit = (e: React.FormEvent) => {
+  const handleAdminPinSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = loginAdminConsole(adminPin)
+    const res = await loginAdminConsoleVerified(adminPin)
     if (res.ok) {
       setAdminPin('')
       setAdminPinError(null)
@@ -654,10 +669,14 @@ export default function AdminPage() {
     setIsDriverModalOpen(true)
   }
 
-  const handleSaveDriverSubmit = (e: React.FormEvent) => {
+  const handleSaveDriverSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!driverFormName.trim() || !driverFormPhone.trim()) return
     const pin = driverFormPin.trim()
+    if (isServerAuth()) {
+      await saveDriverOnServer(pin)
+      return
+    }
     // PINs are hashed; a blank field on edit keeps the current one.
     if (pin || !editingDriver) {
       const check = validateNewPin(pin, editingDriver?.id, (p) => isPinTaken(p, editingDriver?.id))
@@ -694,8 +713,72 @@ export default function AdminPage() {
     setIsDriverModalOpen(false)
   }
 
-  const handleToggleDriverStatus = (driverId: string, currentStatus: DriverProfile['status']) => {
+  /**
+   * With server sign-in a driver's account and PIN live on the server (the PIN
+   * a manager sets is temporary: the driver picks their own at first sign-in);
+   * the shared driver list keeps only the profile.
+   */
+  const saveDriverOnServer = async (pin: string) => {
+    const token = currentSessionToken()
+    if (!token) {
+      setDriverFormError('Sign in again to manage drivers.')
+      return
+    }
+    if (pin && !/^\d{4,8}$/.test(pin)) {
+      setDriverFormError('PINs are 4 to 8 digits.')
+      return
+    }
+    if (!editingDriver && !pin) {
+      setDriverFormError('Set a temporary PIN for the new driver.')
+      return
+    }
+    const id = editingDriver?.id || `usr-driver-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`
+    const saved = await adminSavePerson(token, { id, kind: 'driver', name: driverFormName.trim(), email: driverFormEmail.trim() })
+    if (!saved.ok) {
+      setDriverFormError(saved.message)
+      return
+    }
+    if (pin) {
+      const set = await adminSetPin(token, id, pin)
+      if (!set.ok) {
+        setDriverFormError(set.message)
+        if (!editingDriver) return
+      }
+    }
+    const profile = {
+      name: driverFormName.trim(),
+      email: driverFormEmail.trim() || `${driverFormName.toLowerCase().replace(/\s+/g, '.')}@justspuds.uk`,
+      phone: driverFormPhone.trim(),
+      vehicleType: driverFormVehicle,
+    }
+    if (editingDriver) {
+      updateDriverProfile({ id, ...profile, vehicleReg: driverFormReg.trim().toUpperCase() })
+    } else {
+      createDriver({
+        ...profile,
+        id,
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        vehicleReg: driverFormReg.trim().toUpperCase() || 'AY24 SPD',
+        status: 'ACTIVE',
+        isOnline: false,
+        pin: '',
+      })
+    }
+    setDrivers(getDrivers())
+    void refreshServerPeople()
+    setIsDriverModalOpen(false)
+  }
+
+  const handleToggleDriverStatus = async (driverId: string, currentStatus: DriverProfile['status']) => {
     const nextStatus: DriverProfile['status'] = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'
+    if (isServerAuth()) {
+      const token = currentSessionToken()
+      const res = token ? await adminSavePerson(token, { id: driverId, kind: 'driver', active: nextStatus === 'ACTIVE' }) : null
+      if (!res?.ok) {
+        window.alert(res?.message || 'Sign in again to manage drivers.')
+        return
+      }
+    }
     updateDriverProfile({ id: driverId, status: nextStatus })
     setDrivers(getDrivers())
   }
@@ -3181,7 +3264,19 @@ export default function AdminPage() {
                         </td>
 
                         <td className="p-4 font-body text-[11px] font-bold">
-                          {drv.defaultPin ? <span className="text-red-300">Starter PIN ⚠</span> : <span className="text-emerald-300">Own PIN ✓</span>}
+                          {isServerAuth() ? (
+                            !serverPeople[drv.id]?.hasPin ? (
+                              <span className="text-red-300">No PIN yet ⚠</span>
+                            ) : serverPeople[drv.id].mustChange ? (
+                              <span className="text-amber-300">Temporary PIN</span>
+                            ) : (
+                              <span className="text-emerald-300">Own PIN ✓</span>
+                            )
+                          ) : drv.defaultPin ? (
+                            <span className="text-red-300">Starter PIN ⚠</span>
+                          ) : (
+                            <span className="text-emerald-300">Own PIN ✓</span>
+                          )}
                         </td>
 
                         <td className="p-4">
@@ -3343,7 +3438,7 @@ export default function AdminPage() {
                 </div>
                 <div>
                   <label className="block text-[11px] uppercase font-bold text-white/60 mb-1">
-                    {editingDriver ? 'New PIN (blank = keep)' : 'Sign-in PIN'}
+                    {editingDriver ? 'New PIN (blank = keep)' : isServerAuth() ? 'Temporary PIN' : 'Sign-in PIN'}
                   </label>
                   <input
                     type="password"

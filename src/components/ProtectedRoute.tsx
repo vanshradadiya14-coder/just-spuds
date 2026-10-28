@@ -23,6 +23,7 @@ import {
   type StationRole,
 } from '../services/terminalLockStore'
 import FixedAmbientBackdrop from './FixedAmbientBackdrop'
+import ChangePinScreen from './ChangePinScreen'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -124,6 +125,11 @@ export default function ProtectedRoute({
         </div>
       </div>
     )
+  }
+
+  // 2b. Signed in with a temporary PIN: choose your own before anything else.
+  if (user.mustChangePin) {
+    return <ChangePinScreen user={user} />
   }
 
   // 3. Role check: signed in, but lacks permission for this specific portal (e.g. Cashier or Supervisor opening /admin)

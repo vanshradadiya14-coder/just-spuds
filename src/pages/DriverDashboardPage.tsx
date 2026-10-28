@@ -16,7 +16,7 @@ import {
   getDriverTodayEarnings,
   type DriverProfile,
 } from '../services/driverStore'
-import { getCurrentUser, loginWithPin, logout, hasRole, type AuthUser } from '../services/authStore'
+import { getCurrentUser, signInWithPin, logout, hasRole, type AuthUser } from '../services/authStore'
 import {
   registerServiceWorker,
   getNotificationPermission,
@@ -148,10 +148,10 @@ export default function DriverDashboardPage() {
   }, [completedDeliveries, historyFilter])
 
   // Handle PIN Login
-  const handlePinSubmit = (e: React.FormEvent) => {
+  const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setPinError('')
-    const res = loginWithPin(pinInput)
+    const res = await signInWithPin(pinInput)
     if (res.ok && res.user) {
       if (res.user.role !== 'DRIVER' && res.user.role !== 'SUPER_ADMIN') {
         setPinError('This screen is for couriers. Ask a manager to set up your driver PIN in Admin → Drivers.')

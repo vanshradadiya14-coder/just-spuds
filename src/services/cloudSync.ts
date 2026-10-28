@@ -26,8 +26,9 @@
  * disappears everywhere without deleting anything server-side.
  */
 import type { Order } from './orderStore'
-import type { KvRow, RemoteBackend, StockRow } from './sync/backend'
+import type { KvRow, RemoteBackend, RpcResult, StockRow } from './sync/backend'
 import { isSupabaseConfigured } from './supabaseConfig'
+import { clearDevicePairing, getDeviceToken, isServerAuth, setServerAuthMode } from './serverAuthState'
 
 const STORE_ID: string = (import.meta as { env?: Record<string, string> }).env?.VITE_STORE_ID || 'just_spuds'
 export const DOC_PREFIX = `${STORE_ID}::doc::`
@@ -242,7 +243,7 @@ async function flushDocs(): Promise<boolean> {
     sent[name] = m.localAt
   }
   if (rows.length === 0) return true
-  const ok = await backend.putKv(rows)
+  const ok = await putRows(rows)
   if (ok) {
     const after = readJSON<Record<string, DocMeta>>(META_KEY, {})
     Object.entries(sent).forEach(([name, at]) => {
@@ -304,7 +305,7 @@ async function pullDocs(): Promise<boolean> {
   if (!backend) return false
   const lists = await Promise.all([
     backend.listKv(DOC_PREFIX),
-    isStaffDevice() ? backend.listKv(PRIVATE_DOC_PREFIX) : Promise.resolve([] as KvRow[]),
+    isStaffDevice() ? listRows(PRIVATE_DOC_PREFIX) : Promise.resolve([] as KvRow[]),
   ])
   if (lists.some((l) => l === null)) return false
   const rows = ([] as KvRow[]).concat(...(lists as KvRow[][]))
@@ -454,7 +455,7 @@ async function flushRecords(): Promise<boolean> {
     const item = spec?.get(key.slice(sep + 2))
     if (item) rows.push({ key: `${RECORD_PREFIX}${key}`, value: item, updatedAt: item.updatedAt || now })
   })
-  const ok = rows.length === 0 ? true : await backend.putKv(rows)
+  const ok = rows.length === 0 ? true : await putRows(rows)
   if (ok) {
     const after = readJSON<string[]>(RECORD_OUTBOX_KEY, [])
     writeJSON(RECORD_OUTBOX_KEY, after.filter((k) => !outbox.includes(k)))
@@ -467,7 +468,7 @@ async function pullRecords(): Promise<boolean> {
   const since = getEpochAt()
   const results = await Promise.all(
     [...records.values()].map(async (spec) => {
-      const rows = await backend!.listKv(`${RECORD_PREFIX}${spec.collection}::`, { limit: spec.limit || 300, since })
+      const rows = await listRows(`${RECORD_PREFIX}${spec.collection}::`, { limit: spec.limit || 300, since })
       if (!rows) return false
       if (rows.length) spec.apply(rows.map((r) => r.value))
       return true
@@ -637,12 +638,91 @@ function applyEpoch(epoch: Epoch | null) {
 export async function startFresh(actor: string): Promise<{ ok: boolean; message: string }> {
   if (!backend) return { ok: false, message: 'Cloud sync is not configured, so there is nothing to reset across devices.' }
   const epoch: Epoch = { id: `ep-${Math.random().toString(36).slice(2, 10)}`, at: stamp(), by: actor }
-  const ok = await backend.putKv([
+  const ok = await putRows([
     { key: `${DOC_PREFIX}${EPOCH_DOC}`, value: { data: epoch, at: epoch.at, by: getDeviceId() } satisfies DocEnvelope, updatedAt: epoch.at },
   ])
   if (!ok) return { ok: false, message: 'Could not reach the server. Check the internet connection and try again.' }
   applyEpoch(epoch)
   return { ok: true, message: 'Fresh start published. Every device clears its old orders, shifts, timecards and audit entries as it syncs.' }
+}
+
+// ---------------------------------------------------------------------------
+// Server sign-in (supabase/migrations/20261028_staff_security.sql)
+// ---------------------------------------------------------------------------
+
+/**
+ * Writes. Once the shop's database checks PINs itself, the settings table is
+ * read-only to the public key: documents and records go through a function
+ * that checks this device is paired. An unpaired device keeps its changes
+ * queued until a manager pairs it.
+ */
+async function putRows(rows: KvRow[]): Promise<boolean> {
+  if (!backend) return false
+  if (!isServerAuth()) return backend.putKv(rows)
+  const token = getDeviceToken()
+  if (!token || !backend.rpc) return false
+  const res = await backend.rpc('jsp_sync_put', {
+    p_device: token,
+    p_rows: rows.map((r) => ({ store_id: r.key, settings: r.value, updated_at: r.updatedAt })),
+  })
+  return res.ok && res.data === true
+}
+
+/** Reads. Public documents come straight from the table; private ones only to a paired device. */
+async function listRows(prefix: string, opts?: { limit?: number; since?: string }): Promise<KvRow[] | null> {
+  if (!backend) return null
+  if (!isServerAuth() || prefix.startsWith(DOC_PREFIX)) return backend.listKv(prefix, opts)
+  const token = getDeviceToken()
+  if (!token || !backend.rpc) return []
+  const res = await backend.rpc('jsp_sync_list', { p_device: token, p_prefix: prefix, p_since: opts?.since ?? null, p_limit: opts?.limit ?? null })
+  if (!res.ok || !Array.isArray(res.data)) return null
+  return (res.data as { store_id: string; settings: unknown; updated_at: string }[]).map((r) => ({
+    key: r.store_id,
+    value: r.settings,
+    updatedAt: r.updated_at,
+  }))
+}
+
+let resolveBackendReady: () => void = () => {}
+const backendReady = new Promise<void>((resolve) => {
+  resolveBackendReady = resolve
+})
+
+/**
+ * Call a database function. Waits briefly for the Supabase client, which loads
+ * as its own chunk just after the first render.
+ */
+export async function callServer(fn: string, args: Record<string, unknown>): Promise<RpcResult> {
+  if (!backend && !startedWithoutBackend && isSupabaseConfigured) {
+    await Promise.race([backendReady, new Promise((resolve) => setTimeout(resolve, 8000))])
+  }
+  if (!backend) {
+    return isCloudSyncConfigured()
+      ? { ok: false, kind: 'network', message: 'Not connected to the shop server yet.' }
+      : { ok: false, kind: 'missing', message: 'No shop server is configured.' }
+  }
+  if (!backend.rpc) return { ok: false, kind: 'missing', message: 'This server has no sign-in functions.' }
+  return backend.rpc(fn, args)
+}
+
+/**
+ * Does the shop's database check PINs itself? And is this device still paired
+ * (a manager may have unpaired it from another device)?
+ */
+export async function refreshServerAuth(): Promise<void> {
+  if (!backend) return
+  if (!backend.rpc) {
+    setServerAuthMode('legacy')
+    return
+  }
+  const res = await backend.rpc('jsp_auth_status', {})
+  if (res.ok && (res.data as { enabled?: boolean } | null)?.enabled) setServerAuthMode('server')
+  else if (!res.ok && res.kind === 'missing') setServerAuthMode('legacy')
+  const token = getDeviceToken()
+  if (isServerAuth() && token) {
+    const dev = await backend.rpc('jsp_device_status', { p_device: token })
+    if (dev.ok && (dev.data as { paired?: boolean } | null)?.paired === false) clearDevicePairing()
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -687,6 +767,9 @@ async function flushAll(): Promise<boolean> {
 /** Push everything pending, then pull. Resolves true when the server answered every call. */
 export async function syncNow(opts: { fullOrders?: boolean } = {}): Promise<boolean> {
   if (!backend) return false
+  // Every few minutes a device still on the old sign-in asks again, so running
+  // the migration switches open tills over without a reload.
+  if (!isServerAuth() && tick > 0 && tick % 15 === 0) await refreshServerAuth()
   const pushed = await flushAll()
   const staff = isStaffDevice()
   tick += 1
@@ -748,7 +831,9 @@ export async function startCloudSync(opts: StartOptions): Promise<void> {
     return
   }
   started = true
+  resolveBackendReady()
   setStatus({ state: 'connecting' })
+  await refreshServerAuth()
   resubscribe()
   if (useTimers && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     pollTimer = setInterval(() => {

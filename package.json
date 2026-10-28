@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-epos.mjs",
+    "test": "node scripts/test-epos.mjs && node scripts/test-staff-security.mjs",
     "assets": "node scripts/fetch-assets.mjs",
     "share": "lt --port 5173",
     "tunnel": "untun tunnel --port 5173",
@@ -24,6 +24,7 @@
     "react-router-dom": "^6.30.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@shaderfrog/glsl-parser": "^7.0.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

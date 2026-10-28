@@ -36,7 +36,15 @@ export interface SubscribeHandlers {
   order?: (order: Order) => void
 }
 
+/**
+ * Result of calling a database function. `missing` = the function doesn't exist
+ * (the sign-in migration hasn't been run); `network` = the server wasn't reached.
+ */
+export type RpcResult = { ok: true; data: unknown } | { ok: false; kind: 'missing' | 'network' | 'denied' | 'error'; message: string }
+
 export interface RemoteBackend {
+  /** Call a database function (supabase/migrations/…staff_security.sql). */
+  rpc?(fn: string, args: Record<string, unknown>): Promise<RpcResult>
   /** Rows whose key starts with `prefix`, newest first. `null` = the call failed. */
   listKv(prefix: string, opts?: { limit?: number; since?: string }): Promise<KvRow[] | null>
   putKv(rows: KvRow[]): Promise<boolean>
@@ -58,7 +66,12 @@ export function createMemoryBackend() {
   const stock = new Map<string, StockRow>()
   const orders = new Map<string, Order>()
   const subs = new Set<{ handlers: SubscribeHandlers; scope: 'all' | string[] | null }>()
-  const state = { fail: false, calls: 0 }
+  const state: { fail: boolean; calls: number; rpc: ((fn: string, args: Record<string, unknown>) => Promise<RpcResult>) | null } = {
+    fail: false,
+    calls: 0,
+    // Tests plug a database in here (scripts/test-staff-security.mjs); unset = no server functions.
+    rpc: null,
+  }
 
   const emitKv = (row: KvRow) => subs.forEach((s) => s.handlers.kv?.(row))
   const emitStock = (row: StockRow) => subs.forEach((s) => s.handlers.stock?.(row))
@@ -83,6 +96,12 @@ export function createMemoryBackend() {
     emitKv,
     emitStock,
     emitOrder,
+    async rpc(fn, args) {
+      state.calls++
+      if (state.fail) return { ok: false, kind: 'network', message: 'offline' }
+      if (!state.rpc) return { ok: false, kind: 'missing', message: `function ${fn} does not exist` }
+      return state.rpc(fn, args)
+    },
     async listKv(prefix, opts) {
       state.calls++
       if (state.fail) return null

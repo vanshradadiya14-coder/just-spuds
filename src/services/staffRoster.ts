@@ -14,6 +14,7 @@
  */
 import type { Role } from './authStore'
 import { getDocSyncState, isCloudSyncConfigured, markDocChanged, registerDoc, syncNow } from './cloudSync'
+import { isServerAuth } from './serverAuthState'
 import { logAuditEvent } from './auditStore'
 import { sha256Hex } from '../utils/sha256'
 
@@ -28,6 +29,12 @@ export interface StaffMember {
   email?: string
   phone?: string
   updatedAt?: string
+  // Published by the server once it checks PINs (pinHash is then always empty):
+  /** Has a PIN at all. */
+  pinSet?: boolean
+  /** Has a temporary PIN a manager set; changes it at first sign-in. */
+  mustChange?: boolean
+  pinSetAt?: string | null
 }
 
 interface RosterDoc {
@@ -172,7 +179,8 @@ export type PinMatch = { member: StaffMember } | { blocked: string } | null
 /** The member a PIN belongs to (active or not — the caller decides), or why it cannot be checked yet. */
 export function matchStaffPin(pin: string): PinMatch {
   const clean = pin.trim()
-  if (!clean) return null
+  // Once the server checks PINs there is nothing here to match against.
+  if (!clean || isServerAuth()) return null
   const doc = readDoc()
   const h = hashPin(clean, doc.salt)
   const member = doc.members.find((m) => m.pinHash === h)
@@ -186,6 +194,8 @@ export function matchStaffPin(pin: string): PinMatch {
 }
 
 export function usingDefaultPins(): StaffMember[] {
+  // With server sign-in the starter PINs are gone; "no PIN yet" is shown in Staff & PINs instead.
+  if (isServerAuth()) return []
   return getRoster().filter((m) => m.status === 'ACTIVE' && m.defaultPin)
 }
 
