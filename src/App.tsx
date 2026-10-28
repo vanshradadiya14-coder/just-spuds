@@ -14,13 +14,12 @@ const OrderTrackingPage = lazy(() => import('./pages/OrderTrackingPage'))
 const StaffKDSPage = lazy(() => import('./pages/StaffKDSPage'))
 const StaffPOSPage = lazy(() => import('./pages/StaffPOSPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
-const DriverDashboardPage = lazy(() => import('./pages/DriverDashboardPage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const CustomerFacingDisplayPage = lazy(() => import('./pages/CustomerFacingDisplayPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
 import ProtectedRoute from './components/ProtectedRoute'
-import { ADMIN_CONSOLE_ROLES, MANAGEMENT_ROLES, SHOP_FLOOR_ROLES } from './services/authStore'
+import { ADMIN_CONSOLE_ROLES, SHOP_FLOOR_ROLES } from './services/authStore'
 
 export type SubdomainMode = 'admin' | 'pos' | 'storefront'
 
@@ -209,8 +208,8 @@ export default function App() {
                 <Route
                   path="driver"
                   element={
-                    <ProtectedRoute allowedRoles={['DRIVER', ...MANAGEMENT_ROLES]} portalName="Courier Dispatch" loginTab="staff">
-                      <DriverDashboardPage />
+                    <ProtectedRoute allowedRoles={SHOP_FLOOR_ROLES} requireStoreTerminal portalName="Food Till & POS" loginTab="staff">
+                      <StaffPOSPage />
                     </ProtectedRoute>
                   }
                 />

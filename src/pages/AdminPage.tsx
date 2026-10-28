@@ -1321,24 +1321,7 @@ export default function AdminPage() {
               )}
             >
               <span>⚙️</span>
-              <span>Store Ops</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('drivers')}
-              className={cx(
-                'rounded-xl px-4 py-2 font-body text-xs font-bold transition flex items-center gap-1.5',
-                activeTab === 'drivers' ? 'bg-amber-400 text-ink font-black shadow-glow' : 'text-white/70 hover:text-white bg-white/5'
-              )}
-            >
-              <span>🚚</span>
-              <span>Drivers &amp; Fleet</span>
-              {onlineDriversCount > 0 && (
-                <span className="rounded-full bg-emerald-500 px-1.5 py-0.2 text-[10px] font-black text-slate-950">
-                  {onlineDriversCount} Online
-                </span>
-              )}
+              <span>Store &amp; Delivery Ops</span>
             </button>
 
             <button

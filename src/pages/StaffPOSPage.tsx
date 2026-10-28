@@ -12,6 +12,9 @@ import {
   updateTillSettings,
   getLastCompletedTillOrder,
   setLastCompletedTillOrder,
+  getActiveTillTicket,
+  saveActiveTillTicket,
+  clearActiveTillTicket,
   type TillShift,
   type CashMovementKind,
 } from '../services/tillStore'
@@ -143,19 +146,42 @@ export default function StaffPOSPage() {
   const [browse, setBrowse] = useState<string>('HOME')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Ticket
-  const [cartLines, setCartLines] = useState<CartLine[]>([])
-  const [customerName, setCustomerName] = useState('')
-  const [buzzerNumber, setBuzzerNumber] = useState('')
-  const [tableNumber, setTableNumber] = useState('')
-  const [orderType, setOrderType] = useState<OrderType>('takeaway')
-  const [discountPercent, setDiscountPercent] = useState(0)
-  const [discountFixedPence, setDiscountFixedPence] = useState(0)
-  const [discountReason, setDiscountReason] = useState('')
-  const [tipPence, setTipPence] = useState(0)
-  const [selectedLineId, setSelectedLineId] = useState<string | null>(null)
+  // Ticket - Auto-recovered persistent EposNow state (persists across tab close / browser relaunch)
+  const savedTicket = useMemo(() => getActiveTillTicket(), [])
+  const [cartLines, setCartLines] = useState<CartLine[]>(() => savedTicket?.cartLines || [])
+  const [customerName, setCustomerName] = useState(() => savedTicket?.customerName || '')
+  const [buzzerNumber, setBuzzerNumber] = useState(() => savedTicket?.buzzerNumber || '')
+  const [tableNumber, setTableNumber] = useState(() => savedTicket?.tableNumber || '')
+  const [orderType, setOrderType] = useState<OrderType>(() => savedTicket?.orderType || 'takeaway')
+  const [discountPercent, setDiscountPercent] = useState(() => savedTicket?.discountPercent || 0)
+  const [discountFixedPence, setDiscountFixedPence] = useState(() => savedTicket?.discountFixedPence || 0)
+  const [discountReason, setDiscountReason] = useState(() => savedTicket?.discountReason || '')
+  const [tipPence, setTipPence] = useState(() => savedTicket?.tipPence || 0)
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(() => savedTicket?.selectedLineId || null)
   const [attachedCustomer, setAttachedCustomer] = useState<AttachedCustomer | null>(null)
   const [settlingOrder, setSettlingOrder] = useState<Order | null>(null)
+
+  // Auto-persist active ticket to localStorage so tab closure or refresh resumes exactly at the sale
+  useEffect(() => {
+    if (settlingOrder) return // Do not save settling open-order checks over the draft ticket
+    if (cartLines.length > 0) {
+      saveActiveTillTicket({
+        cartLines,
+        customerName,
+        buzzerNumber,
+        tableNumber,
+        orderType,
+        discountPercent,
+        discountFixedPence,
+        discountReason,
+        tipPence,
+        selectedLineId,
+        updatedAt: new Date().toISOString(),
+      })
+    } else {
+      clearActiveTillTicket()
+    }
+  }, [cartLines, customerName, buzzerNumber, tableNumber, orderType, discountPercent, discountFixedPence, discountReason, tipPence, selectedLineId, settlingOrder])
 
   // Screens & pop-ups
   const [wizard, setWizard] = useState<{ product: Product; editLineId?: string } | null>(null)
@@ -628,6 +654,7 @@ export default function StaffPOSPage() {
     setSelectedLineId(null)
     setSettlingOrder(null)
     setOrderType('takeaway')
+    clearActiveTillTicket()
     resetCFDState()
   }
 

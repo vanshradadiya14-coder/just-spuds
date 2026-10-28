@@ -16,7 +16,6 @@ const PORTALS: Record<string, { label: string; icon: string }> = {
   '/admin': { label: 'Admin Console', icon: '📊' },
   '/staff': { label: 'Kitchen KDS', icon: '👨‍🍳' },
   '/pos': { label: 'Till / POS', icon: '🧾' },
-  '/driver': { label: 'Driver Hub', icon: '🛵' },
 }
 
 export default function StaffPortalDock() {

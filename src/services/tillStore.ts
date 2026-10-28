@@ -168,8 +168,52 @@ const STORAGE_ACTIVE_SHIFT = 'just_spuds_till_active_shift_v1'
 const STORAGE_PAST_SHIFTS = 'just_spuds_till_past_shifts_v1'
 const STORAGE_TILL_SETTINGS = 'just_spuds_till_settings_v1'
 const STORAGE_LAST_TILL_ORDER = 'just_spuds_till_last_order_v1'
+/** Persistent active cart/ticket so even if tab closes, till reopens right where sale was */
+const STORAGE_ACTIVE_TILL_TICKET = 'just_spuds_till_active_ticket_v1'
 /** Shifts run on other devices (the till), kept for reporting only — never rung up on here. */
 const STORAGE_REMOTE_SHIFTS = 'just_spuds_till_remote_shifts_v1'
+
+export interface PersistentTillTicket {
+  cartLines: any[]
+  customerName: string
+  buzzerNumber: string
+  tableNumber: string
+  orderType: 'takeaway' | 'eat_in' | 'phone'
+  discountPercent: number
+  discountFixedPence: number
+  discountReason: string
+  tipPence: number
+  selectedLineId?: string | null
+  updatedAt: string
+}
+
+export function getActiveTillTicket(): PersistentTillTicket | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(STORAGE_ACTIVE_TILL_TICKET)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+export function saveActiveTillTicket(ticket: PersistentTillTicket | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (ticket && ticket.cartLines && ticket.cartLines.length > 0) {
+      localStorage.setItem(STORAGE_ACTIVE_TILL_TICKET, JSON.stringify(ticket))
+    } else {
+      localStorage.removeItem(STORAGE_ACTIVE_TILL_TICKET)
+    }
+  } catch {}
+}
+
+export function clearActiveTillTicket(): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.removeItem(STORAGE_ACTIVE_TILL_TICKET)
+  } catch {}
+}
 
 export function getLastCompletedTillOrder(): any | null {
   if (typeof window === 'undefined') return null

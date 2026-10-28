@@ -27,7 +27,7 @@ export default function TicketCard({
   handleStatusChange,
   handleOpenRejectModal,
   setPrintingOrder,
-  sendOrderToDrivers,
+  sendOrderToDrivers: _sendOrderToDrivers,
   setFixingOrder,
   stationFilter = 'all',
 }: {
@@ -35,7 +35,7 @@ export default function TicketCard({
   handleStatusChange: any
   handleOpenRejectModal: any
   setPrintingOrder: any
-  sendOrderToDrivers: any
+  sendOrderToDrivers?: any
   setFixingOrder?: (o: Order) => void
   stationFilter?: 'all' | KitchenStation
 }) {
@@ -475,6 +475,7 @@ export default function TicketCard({
               </div>
             )}
 
+            {/* PREPARATION & PACKING: Mark picked up by driver or ready for counter collection */}
             {(ord.status === 'baking' || ord.status === 'quality_check') && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -491,14 +492,15 @@ export default function TicketCard({
                   <button
                     type="button"
                     onClick={() =>
-                      isDelivery
-                        ? sendOrderToDrivers(ord.id)
-                        : handleStatusChange(ord.id, 'ready_for_pickup')
+                      handleStatusChange(
+                        ord.id,
+                        isDelivery ? 'out_for_delivery' : 'ready_for_pickup'
+                      )
                     }
-                    className="flex-1 rounded-xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow hover:bg-amber-300 flex items-center justify-center gap-1.5"
+                    className="flex-1 rounded-xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow hover:bg-amber-300 flex items-center justify-center gap-1.5 transition active:scale-95"
                   >
-                    <span>{isDelivery ? '🚀' : '🛍️'}</span>
-                    <span>{isDelivery ? 'Send to Drivers (Dispatch)' : 'Mark Ready for Pickup'}</span>
+                    <span>{isDelivery ? '🛵' : '🛍️'}</span>
+                    <span>{isDelivery ? 'Picked Up by Driver' : 'Mark Ready for Pickup'}</span>
                   </button>
                   <button
                     type="button"
@@ -512,56 +514,36 @@ export default function TicketCard({
               </div>
             )}
 
+            {/* DIRECT DRIVER PICKUP HANDOVER (if in ready state) */}
             {ord.status === 'ready_for_delivery' && (
               <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 text-center space-y-2">
-                <div className="flex items-center justify-center gap-2 text-amber-300 font-body text-xs font-bold animate-pulse">
-                  <span className="h-2 w-2 rounded-full bg-amber-400" />
-                  <span>⏳ Waiting for Driver to Claim...</span>
+                <div className="flex items-center justify-center gap-2 text-amber-300 font-body text-xs font-bold">
+                  <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>Hot Food Packed &bull; Waiting for Driver</span>
                 </div>
-                <p className="text-[11px] text-white/60">
-                  Dispatched to online Just Spuds couriers
-                </p>
                 <button
                   type="button"
                   onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
-                  className="w-full rounded-lg border border-amber-400/40 bg-amber-400/15 py-1.5 font-body text-[11px] font-bold text-amber-200 hover:bg-amber-400/25"
+                  className="w-full rounded-xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-ink shadow hover:bg-amber-300 flex items-center justify-center gap-1.5 transition active:scale-95"
                 >
-                  📦 Handed to In-House Driver (Mark Out for Delivery)
+                  <span>🛵</span>
+                  <span>Mark as Picked Up by Driver &rarr;</span>
                 </button>
               </div>
             )}
 
-            {ord.status === 'driver_assigned' && (
+            {(ord.status === 'driver_assigned' || ord.status === 'driver_arrived_at_store' || ord.status === 'order_collected') && (
               <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-center space-y-2 font-body">
-                <div>
-                  <span className="text-emerald-300 text-xs font-bold block">
-                    🛵 Driver Assigned: {ord.deliveryDetails?.assignedDriverName || ord.driver?.name}
-                  </span>
-                  <span className="text-[11px] text-white/60">
-                    {ord.deliveryDetails?.assignedDriverVehicle || 'Moped'} &bull; Heading to store
-                  </span>
-                </div>
+                <span className="text-emerald-300 text-xs font-bold block">
+                  🛵 Driver at Counter
+                </span>
                 <button
                   type="button"
                   onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
-                  className="w-full rounded-lg bg-emerald-500/20 border border-emerald-400/40 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/30"
+                  className="w-full rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink shadow hover:bg-amber-300 flex items-center justify-center gap-1.5 transition active:scale-95"
                 >
-                  📦 Hand Food Over (Out for Delivery) &rarr;
-                </button>
-              </div>
-            )}
-
-            {(ord.status === 'driver_arrived_at_store' || ord.status === 'order_collected') && (
-              <div className="space-y-2 font-body">
-                <div className="rounded-2xl border border-emerald-400 bg-emerald-500/20 p-2.5 text-center text-xs font-bold text-emerald-200 animate-bounce">
-                  📍 {ord.deliveryDetails?.assignedDriverName || 'Driver'} {ord.status === 'order_collected' ? 'collected the bag!' : 'is at the counter!'}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
-                  className="w-full rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink shadow hover:bg-amber-300"
-                >
-                  📦 Confirm Out for Delivery &rarr;
+                  <span>📦</span>
+                  <span>Hand Food to Driver (Out for Delivery) &rarr;</span>
                 </button>
               </div>
             )}
@@ -574,10 +556,10 @@ export default function TicketCard({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => sendOrderToDrivers(ord.id)}
+                    onClick={() => handleStatusChange(ord.id, 'out_for_delivery')}
                     className="rounded-xl bg-amber-400 py-2.5 text-xs font-black uppercase text-ink hover:bg-amber-300"
                   >
-                    🔄 Re-Dispatch
+                    🛵 Re-Deliver
                   </button>
                   <button
                     type="button"
@@ -590,8 +572,9 @@ export default function TicketCard({
               </div>
             )}
 
+            {/* ORDER IN TRANSIT OR READY ON COUNTER: Staff Marks as Done */}
             {(ord.status === 'out_for_delivery' || ord.status === 'ready_for_pickup') && (
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {ord.status === 'ready_for_pickup' && (
                   <button
                     type="button"
@@ -603,9 +586,11 @@ export default function TicketCard({
                   </button>
                 )}
                 {isDelivery && (
-                  <p className="text-[11px] text-white/70 text-center font-body mb-1">
-                    🛵 In transit with <strong>{ord.deliveryDetails?.assignedDriverName || ord.driver?.name}</strong>
-                  </p>
+                  <div className="rounded-xl border border-sky-400/30 bg-sky-500/10 py-1 px-2 text-center">
+                    <p className="text-[11px] text-sky-200 font-body font-bold">
+                      🛵 Out on Delivery with Driver
+                    </p>
+                  </div>
                 )}
                 {(() => {
                   const blocker = getStatusChangeBlocker(ord, isDelivery ? 'delivered' : 'collected')
@@ -622,10 +607,10 @@ export default function TicketCard({
                     <button
                       type="button"
                       onClick={() => handleStatusChange(ord.id, isDelivery ? 'delivered' : 'collected')}
-                      className="w-full rounded-xl bg-emerald-500 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow hover:bg-emerald-400 flex items-center justify-center gap-1.5"
+                      className="w-full rounded-xl bg-emerald-500 py-3.5 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-emerald-400 flex items-center justify-center gap-1.5 transition active:scale-95"
                     >
                       <span>🎉</span>
-                      <span>Complete Order</span>
+                      <span>{isDelivery ? 'Mark as Done (Delivered)' : 'Mark as Done (Collected)'}</span>
                     </button>
                   )
                 })()}
