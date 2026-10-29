@@ -35,13 +35,22 @@ export interface Option {
   rev?: number
 }
 
+/** Where a sale is rung up: the shop's counter/till, or the website. */
+export type SalesChannel = 'store' | 'web'
+
 export interface Product {
   id: string
   name: string
   category: CategoryId
   description: string
-  /** pence */
+  /** What the website charges, in pence. Also the counter price unless `storePrice` is set. */
   price: number
+  /**
+   * What the counter charges, in pence, when it differs from the website — e.g.
+   * the website carries delivery costs. Unset (the usual case) means the till
+   * and the website charge the same, and changing `price` changes both.
+   */
+  storePrice?: number
   image: string
   /** Optional GLB. When absent the procedural 3D spud is used. */
   model: string | null
@@ -637,6 +646,18 @@ export const extrasFor = (p: Product): Option[] => {
   if (p.category === 'SALADS') return SALAD_EXTRAS
   return []
 }
+
+/**
+ * What to charge for an item on this channel. The till rings up `storePrice`
+ * when the owner has set one, the website always charges `price`. Toppings and
+ * the meal deal cost the same either way — only the item's own price can differ.
+ */
+export const sellPrice = (p: Pick<Product, 'price' | 'storePrice'>, channel: SalesChannel): number =>
+  channel === 'store' && typeof p.storePrice === 'number' && p.storePrice >= 0 ? p.storePrice : p.price
+
+/** True when the counter charges something different from the website. */
+export const hasSeparateStorePrice = (p: Pick<Product, 'price' | 'storePrice'>): boolean =>
+  typeof p.storePrice === 'number' && p.storePrice >= 0 && p.storePrice !== p.price
 
 export const optionLabel = (id: string): string => {
   const dynamicExtras = getStoredDynamicExtras()

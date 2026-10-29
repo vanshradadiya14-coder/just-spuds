@@ -1630,6 +1630,123 @@ await test('a staff device that already held the old topping list publishes the 
 })
 
 // ---------------------------------------------------------------------------
+section('💷 Counter price vs website price, closing without a cash count, the day’s figures')
+
+await test('an item can cost a different amount at the till; the website keeps its own price', async () => {
+  const menu = await load('/src/data/menu.ts')
+  const p = firstSpud()
+  menuStore.saveProduct({ ...p, price: 645, storePrice: 595 })
+  const saved = menuStore.getProductById(p.id)
+  assert.equal(saved.price, 645, 'the website price is unchanged')
+  assert.equal(saved.storePrice, 595)
+  assert.equal(menu.sellPrice(saved, 'store'), 595, 'the till charges the counter price')
+  assert.equal(menu.sellPrice(saved, 'web'), 645, 'the website charges the website price')
+  assert.equal(menu.hasSeparateStorePrice(saved), true)
+
+  // Back in step: one price again, not a counter price that happens to match.
+  menuStore.saveProduct({ ...saved, storePrice: 645 })
+  assert.equal(menuStore.getProductById(p.id).storePrice, undefined, 'the same figure is not kept as a separate price')
+  assert.equal(menu.sellPrice(menuStore.getProductById(p.id), 'store'), 645)
+  assert.equal(menu.hasSeparateStorePrice(menuStore.getProductById(p.id)), false)
+  // An item with no counter price set is charged the website price everywhere.
+  assert.equal(menu.sellPrice({ price: 500 }, 'store'), 500)
+})
+
+await test('a counter price never lets a web order underpay, and a price rise moves both', async () => {
+  const p = firstSpud()
+  menuStore.saveProduct({ ...p, price: 645, storePrice: 595 })
+
+  // A website order priced at the cheaper counter price is flagged for staff.
+  const cheap = orderStore.getPriceCheck({ source: 'WEBSITE', lines: [{ ...line(p), base: 595 }], payment: { subtotal: 595 } })
+  assert.equal(cheap.ok, false, 'the website is always checked against the website price')
+  assert.equal(cheap.expected, 645)
+  const proper = orderStore.getPriceCheck({ source: 'WEBSITE', lines: [{ ...line(p), base: 645 }], payment: { subtotal: 645 } })
+  assert.equal(proper.ok, true)
+  // The till prices its own sales (and may hold a manager's override), so it is not re-priced.
+  assert.equal(orderStore.getPriceCheck({ source: 'TILL', lines: [{ ...line(p), base: 595 }], payment: { subtotal: 595 } }).ok, true)
+
+  menuStore.batchAdjustCategoryPrices(p.category, 50)
+  const risen = menuStore.getProductById(p.id)
+  assert.equal(risen.price, 695)
+  assert.equal(risen.storePrice, 645, 'the gap the owner set is kept')
+  menuStore.saveProduct({ ...risen, price: 645, storePrice: undefined })
+})
+
+await test('the till can close without counting the drawer, and the report says so', async () => {
+  while (tillStore.getCurrentShift()) tillStore.closeTillShift('Cleanup', null)
+  tillStore.openTillShift('Chloe', 10000)
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  const sale = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer, lines: [line(p)], paymentMethod: 'cash', paymentStatus: 'paid' },
+    'Chloe',
+  )
+  tillStore.recordTillSale({ paymentMethod: 'cash', totalPence: sale.payment.total, orderId: sale.shortId, orderUuid: sale.id, staffName: 'Chloe' })
+  const expected = tillStore.getCurrentShift().expectedCash
+  assert.ok(expected > 10000, 'the cash sale is in the drawer')
+  const eodMod = await load('/src/services/endOfDayReport.ts')
+
+  const { closedShift, discrepancy } = tillStore.closeTillShift('Chloe', null, 'Closed on the till’s figures', {
+    buildReport: (closed) =>
+      eodMod.buildEndOfDayReport({ shift: closed, orders: orderStore.getStoredOrders(), products: menuStore.getProducts(), vatRegistered: false, kind: 'Z' }),
+  })
+  assert.equal(closedShift.countedCash, undefined, 'no count means no counted figure — not £0.00')
+  assert.equal(closedShift.discrepancy, undefined, 'and no variance to explain')
+  assert.equal(discrepancy, 0)
+  assert.equal(closedShift.report.drawer.expected, expected, 'the report still shows what should be in the drawer')
+  assert.equal(closedShift.report.drawer.counted, undefined)
+  assert.equal(closedShift.report.drawer.variance, undefined)
+  assert.ok(closedShift.report.sales.total > 0, 'the day’s sales are still reported')
+  assert.ok(
+    closedShift.movements.some((m) => m.type === 'close_shift' && /not counted/i.test(m.reason)),
+    'the drawer movement says it was not counted',
+  )
+  void sale
+
+  // Counting still works for a shop that wants it.
+  tillStore.openTillShift('Chloe', 10000)
+  const counted = tillStore.closeTillShift('Chloe', { ...tillStore.EMPTY_DENOMINATIONS, note10: 10 })
+  assert.equal(counted.closedShift.countedCash, 10000)
+  assert.equal(counted.discrepancy, 0)
+})
+
+await test('the owner’s daily report covers that day only, and splits website from till', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 20, 'test', 'seed')
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const todayTill = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer, lines: [line(p)], paymentMethod: 'cash', paymentStatus: 'paid' },
+    'Chloe',
+  )
+  const web = { ...todayTill, id: 'ord-web-today', shortId: 'JS-W-1', source: 'WEBSITE', status: 'collected' }
+  const old = { ...todayTill, id: 'ord-old', shortId: 'JS-W-0', source: 'WEBSITE', status: 'collected', createdAt: yesterday }
+  const all = [{ ...todayTill, status: 'collected' }, web, old]
+
+  const today = orderStore.generateZReport(all)
+  assert.equal(today.orderCount, 2, 'yesterday’s order is not in today’s figures (it used to count every order ever)')
+  // A counter sale is paid and handed over at once and never marked "collected":
+  // the day's takings follow what was paid, not what the kitchen ticked off.
+  const tillOnly = orderStore.generateZReport([todayTill])
+  assert.equal(todayTill.status, 'accepted', 'a till sale stays "accepted" after it is handed over')
+  assert.equal(tillOnly.orderCount, 1, 'a paid counter sale is in the day’s takings (it used to show £0.00)')
+  assert.equal(tillOnly.grandTotal, todayTill.payment.total)
+  assert.equal(tillOnly.cashTotal, todayTill.payment.total)
+  // A website pick-up that is not settled yet is listed separately, not as takings.
+  const unpaid = { ...todayTill, id: 'ord-unpaid', shortId: 'JS-W-2', source: 'WEBSITE', payment: { ...todayTill.payment, status: 'pending_store' } }
+  const withUnpaid = orderStore.generateZReport([todayTill, unpaid])
+  assert.equal(withUnpaid.orderCount, 1, 'an unpaid order is not counted as taken')
+  assert.deepEqual(withUnpaid.awaitingPayment, { orders: 1, total: unpaid.payment.total })
+  assert.equal(today.grandTotal, todayTill.payment.total * 2)
+  assert.deepEqual(
+    today.byChannel.map((c) => `${c.label} ${c.orders}`),
+    ['Website 1', 'Till (counter) 1'],
+  )
+  const before = orderStore.generateZReport(all, new Date(Date.now() - 24 * 60 * 60 * 1000))
+  assert.equal(before.orderCount, 1, 'yesterday’s report shows yesterday')
+  assert.equal(orderStore.generateZReport(all, new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)).orderCount, 0)
+})
+
+// ---------------------------------------------------------------------------
 await vite.close()
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

@@ -191,10 +191,13 @@ Close Till screen that prints the end-of-day report.
   customer display, shortcuts, Back office, settings (till name) and Cloud sync
   with the last sync time.
 - **Close till** (`CloseTillScreen.tsx`): checklist (unsynced sales, open
-  orders, held tickets, cash up, card machine total), denomination count
-  (required — blind close hides the expected figure until counted), counted vs
-  expected vs variance for the drawer and the card machine, then **Print &
-  close**, which freezes the report on the shift.
+  orders, held tickets, cash up, card machine total), then **Print & close**,
+  which freezes the report on the shift. Only unpaid orders stop a close.
+  **Counting the drawer is optional** — most days the shop closes on the
+  figures the till worked out. Count it (the ⌨ Count button, note by note) and
+  the report gains counted / expected / variance for the drawer and the card
+  machine; skip it and the report says *not counted* rather than inventing a
+  £0.00 count and a whole day's shortfall.
 - **Time clock** (⏱️) from the PIN gate; timecards in Admin › Staff.
 - Keyboard: `F4`/`F5` pay, `F8` order, `F9` hold, `F2`, `/` or `Ctrl+K` search,
   `Enter` = cash for the amount shown on the payment screen, `Esc` back.
@@ -212,6 +215,16 @@ when the till closes. The same report is the X read during the day, and Admin
 › Reports › Till Shifts reprints any closed day. It prints through a body-level
 80mm slip (`components/PrintSlip.tsx`) so a long report runs over several
 pages instead of being cut off at the first.
+
+### The day's money, and where the owner sees it
+
+Three views, each answering a different question:
+
+| Where | What it covers |
+|-------|----------------|
+| **Till › Close till** (and its printed Z-report) | One shift on one till: what that drawer took, by tender, product, category, hour and cashier. Website orders placed during the shift are listed, but only count as takings once they are paid on the till. |
+| **Admin › Z-Report** (header button) | **One trading day across the whole shop** — website, till, phone and counter together, with "where the orders came from", tenders and VAT. Takings follow what was *paid for*: a counter sale is paid and handed over at once and is never marked "collected". Orders placed today and not paid for yet (a website pick-up waiting to be settled) are listed separately as *still to be paid for*. |
+| **Admin › Reports & Sales** | Any period (today / yesterday / 7 / 30 days): revenue by channel, tender reconciliation, product profitability, CSV export. **Admin › Reports › Till Shifts** keeps every closed shift and reprints its Z-report. |
 
 ### New online order alarm (KDS, till and admin)
 
@@ -257,6 +270,15 @@ Deliveroo tablet or a Subway KDS behaves.
   waiting for payment at the counter — a till/phone open check or a website
   pickup — cannot be "completed" from the kitchen (the card says *take payment
   on the till*), so no sale slips past the shift and the drawer.
+- **Two prices per item** (`sellPrice()` in `data/menu.ts`): every item has a
+  **website price**, and optionally a different **till price** for the counter
+  (Admin › Product Studio › *Charge a different price at the till*). Set one and
+  the till — including phone and counter orders staff ring up — charges it,
+  while the website keeps its own; leave it blank and one price serves both, so
+  changing the price changes both. Web orders are still re-priced against the
+  website price at checkout, so the cheaper counter price can never be claimed
+  online. A category-wide price rise moves both by the same amount. Toppings,
+  sauces and the meal deal cost the same on either channel.
 - **Spud toppings** use the shop's counter prices (beans / cheese / slaw £1,
   three cheese £1.50, onions 50p, chicken / tuna £1.50, chilli £2). Older saved
   lists move to them once (`migrateSpudExtras`), published only after a staff
@@ -321,6 +343,25 @@ takeaway food can be 0%, anything eaten in is standard-rated, discounts are
 spread across the goods they apply to, delivery/service charges are standard,
 and tips are outside VAT. The till, receipts and customer display show VAT only
 when a VAT number is set.
+
+### Adding, changing and removing food (Admin › Product Studio)
+
+The menu is the shop's, not the code's: everything below is edited in the
+browser and reaches every till, kitchen screen and phone within seconds.
+
+- **Add** — *Product Studio › ➕ Add New Menu Item*: name, category (or **+ Add
+  New** for a brand-new one), website price (and a till price if the counter
+  charges differently), portion, description, photo (upload or pick one),
+  included fillings, which extra toppings it may have, dietary flags, the 14
+  allergens, calories and macros, and the EPOS fields (barcode, cost price, VAT
+  rate, stock, low-stock level, where it sells). Prices take any penny amount.
+- **Change** — *Edit Item* on the card. The live preview on the right shows the
+  customer's menu card as you type.
+- **Remove** — *Delete* on the card, with a confirmation. Sold out for today
+  instead? Use the green/red **In Stock / 86'd** button, or 86 it from the
+  kitchen screen; it comes back when restocked.
+- **A whole category at once** — *Toppings & Sauces* edits extras and their
+  prices; the price tools in Product Studio raise or drop a category together.
 
 ### Stock and channels
 

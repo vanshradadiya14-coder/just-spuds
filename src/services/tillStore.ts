@@ -657,7 +657,8 @@ export function recordCashFloatAdjustment(
  */
 export function closeTillShift(
   closedBy: string,
-  countedDenominations: CashDenominations,
+  /** What was counted in the drawer, or null when the shop closes without counting. */
+  countedDenominations: CashDenominations | null,
   notes?: string,
   extra: {
     /** Card machine end-of-day total, if the cashier entered it. */
@@ -671,8 +672,10 @@ export function closeTillShift(
     throw new Error('No active shift to close.')
   }
 
-  const countedCash = calculateDenominationsTotal(countedDenominations)
-  const discrepancy = countedCash - activeShift.expectedCash
+  // No count = no counted figure and no variance, rather than a £0.00 count
+  // that would make every report look like the drawer was empty.
+  const countedCash = countedDenominations ? calculateDenominationsTotal(countedDenominations) : undefined
+  const discrepancy = typeof countedCash === 'number' ? countedCash - activeShift.expectedCash : undefined
 
   const closedShift: TillShift = {
     ...activeShift,
@@ -683,7 +686,7 @@ export function closeTillShift(
     discrepancy,
     countedCard: typeof extra.countedCard === 'number' ? Math.max(0, Math.round(extra.countedCard)) : undefined,
     countedOther: typeof extra.countedOther === 'number' ? Math.max(0, Math.round(extra.countedOther)) : undefined,
-    closingDenominations: countedDenominations,
+    closingDenominations: countedDenominations || undefined,
     notes: notes?.trim() || undefined,
     movements: [
       ...activeShift.movements,
@@ -691,8 +694,11 @@ export function closeTillShift(
         id: `mov-${Date.now()}-close`,
         timestamp: new Date().toISOString(),
         type: 'close_shift',
-        amount: countedCash,
-        reason: `Shift Closed. Expected £${(activeShift.expectedCash / 100).toFixed(2)}, Counted £${(countedCash / 100).toFixed(2)}`,
+        amount: countedCash ?? activeShift.expectedCash,
+        reason:
+          typeof countedCash === 'number'
+            ? `Shift Closed. Expected £${(activeShift.expectedCash / 100).toFixed(2)}, Counted £${(countedCash / 100).toFixed(2)}`
+            : `Shift Closed. Expected £${(activeShift.expectedCash / 100).toFixed(2)} in the drawer (not counted).`,
         staffName: closedBy,
       },
     ],
@@ -723,10 +729,12 @@ export function closeTillShift(
     closedBy,
     'till.shift_closed',
     `Till Shift #${closedShift.shiftNumber}`,
-    `Cash Counted: £${(countedCash / 100).toFixed(2)}, Variance: £${(discrepancy / 100).toFixed(2)}`
+    typeof countedCash === 'number'
+      ? `Cash Counted: £${(countedCash / 100).toFixed(2)}, Variance: £${((discrepancy ?? 0) / 100).toFixed(2)}`
+      : `Closed without counting the drawer. Expected £${(closedShift.expectedCash / 100).toFixed(2)}.`
   )
 
-  return { closedShift, discrepancy }
+  return { closedShift, discrepancy: discrepancy ?? 0 }
 }
 
 if (typeof window !== 'undefined') {

@@ -37,7 +37,7 @@ import {
 } from '../services/alertSoundBus'
 import { startOnlineOrderAlertWatcher } from '../services/orderAlerts'
 import { getTillSettings, subscribeTillSettings, updateTillSettings, type TillSettings } from '../services/tillStore'
-import { type Product } from '../data/menu'
+import { sellPrice, type Product } from '../data/menu'
 import TicketCard from './staff/TicketCard'
 import AllDayBar from './staff/AllDayBar'
 import ThermalReceipt from '../components/ThermalReceipt'
@@ -715,7 +715,7 @@ export default function StaffKDSPage() {
                     >
                       <div>
                         <p className="font-body text-xs font-bold text-white">{product.name}</p>
-                        <p className="font-body text-[10px] text-white/50">{product.category} &bull; {gbp(product.price)}</p>
+                        <p className="font-body text-[10px] text-white/50">{product.category} &bull; {gbp(sellPrice(product, 'store'))}</p>
                       </div>
 
                       <button

@@ -149,8 +149,16 @@ function notifyListeners() {
 // -------------------------------------------------------------
 function normalizeProduct(p: Product): Product {
   const price = typeof p.price === 'number' ? p.price : 450
+  // A counter price only exists while it is a real, different figure — so an
+  // item the owner has put back in step with the website carries one price again.
+  const storePrice =
+    typeof p.storePrice === 'number' && p.storePrice >= 0 && Math.round(p.storePrice) !== Math.round(price)
+      ? Math.round(p.storePrice)
+      : undefined
   return {
     ...p,
+    price,
+    ...(storePrice === undefined ? { storePrice: undefined } : { storePrice }),
     available: p.available !== false,
     stockQuantity: typeof p.stockQuantity === 'number' ? p.stockQuantity : 45,
     lowStockThreshold: typeof p.lowStockThreshold === 'number' ? p.lowStockThreshold : 5,
@@ -409,7 +417,10 @@ export function batchAdjustCategoryPrices(category: string, deltaPence: number):
       if (category === 'ALL' || p.category === category) {
         count++
         const newPrice = Math.max(50, p.price + deltaPence)
-        return { ...p, price: newPrice }
+        // An item with its own counter price moves by the same amount, so the
+        // gap the owner set between the till and the website is kept.
+        const newStorePrice = typeof p.storePrice === 'number' ? Math.max(50, p.storePrice + deltaPence) : undefined
+        return normalizeProduct({ ...p, price: newPrice, storePrice: newStorePrice })
       }
       return p
     })

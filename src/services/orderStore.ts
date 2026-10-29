@@ -1162,6 +1162,10 @@ export interface ZReportData {
   vatBands?: VatBand[]
   deliveryRevenue: number
   pickupRevenue: number
+  /** The day's takings split by where the order was rung up (website, till, phone, counter). */
+  byChannel: { key: OrderSource; label: string; orders: number; total: number }[]
+  /** Placed today, food out, but still to be paid for (e.g. a website pick-up settled on the till). */
+  awaitingPayment: { orders: number; total: number }
 }
 
 export interface BusinessAnalytics {
@@ -1444,14 +1448,28 @@ export function getDetailedBusinessAnalytics(allOrders: Order[], timeframe: Time
   }
 }
 
-export function generateZReport(allOrders: Order[], dateStr?: string): ZReportData {
-  const orders = realOrders(allOrders)
+/**
+ * The day's takings across every channel (website, phone, till), for the owner's
+ * daily report. `day` picks the trading day — only orders placed on it count,
+ * so the figure is the day's, never a running total since launch.
+ */
+export function generateZReport(allOrders: Order[], day: Date = new Date()): ZReportData {
   const now = new Date()
-  const targetDateStr = dateStr || now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-  const reportNumber = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-01`
+  const sameDay = (iso: string) => {
+    const d = new Date(iso)
+    return d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate()
+  }
+  const orders = realOrders(allOrders).filter((o) => sameDay(o.createdAt))
+  const targetDateStr = day.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  const reportNumber = `${day.getFullYear()}${(day.getMonth() + 1).toString().padStart(2, '0')}${day.getDate().toString().padStart(2, '0')}-01`
 
-  const completed = orders.filter((o) => ['delivered', 'collected'].includes(o.status))
+  // The day's takings are what was actually paid for. A counter sale is paid and
+  // handed over at once (it never gets marked "collected"), so counting only
+  // delivered/collected orders used to report £0.00 on a day of till sales.
+  const completed = orders.filter((o) => o.status !== 'cancelled' && o.payment.status === 'paid')
   const cancelled = orders.filter((o) => o.status === 'cancelled')
+  /** Placed today but not paid yet — a website pick-up that is settled on the till. */
+  const awaitingPayment = orders.filter((o) => o.status !== 'cancelled' && o.payment.status !== 'paid' && o.payment.status !== 'refunded')
 
   const deliveryOrders = completed.filter((o) => o.fulfilment === 'delivery')
   const pickupOrders = completed.filter((o) => o.fulfilment === 'pickup')
@@ -1499,8 +1517,20 @@ export function generateZReport(allOrders: Order[], dateStr?: string): ZReportDa
     vatBands: vat.bands,
     deliveryRevenue,
     pickupRevenue,
+    byChannel: CHANNEL_LABELS.map(({ key, label }) => {
+      const taken = completed.filter((o) => (o.source || 'WEBSITE') === key)
+      return { key, label, orders: taken.length, total: taken.reduce((sum, o) => sum + o.payment.total, 0) }
+    }).filter((c) => c.orders > 0),
+    awaitingPayment: { orders: awaitingPayment.length, total: awaitingPayment.reduce((sum, o) => sum + o.payment.total, 0) },
   }
 }
+
+const CHANNEL_LABELS: { key: OrderSource; label: string }[] = [
+  { key: 'WEBSITE', label: 'Website' },
+  { key: 'TILL', label: 'Till (counter)' },
+  { key: 'PHONE', label: 'Phone' },
+  { key: 'STAFF', label: 'Staff' },
+]
 
 export function downloadCSV(filename: string, csvContent: string): void {
   if (typeof window === 'undefined') return

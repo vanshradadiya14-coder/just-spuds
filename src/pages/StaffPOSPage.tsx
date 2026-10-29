@@ -69,7 +69,7 @@ import {
 } from '../services/authStore'
 import { getProducts, subscribeMenu, getProductByBarcode, isListedInStore, isProductSoldOut, getCategories } from '../services/menuStore'
 import { logAuditEvent } from '../services/auditStore'
-import { extrasFor, MEAL_DEAL, type Product } from '../data/menu'
+import { extrasFor, MEAL_DEAL, sellPrice, type Product } from '../data/menu'
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { lineExtras, mealText, modifierText, saladsText, saucesText, KITCHEN_STATIONS, stationForLine, type KitchenStation } from '../utils/lineText'
@@ -570,7 +570,7 @@ export default function StaffPOSPage() {
         lineId,
         productId: product.id,
         name: product.name,
-        base: product.price,
+        base: sellPrice(product, 'store'),
         extras: [],
         sauces: [],
         meal: false,
@@ -2186,7 +2186,7 @@ export default function StaffPOSPage() {
                       >
                         <span className={`line-clamp-2 text-[13px] font-black leading-tight ${soldOut ? 'text-white/50' : 'text-white'}`}>{prod.name}</span>
                         <span className="mt-2 flex items-end justify-between gap-1">
-                          <span className="font-mono text-sm font-black text-amber-300">{gbp(prod.price)}</span>
+                          <span className="font-mono text-sm font-black text-amber-300">{gbp(sellPrice(prod, 'store'))}</span>
                           {soldOut ? (
                             <span className="rounded bg-red-950/90 border border-red-500/60 px-1.5 text-[9px] font-black text-red-300">SOLD OUT</span>
                           ) : low ? (
@@ -2548,7 +2548,7 @@ export default function StaffPOSPage() {
                     className="w-full flex items-center justify-between gap-2 p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-amber-400 hover:text-ink transition text-left disabled:opacity-40"
                   >
                     <span className="text-xs font-black">{product.name}</span>
-                    <span className="font-mono text-xs font-black">{isSoldOut(product) ? 'Sold out' : gbp(product.price)}</span>
+                    <span className="font-mono text-xs font-black">{isSoldOut(product) ? 'Sold out' : gbp(sellPrice(product, 'store'))}</span>
                   </button>
                 ))}
             </div>

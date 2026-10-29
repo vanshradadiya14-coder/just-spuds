@@ -71,7 +71,7 @@ import {
   subscribeDrivers,
   type DriverProfile,
 } from '../services/driverStore'
-import { type Product, type Option } from '../data/menu'
+import { hasSeparateStorePrice, sellPrice, type Product, type Option } from '../data/menu'
 import ThermalReceipt from '../components/ThermalReceipt'
 import AdminZReportModal from '../components/AdminZReportModal'
 import AdminProductModal from '../components/AdminProductModal'
@@ -2082,7 +2082,12 @@ export default function AdminPage() {
                               </div>
                             </td>
                             <td className="p-3 text-white/60 capitalize">{p.category}</td>
-                            <td className="p-3 text-right font-mono font-bold text-amber-400">{gbp(p.price)}</td>
+                            <td className="p-3 text-right font-mono font-bold text-amber-400">
+                              {gbp(p.price)}
+                              {hasSeparateStorePrice(p) && (
+                                <span className="block text-[10px] font-bold text-cyan-300" title="What the till charges">till {gbp(sellPrice(p, 'store'))}</span>
+                              )}
+                            </td>
                             <td className="p-3 text-right font-mono text-white/50">{gbp(p.costPrice ?? Math.round(p.price * 0.32))}</td>
                             <td className="p-3 text-center">
                               <span className={cx(
@@ -2338,6 +2343,11 @@ export default function AdminPage() {
                         <span className="absolute top-2.5 right-2.5 rounded-full bg-amber-400 px-2.5 py-0.5 font-mono text-xs font-black text-ink shadow">
                           {gbp(product.price)}
                         </span>
+                        {hasSeparateStorePrice(product) && (
+                          <span className="absolute top-2.5 left-2.5 rounded-full bg-cyan-500 px-2.5 py-0.5 font-mono text-[10px] font-black text-slate-950 shadow" title="What the till charges">
+                            till {gbp(sellPrice(product, 'store'))}
+                          </span>
+                        )}
                         {product.vegetarian && (
                           <span className="absolute bottom-2.5 left-2.5 rounded-lg bg-emerald-950/80 border border-emerald-400/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
                             🌱 Veg
@@ -2432,7 +2442,7 @@ export default function AdminPage() {
                     <span className="absolute left-2.5 top-2 text-xs font-bold text-amber-400">£</span>
                     <input
                       type="number"
-                      step="0.05"
+                      step="0.01"
                       min="0"
                       required
                       value={newToppingPrice}

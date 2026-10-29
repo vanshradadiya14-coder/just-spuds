@@ -42,6 +42,8 @@ export default function AdminProductModal({
   const [isAddingCategory, setIsAddingCategory] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [priceGbp, setPriceGbp] = useState('6.45')
+  /** Blank = the till charges the website price. */
+  const [storePriceGbp, setStorePriceGbp] = useState('')
   const [size, setSize] = useState('Regular')
   const [description, setDescription] = useState('')
   const [baseFillingsInput, setBaseFillingsInput] = useState('')
@@ -69,6 +71,7 @@ export default function AdminProductModal({
       setName(initialProduct.name)
       setCategory(initialProduct.category)
       setPriceGbp((initialProduct.price / 100).toFixed(2))
+      setStorePriceGbp(typeof initialProduct.storePrice === 'number' ? (initialProduct.storePrice / 100).toFixed(2) : '')
       setSize(initialProduct.size || 'Regular')
       setDescription(initialProduct.description)
       setBaseFillingsInput(initialProduct.baseToppings ? initialProduct.baseToppings.join(', ') : '')
@@ -95,6 +98,7 @@ export default function AdminProductModal({
       setName('')
       setCategory('SPUDS')
       setPriceGbp('6.45')
+      setStorePriceGbp('')
       setSize('Regular')
       setDescription('')
       setBaseFillingsInput('Mature British Cheddar, Heinz Baked Beanz, Farmhouse Butter')
@@ -173,6 +177,9 @@ export default function AdminProductModal({
     if (!name.trim()) return
 
     const pricePence = Math.round(parseFloat(priceGbp || '0') * 100)
+    // Blank, or the same as the website, means one price everywhere.
+    const storePenceRaw = storePriceGbp.trim() === '' ? undefined : Math.round(parseFloat(storePriceGbp || '0') * 100)
+    const storePricePence = typeof storePenceRaw === 'number' && storePenceRaw >= 0 && storePenceRaw !== pricePence ? storePenceRaw : undefined
     const finalImage = customImage.trim() || image
 
     const generatedId =
@@ -195,6 +202,7 @@ export default function AdminProductModal({
       name: name.trim(),
       category,
       price: pricePence,
+      storePrice: storePricePence,
       size,
       description: description.trim(),
       image: finalImage,
@@ -343,13 +351,13 @@ export default function AdminProductModal({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
-                      Price (£ GBP) *
+                      Website price (£) *
                     </label>
                     <div className="relative">
                       <span className="absolute left-3 top-2 font-bold text-amber-400 text-xs">£</span>
                       <input
                         type="number"
-                        step="0.05"
+                        step="0.01"
                         min="0"
                         required
                         value={priceGbp}
@@ -358,6 +366,45 @@ export default function AdminProductModal({
                         className="w-full rounded-xl border border-white/20 bg-white/10 pl-7 pr-3 py-2 font-mono text-xs text-white focus:border-amber-400 focus:outline-none font-bold"
                       />
                     </div>
+                    {/* The till charges the website price unless the owner sets a counter price here. */}
+                    {storePriceGbp === '' ? (
+                      <button
+                        type="button"
+                        onClick={() => setStorePriceGbp(priceGbp || '0.00')}
+                        className="mt-1.5 text-[11px] font-bold text-cyan-300 hover:text-cyan-200"
+                      >
+                        + Charge a different price at the till
+                      </button>
+                    ) : (
+                      <div className="mt-1.5">
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-cyan-300 mb-1">
+                          Till price (£)
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-2 font-bold text-cyan-300 text-xs">£</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={storePriceGbp}
+                              onChange={(e) => setStorePriceGbp(e.target.value)}
+                              aria-label="Till price"
+                              className="w-full rounded-xl border border-cyan-400/40 bg-white/10 pl-7 pr-3 py-2 font-mono text-xs text-white focus:border-cyan-400 focus:outline-none font-bold"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setStorePriceGbp('')}
+                            title="Charge the website price at the till too"
+                            className="rounded-xl border border-white/20 px-2.5 py-2 text-[11px] font-bold text-white/60 hover:bg-white/10"
+                          >
+                            Same
+                          </button>
+                        </div>
+                        <p className="mt-1 text-[10px] text-white/40">What the counter charges. The website still charges the price above.</p>
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -418,7 +465,7 @@ export default function AdminProductModal({
                         <span className="absolute left-2.5 top-1.5 font-bold text-amber-400 text-xs">£</span>
                         <input
                           type="number"
-                          step="0.05"
+                          step="0.01"
                           min="0"
                           value={costPriceGbp}
                           onChange={(e) => setCostPriceGbp(e.target.value)}

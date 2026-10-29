@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FRESH_SALAD_OPTIONS, MEAL_DEAL, extrasFor, optionLabel, type Product } from '../../data/menu'
+import { FRESH_SALAD_OPTIONS, MEAL_DEAL, extrasFor, optionLabel, sellPrice, type Product } from '../../data/menu'
 import { getSauces } from '../../services/menuStore'
 import { playPOSTouchTone } from '../../services/printerBridge'
 import type { CartLine, CartLineModifier } from '../../hooks/useCart'
@@ -135,7 +135,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
   const step = steps[Math.min(stepIndex, steps.length - 1)]
 
   const extraPrice = (id: string) => extras.find((e) => e.id === id)?.price ?? 0
-  const unitPrice = product.price + toppings.reduce((n, id) => n + extraPrice(id), 0) + (meal ? MEAL_DEAL.price : 0)
+  const unitPrice = sellPrice(product, 'store') + toppings.reduce((n, id) => n + extraPrice(id), 0) + (meal ? MEAL_DEAL.price : 0)
   const total = unitPrice * qty
 
   const toggle = (list: string[], value: string) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value])
@@ -159,7 +159,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
     onConfirm({
       productId: product.id,
       name: product.name,
-      base: product.price,
+      base: sellPrice(product, 'store'),
       extras: toppings,
       salads: chosenSalads.length > 0 ? chosenSalads : undefined,
       sauces: chosenSauces,
@@ -209,7 +209,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">{initial ? 'Edit item' : 'Add item'}</p>
             <h3 className="display truncate text-xl font-black">{product.name}</h3>
-            <p className="text-xs text-white/50">{gbp(product.price)} each</p>
+            <p className="text-xs text-white/50">{gbp(sellPrice(product, 'store'))} each</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex rounded-xl border border-white/15 bg-white/5 p-0.5 text-[11px] font-bold">

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { getProducts, getSauces } from '../services/menuStore'
 import { createManualCounterOrder, type Order, type OrderSource, type PaymentMethod } from '../services/orderStore'
 import { getDeliverySettings } from '../services/deliverySettingsStore'
-import { extrasFor, FRESH_SALAD_OPTIONS, MEAL_DEAL, type Product } from '../data/menu'
+import { extrasFor, FRESH_SALAD_OPTIONS, MEAL_DEAL, sellPrice, type Product } from '../data/menu'
 import { gbp, cx } from '../utils/format'
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { extrasText, mealText, saladsText, saucesText, stationForLine } from '../utils/lineText'
@@ -58,7 +58,8 @@ export default function CreateManualOrderModal({
     const prod = products.find((p) => p.id === selectedProductId)
     if (!prod) return
 
-    const basePrice = prod.price
+    // Staff are ringing this up at the shop, so it is charged at counter prices.
+    const basePrice = sellPrice(prod, 'store')
 
     const newLine: CartLine = {
       lineId: `${prod.id}-${Date.now()}`,
@@ -327,7 +328,7 @@ export default function CreateManualOrderModal({
               >
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} ({gbp(p.price)})
+                    {p.name} ({gbp(sellPrice(p, 'store'))})
                   </option>
                 ))}
               </select>

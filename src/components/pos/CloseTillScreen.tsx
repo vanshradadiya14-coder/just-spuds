@@ -15,13 +15,13 @@ import { subscribeSyncStatus, syncNow, type SyncStatus } from '../../services/cl
 import { gbp } from '../../utils/format'
 
 /**
- * EPOS "Close Till": a checklist (unsynced sales, open orders, held tickets,
- * cash up), the cash-up itself (counted vs expected for the drawer and the
- * card machine), the day's figures, then Print & Close — which freezes the
- * end-of-day report on the shift and prints it.
+ * EPOS "Close Till": a checklist (unsynced sales, open orders, held tickets),
+ * the day's figures, then Print & Close — which freezes the end-of-day report
+ * on the shift and prints it.
  *
- * The count cannot be skipped: on the old till the report printed with
- * "Counted £0.00", so every day showed a meaningless shortfall.
+ * Counting the drawer is optional: most days the shop closes on the figures the
+ * till worked out. If nobody counts, the report simply has no counted column —
+ * never a "Counted £0.00" that would read as a whole day's shortfall.
  */
 
 const DENOMS: { key: keyof CashDenominations; label: string; value: number }[] = [
@@ -104,13 +104,13 @@ export default function CloseTillScreen({
   // With no cloud sync set up nothing is waiting to upload — everything lives on this till.
   const syncOff = !sync || sync.state === 'off'
   const pending = syncOff ? 0 : sync?.pending ?? 0
-  const blocked = openChecksDue.length > 0 || !cashDone
+  const blocked = openChecksDue.length > 0
 
   const doClose = () => {
     if (busy) return
     setBusy(true)
     try {
-      const { closedShift } = closeTillShift(userName, denoms, note, {
+      const { closedShift } = closeTillShift(userName, cashDone ? denoms : null, note, {
         countedCard,
         countedOther: otherTaken > 0 ? countedOther : undefined,
         buildReport: (closed) =>
@@ -124,6 +124,10 @@ export default function CloseTillScreen({
 
   const requestClose = () => {
     if (blocked) return
+    if (!cashDone) {
+      doClose()
+      return
+    }
     if (countedCash === 0 && shift.expectedCash > 0) {
       setConfirm(`You counted £0.00 but ${gbp(shift.expectedCash)} should be in the drawer. Close with an empty count?`)
       return
@@ -207,9 +211,9 @@ export default function CloseTillScreen({
                   action={heldCount > 0 ? { label: 'View', run: () => onOpenOrders('held') } : undefined}
                 />
                 <Check
-                  ok={cashDone}
+                  ok
                   title="Cash up"
-                  detail={cashDone ? `Counted ${gbp(countedCash)}` : 'Count the drawer — required.'}
+                  detail={cashDone ? `Counted ${gbp(countedCash)}` : 'Optional — close on the expected figures, or count the drawer.'}
                   action={{ label: cashDone ? 'Recount' : 'Count', run: () => setCounting(true) }}
                 />
                 <Check
@@ -257,11 +261,7 @@ export default function CloseTillScreen({
             >
               Print &amp; close
             </button>
-            {blocked && (
-              <p className="text-center text-[11px] text-white/50">
-                {openChecksDue.length > 0 ? 'Settle or void the open orders first.' : 'Count the cash drawer first.'}
-              </p>
-            )}
+            {blocked && <p className="text-center text-[11px] text-white/50">Settle or void the open orders first.</p>}
           </div>
 
           {/* Right: figures (EPOS Summary / Sales / Refunds / Void / Tax) */}
@@ -328,8 +328,8 @@ export default function CloseTillScreen({
                         <span className="font-bold">Counted</span>
                         <span className="text-right font-mono font-bold">
                           {cashDone ? gbp(countedCash) : (
-                            <button type="button" onClick={() => setCounting(true)} className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-black text-ink">
-                              Count
+                            <button type="button" onClick={() => setCounting(true)} className="rounded-lg border border-white/20 px-3 py-1 text-xs font-bold text-white/70 hover:bg-white/10">
+                              Not counted — count
                             </button>
                           )}
                         </span>
@@ -492,7 +492,7 @@ export default function CloseTillScreen({
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h3 className="text-base font-black">Count the drawer</h3>
-                <p className="text-[11px] text-white/55">How many of each note and coin, float included.</p>
+                <p className="text-[11px] text-white/55">How many of each note and coin, float included. Optional — you can close without counting.</p>
               </div>
               <p className="font-mono text-2xl font-black text-amber-300">{gbp(countedCash)}</p>
             </div>

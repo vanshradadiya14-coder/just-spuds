@@ -97,6 +97,29 @@ export default function AdminZReportModal({ isOpen, onClose, report }: AdminZRep
               )}
             </div>
 
+            {/* Where the day's orders came from */}
+            {((report.byChannel || []).length > 0 || (report.awaitingPayment?.orders ?? 0) > 0) && (
+              <div className="space-y-1 border-b border-dashed border-slate-400 pb-2.5">
+                <div className="text-[10px] font-bold uppercase text-slate-500">Where the orders came from</div>
+                {(report.byChannel || []).map((c) => (
+                  <div key={c.key} className="flex justify-between text-slate-700">
+                    <span>{c.label}:</span>
+                    <span>
+                      {c.orders} ({gbp(c.total)})
+                    </span>
+                  </div>
+                ))}
+                {(report.awaitingPayment?.orders ?? 0) > 0 && (
+                  <div className="flex justify-between text-amber-800">
+                    <span>Still to be paid for:</span>
+                    <span>
+                      {report.awaitingPayment.orders} ({gbp(report.awaitingPayment.total)})
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Financial Revenue Breakdown */}
             <div className="space-y-1 border-b border-dashed border-slate-400 pb-2.5">
               <div className="flex justify-between">
@@ -165,7 +188,7 @@ export default function AdminZReportModal({ isOpen, onClose, report }: AdminZRep
             </div>
 
             <div className="text-center pt-2 text-[10px] text-slate-400">
-              *** END OF Z-REPORT #${report.reportNumber} ***
+              *** END OF Z-REPORT #{report.reportNumber} ***
             </div>
           </div>
 
