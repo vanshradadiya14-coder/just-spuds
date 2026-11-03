@@ -9,6 +9,7 @@ import {
   touchAdminVault,
   loginAdminConsoleVerified,
   isAdminConsoleRole,
+  usingServerSignIn,
   type AuthUser,
   type Role,
 } from '../services/authStore'
@@ -22,8 +23,10 @@ import {
   hasAdminPasskey,
   type StationRole,
 } from '../services/terminalLockStore'
+import { isDevicePaired, isServerAuth, subscribeServerAuth } from '../services/serverAuthState'
 import FixedAmbientBackdrop from './FixedAmbientBackdrop'
 import ChangePinScreen from './ChangePinScreen'
+import PairDeviceScreen from './PairDeviceScreen'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -53,6 +56,8 @@ export default function ProtectedRoute({
   const [vaultUnlocked, setVaultUnlocked] = useState<boolean>(() => isAdminVaultUnlocked())
   const [terminalEnrolled, setTerminalEnrolled] = useState<boolean>(() => isTerminalEnrolled())
   const [hardwareLockEnforced, setHardwareLockEnforced] = useState<boolean>(() => isStoreHardwareLockEnforced())
+  const [serverAuth, setServerAuth] = useState<boolean>(() => isServerAuth())
+  const [devicePaired, setDevicePaired] = useState<boolean>(() => isDevicePaired())
 
   // Store Hardware Enrollment form state (Admin-only gate for unenrolled devices)
   const [stationName, setStationName] = useState(() => getLocalDeviceName())
@@ -66,6 +71,7 @@ export default function ProtectedRoute({
   const location = useLocation()
 
   useEffect(() => {
+    void usingServerSignIn()
     const unsubAuth = subscribeAuth((u) => {
       setUser(u)
       setVaultUnlocked(isAdminVaultUnlocked(u))
@@ -74,9 +80,14 @@ export default function ProtectedRoute({
       setTerminalEnrolled(isTerminalEnrolled())
       setHardwareLockEnforced(isStoreHardwareLockEnforced())
     })
+    const unsubServer = subscribeServerAuth(() => {
+      setServerAuth(isServerAuth())
+      setDevicePaired(isDevicePaired())
+    })
     return () => {
       unsubAuth()
       unsubTerm()
+      unsubServer()
     }
   }, [])
 
@@ -96,13 +107,230 @@ export default function ProtectedRoute({
     }
   }, [requireAdminVault])
 
-  // 1. Not signed in: redirect to login with current path saved for seamless return
+  // 1. Store Terminal Hardware & Pairing Gates (/pos, /till, /staff, /cfd)
+  // On dedicated store terminals, we verify device pairing and hardware enrollment first,
+  // and keep the POS/KDS/CFD mounted in-place during operator standby so order sirens,
+  // active shifts, and paused carts stay alive without redirecting to /login.
+  if (requireStoreTerminal) {
+    if (serverAuth && !devicePaired) {
+      return (
+        <div className="relative min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6 select-none overflow-hidden font-body">
+          <FixedAmbientBackdrop variant="portal" />
+          <div className="relative z-10 w-full flex justify-center">
+            <PairDeviceScreen
+              portal="pos"
+              onDone={() => {
+                setDevicePaired(isDevicePaired())
+                setTerminalEnrolled(isTerminalEnrolled())
+              }}
+            />
+          </div>
+        </div>
+      )
+    }
+
+    if (hardwareLockEnforced && !terminalEnrolled) {
+      const needPasskey = hasAdminPasskey() || passkeyRequested
+      // The owner who just verified on the sign-in screen is not asked for the PIN a second time.
+      const alreadyVerified = Boolean(user && isAdminConsoleRole(user.role) && vaultUnlocked)
+      const handleAdminEnrollDevice = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (enrolling) return
+        setEnrollError(null)
+        setEnrolling(true)
+        try {
+          let actor = user?.name || 'Store Admin'
+          if (!alreadyVerified) {
+            const res = await loginAdminConsoleVerified(adminPin, needPasskey ? adminPasskey : undefined)
+            if (!res.ok || !res.user) {
+              if (res.needPasskey) setPasskeyRequested(true)
+              setEnrollError(res.message || 'Invalid Admin credentials. Only the Store Admin can enroll a store terminal.')
+              setAdminPin('')
+              return
+            }
+            actor = res.user.name
+          }
+          const enrolled = await enrollThisDevice(actor, stationName.trim() || getLocalDeviceName(), stationRole)
+          if (!enrolled.ok) {
+            setEnrollError(enrolled.message)
+            return
+          }
+          setTerminalEnrolled(true)
+        } finally {
+          setEnrolling(false)
+        }
+      }
+
+      return (
+        <div className="relative min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6 select-none overflow-hidden font-body">
+          <FixedAmbientBackdrop variant="portal" />
+          <div className="relative z-10 w-full max-w-lg rounded-3xl border border-amber-500/40 bg-slate-900/95 backdrop-blur-xl p-6 sm:p-8 shadow-2xl space-y-5">
+            <div className="flex items-center gap-3.5 border-b border-white/10 pb-4">
+              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-amber-400 text-3xl text-slate-950 shadow-glow">
+                🏪
+              </div>
+              <div>
+                <span className="inline-block rounded bg-rose-500/20 border border-rose-500/40 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-300 mb-1">
+                  In-Store Hardware Lock Active
+                </span>
+                <h1 className="text-xl font-black text-white uppercase tracking-wide">
+                  Store Terminal Not Enrolled
+                </h1>
+                <p className="text-xs text-slate-400">
+                  The Till &amp; Kitchen system works exclusively on authorized in-store hardware.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3.5 text-xs text-slate-300 space-y-1.5">
+              <p>
+                🔒 <strong>Why am I seeing this?</strong> This device (<code className="text-amber-300 font-mono">{getLocalDeviceId()}</code>) has not been enrolled as an in-store workstation. Staff PINs cannot open the till on personal phones or outside computers.
+              </p>
+              <p className="text-slate-400">
+                If this is a physical store computer or kitchen screen in Aylesbury, the <strong>Store Admin</strong> can enroll it below once.
+              </p>
+            </div>
+
+            <form onSubmit={handleAdminEnrollDevice} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Store Workstation Name
+                </label>
+                <input
+                  type="text"
+                  value={stationName}
+                  onChange={(e) => setStationName(e.target.value)}
+                  placeholder="e.g. Front Counter Till #1"
+                  className="w-full rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Workstation Role
+                </label>
+                <select
+                  value={stationRole}
+                  onChange={(e) => setStationRole(e.target.value as StationRole)}
+                  className="w-full rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                >
+                  <option value="master_till">🧾 Master Counter Till (Cash Drawer &amp; Payments)</option>
+                  <option value="kds_display">👨‍🍳 Kitchen KDS Display Screen</option>
+                  <option value="secondary_till">🖥️ Secondary Counter Order Screen</option>
+                </select>
+              </div>
+
+              {alreadyVerified && user ? (
+                <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
+                  ✓ Verified as <strong>{user.name}</strong> — choose a name and role for this device, then enrol it.
+                </p>
+              ) : (
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
+                    Store Admin PIN (Required to Enroll Hardware)
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={8}
+                    value={adminPin}
+                    onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Enter Admin / Owner PIN"
+                    className="w-full rounded-xl border border-amber-400/40 bg-black/60 px-3 py-2.5 text-center font-mono text-xl tracking-[0.35em] text-white focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+              )}
+
+              {needPasskey && !alreadyVerified && (
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
+                    Admin Master Passkey
+                  </label>
+                  <input
+                    type="password"
+                    value={adminPasskey}
+                    onChange={(e) => setAdminPasskey(e.target.value)}
+                    placeholder="Enter Admin Master Passkey"
+                    className="w-full rounded-xl border border-amber-400/40 bg-black/60 px-3 py-2 text-center font-mono text-sm text-white focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+              )}
+
+              {enrollError && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-950/60 p-2.5 text-center text-xs font-bold text-rose-200">
+                  {enrollError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={enrolling}
+                className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition disabled:opacity-60"
+              >
+                {enrolling ? 'Checking with the server…' : <>🛡️ Authorize &amp; Enroll Store Terminal &rarr;</>}
+              </button>
+            </form>
+
+            <div className="flex items-center justify-between border-t border-white/10 pt-3 text-xs">
+              <span className="text-slate-500">
+                {user ? `Signed in as ${user.name} (${user.role})` : 'Hardware Enrollment Gate • Admin PIN Required'}
+              </span>
+              {user && (
+                <button
+                  type="button"
+                  onClick={() => logout()}
+                  className="font-bold text-rose-300 hover:text-rose-200"
+                >
+                  Sign Out
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // If an operator IS signed in on a store terminal, enforce account status and temporary PIN change
+    if (user && user.status !== 'ACTIVE') {
+      return (
+        <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-6 select-none overflow-hidden">
+          <FixedAmbientBackdrop variant="portal" />
+          <div className="relative z-10 w-full max-w-md rounded-3xl border border-red-500/40 bg-slate-900/95 backdrop-blur-xl p-8 shadow-2xl text-center">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-red-500/20 text-3xl border border-red-500/40 text-red-400">
+              🚫
+            </div>
+            <h1 className="text-2xl font-bold text-white mb-2">Account Suspended</h1>
+            <p className="text-sm text-slate-400 mb-6">
+              The account for <span className="font-semibold text-white">{user.name}</span> is currently inactive or disabled.
+            </p>
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="w-full rounded-2xl bg-red-600 px-4 py-3 font-body text-sm font-bold text-white shadow-lg hover:bg-red-500 transition"
+            >
+              Sign Out &amp; Switch Operator
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    if (user && user.mustChangePin) {
+      return <ChangePinScreen user={user} />
+    }
+
+    // Paired & enrolled store terminal: render POS/KDS/CFD directly.
+    // StaffPOSPage and StaffKDSPage render their own in-place Subway POS operator sign-on standby screen when !isAuthorized.
+    return <>{children}</>
+  }
+
+  // 2. Non-terminal portals (e.g. /admin): Not signed in -> redirect to login with current path saved
   if (!user) {
     const redirectUrl = encodeURIComponent(location.pathname + location.search)
     return <Navigate to={`/login?redirect=${redirectUrl}&tab=${loginTab}`} replace />
   }
 
-  // 2. Disabled account check
+  // 3. Disabled account check
   if (user.status !== 'ACTIVE') {
     return (
       <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-6 select-none overflow-hidden">
@@ -127,12 +355,12 @@ export default function ProtectedRoute({
     )
   }
 
-  // 2b. Signed in with a temporary PIN: choose your own before anything else.
+  // 3b. Signed in with a temporary PIN: choose your own before anything else.
   if (user.mustChangePin) {
     return <ChangePinScreen user={user} />
   }
 
-  // 3. Role check: signed in, but lacks permission for this specific portal (e.g. Cashier or Supervisor opening /admin)
+  // 4. Role check: signed in, but lacks permission for this specific portal (e.g. Cashier or Supervisor opening /admin)
   const isAuthorized = hasRole(user, allowedRoles)
   if (!isAuthorized) {
     const redirectUrl = encodeURIComponent(location.pathname + location.search)
@@ -174,168 +402,10 @@ export default function ProtectedRoute({
     )
   }
 
-  // 4. Admin Vault Gate: Even if an Admin signed into the Till (/pos), /admin requires explicit Admin Vault unlock
+  // 5. Admin Vault Gate: Even if an Admin signed into the Till (/pos), /admin requires explicit Admin Vault unlock
   if (requireAdminVault && (!isAdminConsoleRole(user.role) || !vaultUnlocked)) {
     const redirectUrl = encodeURIComponent(location.pathname + location.search)
     return <Navigate to={`/login?redirect=${redirectUrl}&tab=admin`} replace />
-  }
-
-  // 5. Store Hardware Lock: /pos, /till, and /staff are strictly for enrolled in-store hardware
-  if (requireStoreTerminal && hardwareLockEnforced && !terminalEnrolled) {
-    const needPasskey = hasAdminPasskey() || passkeyRequested
-    // The owner who just verified on the sign-in screen is not asked for the PIN a second time.
-    const alreadyVerified = isAdminConsoleRole(user.role) && vaultUnlocked
-    const handleAdminEnrollDevice = async (e: React.FormEvent) => {
-      e.preventDefault()
-      if (enrolling) return
-      setEnrollError(null)
-      setEnrolling(true)
-      try {
-        let actor = user.name
-        if (!alreadyVerified) {
-          const res = await loginAdminConsoleVerified(adminPin, needPasskey ? adminPasskey : undefined)
-          if (!res.ok || !res.user) {
-            if (res.needPasskey) setPasskeyRequested(true)
-            setEnrollError(res.message || 'Invalid Admin credentials. Only the Store Admin can enroll a store terminal.')
-            setAdminPin('')
-            return
-          }
-          actor = res.user.name
-        }
-        const enrolled = await enrollThisDevice(actor, stationName.trim() || getLocalDeviceName(), stationRole)
-        if (!enrolled.ok) {
-          setEnrollError(enrolled.message)
-          return
-        }
-        setTerminalEnrolled(true)
-      } finally {
-        setEnrolling(false)
-      }
-    }
-
-    return (
-      <div className="relative min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6 select-none overflow-hidden font-body">
-        <FixedAmbientBackdrop variant="portal" />
-        <div className="relative z-10 w-full max-w-lg rounded-3xl border border-amber-500/40 bg-slate-900/95 backdrop-blur-xl p-6 sm:p-8 shadow-2xl space-y-5">
-          <div className="flex items-center gap-3.5 border-b border-white/10 pb-4">
-            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-amber-400 text-3xl text-slate-950 shadow-glow">
-              🏪
-            </div>
-            <div>
-              <span className="inline-block rounded bg-rose-500/20 border border-rose-500/40 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-300 mb-1">
-                In-Store Hardware Lock Active
-              </span>
-              <h1 className="text-xl font-black text-white uppercase tracking-wide">
-                Store Terminal Not Enrolled
-              </h1>
-              <p className="text-xs text-slate-400">
-                The Till &amp; Kitchen system works exclusively on authorized in-store hardware.
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-3.5 text-xs text-slate-300 space-y-1.5">
-            <p>
-              🔒 <strong>Why am I seeing this?</strong> This device (<code className="text-amber-300 font-mono">{getLocalDeviceId()}</code>) has not been enrolled as an in-store workstation. Staff PINs cannot open the till on personal phones or outside computers.
-            </p>
-            <p className="text-slate-400">
-              If this is a physical store computer or kitchen screen in Aylesbury, the <strong>Store Admin</strong> can enroll it below once.
-            </p>
-          </div>
-
-          <form onSubmit={handleAdminEnrollDevice} className="space-y-3">
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                Store Workstation Name
-              </label>
-              <input
-                type="text"
-                value={stationName}
-                onChange={(e) => setStationName(e.target.value)}
-                placeholder="e.g. Front Counter Till #1"
-                className="w-full rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                Workstation Role
-              </label>
-              <select
-                value={stationRole}
-                onChange={(e) => setStationRole(e.target.value as StationRole)}
-                className="w-full rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
-              >
-                <option value="master_till">🧾 Master Counter Till (Cash Drawer &amp; Payments)</option>
-                <option value="kds_display">👨‍🍳 Kitchen KDS Display Screen</option>
-                <option value="secondary_till">🖥️ Secondary Counter Order Screen</option>
-              </select>
-            </div>
-
-            {alreadyVerified ? (
-              <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-200">
-                ✓ Verified as <strong>{user.name}</strong> — choose a name and role for this device, then enrol it.
-              </p>
-            ) : (
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
-                  Store Admin PIN (Required to Enroll Hardware)
-                </label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={8}
-                  value={adminPin}
-                  onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="Enter Admin / Owner PIN"
-                  className="w-full rounded-xl border border-amber-400/40 bg-black/60 px-3 py-2.5 text-center font-mono text-xl tracking-[0.35em] text-white focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-            )}
-
-            {needPasskey && !alreadyVerified && (
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
-                  Admin Master Passkey
-                </label>
-                <input
-                  type="password"
-                  value={adminPasskey}
-                  onChange={(e) => setAdminPasskey(e.target.value)}
-                  placeholder="Enter Admin Master Passkey"
-                  className="w-full rounded-xl border border-amber-400/40 bg-black/60 px-3 py-2 text-center font-mono text-sm text-white focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-            )}
-
-            {enrollError && (
-              <div className="rounded-xl border border-rose-500/40 bg-rose-950/60 p-2.5 text-center text-xs font-bold text-rose-200">
-                {enrollError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={enrolling}
-              className="w-full rounded-2xl bg-amber-400 py-3 font-body text-xs font-black uppercase tracking-wider text-slate-950 shadow-glow hover:bg-amber-300 transition disabled:opacity-60"
-            >
-              {enrolling ? 'Checking with the server…' : <>🛡️ Authorize &amp; Enroll Store Terminal &rarr;</>}
-            </button>
-          </form>
-
-          <div className="flex items-center justify-between border-t border-white/10 pt-3 text-xs">
-            <span className="text-slate-500">Signed in as {user.name} ({user.role})</span>
-            <Link
-              to="/"
-              onClick={() => logout()}
-              className="font-bold text-rose-300 hover:text-rose-200"
-            >
-              Sign Out &amp; Exit
-            </Link>
-          </div>
-        </div>
-      </div>
-    )
   }
 
   // 6. Authorized: render the secured portal

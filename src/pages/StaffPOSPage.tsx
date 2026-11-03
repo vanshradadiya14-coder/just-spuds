@@ -58,7 +58,6 @@ import { formatDuration, getActiveTimeclockEntry, isOnBreak, subscribeTimeclock,
 import {
   getCurrentUser,
   subscribeAuth,
-  signInWithPin,
   logout,
   hasRole,
   verifyManagerPinAsync,
@@ -94,6 +93,7 @@ import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
 import TerminalSoftwareEnrollmentModal from '../components/pos/TerminalSoftwareEnrollmentModal'
 import TerminalAuthorityBanner from '../components/pos/TerminalAuthorityBanner'
+import PosOperatorStandby from '../components/pos/PosOperatorStandby'
 
 const REJECTION_REASON_PRESETS = [
   { id: 'out_of_stock', label: '🥔 Out of fresh King Edward potato stock', defaultText: 'We have temporarily run out of fresh jacket potato stock for this batch.' },
@@ -131,9 +131,8 @@ export default function StaffPOSPage() {
     description: 'In-store food till with split payments, cash drawer, end-of-day report and thermal printer support.',
   })
 
-  // Auth
+  // Auth & Standby lock reason
   const [user, setUser] = useState<AuthUser | null>(() => getCurrentUser())
-  const [pinInput, setPinInput] = useState('')
   const [pinError, setPinError] = useState<string | null>(null)
 
   // Shift & till settings
@@ -382,18 +381,6 @@ export default function StaffPOSPage() {
     return () => clearTimeout(id)
   }, [flash])
 
-  const handlePinSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    if (!pinInput.trim()) return
-    const res = await signInWithPin(pinInput)
-    if (res.ok) {
-      setPinInput('')
-      setPinError(null)
-    } else {
-      setPinError(res.message)
-    }
-  }
-
   // ------------------------------------------------------------------ live kitchen flow
   const filteredKdsOrders = useMemo(() => {
     let list = allOrdersList
@@ -492,10 +479,23 @@ export default function StaffPOSPage() {
     })
   }, [cartLines, subtotalPence, discountPence, totalDuePence, orderType, customerName, buzzerNumber, tableNumber, paying])
 
+  // -------------------------------------------------------------- sign-off / switch operator
+  const handleSignOffOperator = (customReason?: string) => {
+    playPOSTouchTone('tap')
+    const reason =
+      customReason ||
+      (cartLines.length > 0
+        ? `Signed off by ${actor} — active sale (${itemCount} item${itemCount === 1 ? '' : 's'}, ${gbp(totalDuePence)}) is safely paused on the till.`
+        : `Signed off by ${actor} — Shift #${shift?.shiftNumber ?? 1} remains open. Enter Operator PIN to sign on.`)
+    logout()
+    setPinError(reason)
+  }
+
   // -------------------------------------------------------------- keyboard
-  // Ctrl+K or / search, F2 search, F4/F5 pay, F8 send to kitchen, F9 hold.
+  // Ctrl+K or / search, F2 search, F4/F5 pay, F8 send to kitchen, F9 hold, F12 switch operator.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isAuthorized) return
       const typing = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
       if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && !typing)) {
         if (document.querySelector('[role="dialog"]')) return
@@ -512,6 +512,7 @@ export default function StaffPOSPage() {
         F5: () => openPayment('payment'),
         F8: () => handleSendToKitchen(),
         F9: () => handleHoldTicket(),
+        F12: () => handleSignOffOperator(),
       }
       const action = actions[e.key]
       if (!action) return
@@ -1001,6 +1002,8 @@ export default function StaffPOSPage() {
     setIsSideMenuOpen(false)
     switch (action) {
       case 'float':
+        requireManagerAuth('Adjust Float', 'Pay cash into or out of the till drawer float', () => setCashMovement('float'))
+        break
       case 'petty':
       case 'tip_out':
         setCashMovement(action)
@@ -1012,8 +1015,10 @@ export default function StaffPOSPage() {
         if (shift) setEodReport({ report: buildLiveReport(shift), autoPrint: false })
         break
       case 'close_till':
-        if (cartLines.length > 0 && !settlingOrder) handleHoldTicket()
-        setIsCloseTillOpen(true)
+        requireManagerAuth('Close Till (Z-Read)', 'Count the drawer, close the shift and print the end-of-day Z-report', () => {
+          if (cartLines.length > 0 && !settlingOrder) handleHoldTicket()
+          setIsCloseTillOpen(true)
+        })
         break
       case 'history':
         setIsHistoryOpen(true)
@@ -1040,7 +1045,7 @@ export default function StaffPOSPage() {
         setIsShortcutsOpen(true)
         break
       case 'lock':
-        logout()
+        handleSignOffOperator()
         break
     }
   }
@@ -1123,7 +1128,15 @@ export default function StaffPOSPage() {
     playPOSTouchTone('action')
     const parsed = parseFloat(startingFloatString)
     const floatVal = isNaN(parsed) || parsed < 0 ? 0 : parsed
-    openTillShift(actor, Math.round(floatVal * 100))
+    const floatPence = Math.round(floatVal * 100)
+    requireManagerAuth(
+      'Open Till Shift',
+      `Open ${tillName} with £${floatVal.toFixed(2)} starting float`,
+      (mgrName) => {
+        const openedBy = isManagerOrAdmin(user?.role) ? actor : `${actor} (Authorized by ${mgrName})`
+        openTillShift(openedBy, floatPence)
+      },
+    )
   }
 
   const reportModals = (
@@ -1133,83 +1146,113 @@ export default function StaffPOSPage() {
     </>
   )
 
-  // ======================================================== PIN gate
-  if (!isAuthorized) {
-    return (
-      <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-4 select-none overflow-hidden">
-        <FixedAmbientBackdrop variant="portal" />
-        <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
-
-        <div className="relative z-10 mb-6 flex items-center gap-3">
-          <Link to="/" className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition backdrop-blur-md">
-            <span>←</span>
-            <span>Customer Website</span>
-          </Link>
-          <Link to="/staff" className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition backdrop-blur-md">
-            <span>👨‍🍳</span>
-            <span>Kitchen KDS</span>
-          </Link>
-          <FullscreenButton showLabel className="rounded-full px-4 py-2 backdrop-blur-md" />
-        </div>
-
-        <div className="relative z-10 w-full max-w-sm rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-8 shadow-2xl text-center ring-1 ring-amber-400/20">
-          <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-amber-400 text-3xl shadow-glow text-ink">🥔</div>
-          <h1 className="display text-2xl text-white font-bold tracking-tight">{tillName}</h1>
-          <p className="font-body text-xs text-white/60 mt-1 mb-6">Enter your staff PIN to use the till.</p>
-
-          <form onSubmit={handlePinSubmit} className="space-y-4">
-            <input
-              type="password"
-              maxLength={8}
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              placeholder="••••"
-              autoFocus
-              className="w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
-            />
-            <div className="grid grid-cols-3 gap-2 pt-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('numpad')
-                    setPinInput((prev) => (prev.length < 8 ? prev + num : prev))
-                  }}
-                  className="rounded-xl border border-white/10 bg-white/5 py-3.5 font-mono text-xl font-bold text-white hover:bg-white/15 transition active:scale-95"
-                >
-                  {num}
-                </button>
-              ))}
-              <button type="button" onClick={() => setPinInput('')} className="rounded-xl border border-red-500/20 bg-red-950/20 py-3 font-body text-xs font-bold text-red-400 hover:bg-red-900/40">
-                Clear
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  playPOSTouchTone('numpad')
-                  setPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))
-                }}
-                className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-xl font-bold text-white hover:bg-white/15"
-              >
-                0
-              </button>
-              <button type="button" onClick={() => setPinInput((prev) => prev.slice(0, -1))} className="rounded-xl border border-white/10 bg-white/5 py-3 font-body text-xs font-bold text-white hover:bg-white/15" aria-label="Delete digit">
-                ⌫
-              </button>
+  const managerAuthModal = isManagerAuthModalOpen ? (
+    <div className="fixed inset-0 z-[80] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Manager approval">
+      <div className="w-full max-w-sm rounded-3xl border border-amber-400/50 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
+        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2 text-left">
+            <span className="text-xl">🛡️</span>
+            <div>
+              <h3 className="font-black text-sm text-white">{managerActionTitle || 'Manager approval'}</h3>
+              <p className="text-[10px] text-white/60">{managerActionDescription}</p>
             </div>
-            {pinError && <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2.5 font-body text-xs text-red-300">{pinError}</p>}
-            <button type="submit" className="w-full rounded-full bg-amber-400 py-3.5 font-body text-xs font-black uppercase tracking-wider text-ink shadow-glow hover:bg-amber-300 transition">
-              Sign in →
-            </button>
-          </form>
-
-          <button type="button" onClick={() => setIsTimeclockOpen(true)} className="mt-4 w-full rounded-2xl border border-white/15 bg-white/5 py-3 text-xs font-bold text-white/80 hover:bg-white/15 transition">
-            ⏱️ Clock in / out only (no till access)
+          </div>
+          <button type="button" onClick={() => setIsManagerAuthModalOpen(false)} className="text-white/60 hover:text-white" aria-label="Close">
+            ✕
           </button>
         </div>
-        {isTimeclockOpen && <TimeclockModal onClose={() => setIsTimeclockOpen(false)} />}
+        <p className="text-xs text-amber-300 font-bold">Supervisor or manager PIN</p>
+        <input
+          type="password"
+          maxLength={8}
+          value={managerPinInput}
+          onChange={(e) => setManagerPinInput(e.target.value)}
+          placeholder="••••"
+          autoFocus
+          className="w-full rounded-2xl border border-white/20 bg-black/60 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
+        />
+        {managerPinError && <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2 text-xs text-red-300">{managerPinError}</p>}
+        <div className="grid grid-cols-3 gap-1.5 pt-1">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+            <button
+              key={num}
+              type="button"
+              onClick={() => {
+                playPOSTouchTone('numpad')
+                setManagerPinInput((prev) => (prev.length < 8 ? prev + num : prev))
+              }}
+              className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
+            >
+              {num}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              setManagerPinInput('')
+              setManagerPinError(null)
+            }}
+            className="rounded-xl border border-red-500/30 bg-red-950/20 py-2.5 text-xs font-bold text-red-400 hover:bg-red-900/40"
+          >
+            Clear
+          </button>
+          <button type="button" onClick={() => setManagerPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))} className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15">
+            0
+          </button>
+          <button type="button" onClick={() => setManagerPinInput((prev) => prev.slice(0, -1))} className="rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/70 hover:bg-white/15" aria-label="Delete digit">
+            ⌫
+          </button>
+        </div>
+        <div className="pt-2 flex gap-2">
+          <button type="button" onClick={() => setIsManagerAuthModalOpen(false)} className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/60 hover:bg-white/15">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const check = await verifyManagerPinAsync(managerPinInput)
+              if (check.ok) {
+                playPOSTouchTone('action')
+                onManagerApproved?.(check.managerName || 'Manager')
+                setIsManagerAuthModalOpen(false)
+              } else {
+                setManagerPinError(check.message || 'That PIN is not a supervisor or manager PIN.')
+              }
+            }}
+            className="flex-[2] rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink hover:bg-amber-300 shadow-glow"
+          >
+            Approve →
+          </button>
+        </div>
       </div>
+    </div>
+  ) : null
+
+  // ======================================================== Subway POS Operator Sign-On & Standby Gate
+  if (!isAuthorized) {
+    return (
+      <>
+        <PosOperatorStandby
+          tillName={tillName}
+          shift={shift}
+          cartItemCount={itemCount}
+          cartTotalPence={totalDuePence}
+          activeKitchenCount={activeKitchenCount}
+          openChecksCount={openChecksCount}
+          heldTicketsCount={heldTickets.length}
+          activeAlertsCount={activeAlerts.length}
+          lockReason={pinError}
+          onClearLockReason={() => setPinError(null)}
+          onOpenTimeclock={() => setIsTimeclockOpen(true)}
+          onOpenSoftwareModal={() => setShowSoftwareModal(true)}
+        />
+        {isTimeclockOpen && <TimeclockModal onClose={() => setIsTimeclockOpen(false)} />}
+        <TerminalSoftwareEnrollmentModal
+          isOpen={showSoftwareModal}
+          onClose={() => setShowSoftwareModal(false)}
+          onFlash={(msg) => setFlash(msg)}
+        />
+      </>
     )
   }
 
@@ -1217,18 +1260,27 @@ export default function StaffPOSPage() {
   if (!shift || shift.status === 'closed') {
     const parsedFloat = parseFloat(startingFloatString)
     const floatVal = isNaN(parsedFloat) || parsedFloat < 0 ? 0 : parsedFloat
+    const userIsMgr = isManagerOrAdmin(user?.role)
     return (
       <div className="relative min-h-screen bg-portal-dark text-slate-100 flex flex-col items-center justify-center p-3 sm:p-4 select-none overflow-hidden">
         <FixedAmbientBackdrop variant="portal" />
         <div className="pointer-events-none absolute h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/20 via-emerald-500/10 to-transparent blur-[120px]" />
 
         <div className="relative z-10 w-full max-w-md rounded-3xl border border-amber-400/40 bg-slate-900/90 backdrop-blur-xl p-5 sm:p-6 shadow-2xl text-center space-y-4 ring-1 ring-amber-400/20">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-400/20 border border-amber-400/40 text-3xl">🔒</div>
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-400/20 border border-amber-400/40 text-3xl">
+            {userIsMgr ? '👑' : '🔒'}
+          </div>
           <div>
-            <h1 className="display text-2xl font-black text-white tracking-wide">Open the till</h1>
+            <h1 className="display text-2xl font-black text-white tracking-wide">Open Till Shift &amp; Float</h1>
             <p className="font-body text-xs text-white/60 mt-0.5">
-              <strong className="text-amber-400">{tillName}</strong> &bull; {user?.name}
+              <strong className="text-amber-400">{tillName}</strong> &bull; Signed in as{' '}
+              <span className="font-bold text-white">{user?.name}</span> ({user?.role})
             </p>
+            {!userIsMgr && (
+              <p className="mt-1 inline-block rounded-lg border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
+                🛡️ Manager or Supervisor PIN will be requested to confirm the opening float
+              </p>
+            )}
           </div>
 
           <div className="space-y-2.5 text-left bg-black/50 border border-white/10 rounded-2xl p-3.5">
@@ -1282,22 +1334,27 @@ export default function StaffPOSPage() {
             onClick={handleOpenShift}
             className="w-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 py-3.5 font-body text-sm font-black uppercase tracking-wider text-ink shadow-glow hover:from-amber-300 hover:to-amber-400 transition active:scale-95"
           >
-            🔓 {floatVal === 0 ? 'Open with no float' : `Open with £${floatVal.toFixed(2)} float`}
+            🔓 {floatVal === 0 ? 'Open Shift with £0.00 Float' : `Open Shift with £${floatVal.toFixed(2)} Float`}
           </button>
 
           <div className="flex flex-wrap justify-between items-center gap-2 pt-2 border-t border-white/10 text-xs">
-            <button type="button" onClick={() => setIsHistoryOpen(true)} className="text-amber-300 hover:underline">
+            <button type="button" onClick={() => setIsHistoryOpen(true)} className="text-amber-300 hover:underline font-bold">
               🗂️ Past end-of-day reports
             </button>
-            <Link to="/staff" className="text-amber-300 hover:underline">
-              Kitchen screen →
+            <Link to="/staff" className="text-amber-300 hover:underline font-bold">
+              👨‍🍳 Kitchen screen →
             </Link>
-            <button type="button" onClick={logout} className="text-red-400 hover:underline">
-              Lock
+            <button
+              type="button"
+              onClick={() => handleSignOffOperator('Signed off — select Manager to open till float.')}
+              className="text-rose-400 hover:underline font-bold"
+            >
+              🔄 Switch Operator / Sign Off
             </button>
           </div>
         </div>
         {reportModals}
+        {managerAuthModal}
       </div>
     )
   }
@@ -1552,7 +1609,7 @@ export default function StaffPOSPage() {
                 { icon: '🏷️', label: 'Discount', run: () => openPayment('discount'), needsLines: true },
                 { icon: '💝', label: 'Gratuity', run: () => setIsTipOpen(true), needsLines: true },
                 { icon: '🧾', label: 'Petty cash', run: () => setCashMovement('petty') },
-                { icon: '💷', label: 'Adjust float', run: () => setCashMovement('float') },
+                { icon: '💷', label: 'Adjust float', run: () => requireManagerAuth('Adjust Float', 'Pay cash into or out of the till drawer float', () => setCashMovement('float')) },
               ] as { icon: string; label: string; run: () => void; needsLines?: boolean; disabled?: boolean }[]
             ).map((k) => (
               <button
@@ -1766,12 +1823,63 @@ export default function StaffPOSPage() {
             title="Terminal Hardware Station, Standalone Software & Offline Launchers"
           >
             <span>🛡️</span>
-            <span className="hidden sm:inline">Station &amp; Software</span>
+            <span className="hidden xl:inline">Station &amp; Software</span>
           </button>
+
+          {/* Subway POS Per-Sale PIN Auto-Lock Indicator & Quick Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              const nextVal = !tillSettings.lockAfterSale
+              requireManagerAuth(
+                nextVal ? 'Enable Per-Sale PIN Lock' : 'Disable Per-Sale PIN Lock',
+                nextVal
+                  ? 'Require every operator to enter their PIN after each sale (Subway shared-till mode)'
+                  : 'Keep current cashier signed in after completing a sale',
+                (mgrName) => {
+                  updateTillSettings({ lockAfterSale: nextVal }, mgrName)
+                  setFlash(
+                    nextVal
+                      ? '🔒 Per-Sale PIN Lock ON — Till will ask for next operator PIN after every sale'
+                      : '🔓 Per-Sale PIN Lock OFF — Operator stays signed in between sales',
+                  )
+                },
+              )
+            }}
+            className={`hidden md:inline-flex items-center gap-1 rounded-xl border px-2 py-1.5 text-[11px] font-bold transition ${
+              tillSettings.lockAfterSale
+                ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
+                : 'border-white/15 bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+            }`}
+            title={
+              tillSettings.lockAfterSale
+                ? 'Subway Shared-Till Mode Active: Asks for PIN after every sale (Tap to change)'
+                : 'Single-Cashier Mode: Stays signed in after sale (Tap to enable Per-Sale PIN lock)'
+            }
+          >
+            <span>{tillSettings.lockAfterSale ? '🔐' : '🔓'}</span>
+            <span className="hidden xl:inline">{tillSettings.lockAfterSale ? 'Per-Sale PIN' : 'Stay Signed In'}</span>
+          </button>
+
           <FullscreenButton />
-          <button type="button" onClick={logout} className="rounded-xl border border-red-500/20 bg-red-950/30 p-1.5 text-red-400 hover:bg-red-900/50" title="Lock till" aria-label="Lock till">
-            🔒
-          </button>
+
+          {/* Subway POS Operator Capsule + 1-Tap Switch / Sign Off (F12) */}
+          <div className="flex items-center rounded-xl border border-amber-400/40 bg-black/50 p-0.5 pl-2 gap-1.5">
+            <div className="hidden sm:flex items-center gap-1 text-xs font-bold text-white pr-0.5">
+              <span>{isManagerOrAdmin(user?.role) ? '👑' : '👤'}</span>
+              <span className="max-w-[90px] truncate">{user?.name}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSignOffOperator()}
+              className="inline-flex items-center gap-1 rounded-lg bg-rose-600/90 hover:bg-rose-500 px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-white transition active:scale-95"
+              title="Switch Operator / Sign Off to Standby Screen (F12 — Shift & Cart stay open)"
+              aria-label="Lock till"
+            >
+              <span>🔄</span>
+              <span className="hidden sm:inline">Sign Off</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -2284,9 +2392,11 @@ export default function StaffPOSPage() {
         <SimpleDialog title="Keyboard shortcuts" onClose={() => setIsShortcutsOpen(false)}>
           <ul className="space-y-1.5 text-sm">
             {[
+              ['F1', 'Switch between Counter Till and Kitchen Flow'],
               ['F4 / F5', 'Take payment'],
               ['F8', 'Order — send to the kitchen, pay later'],
               ['F9', 'Hold the ticket'],
+              ['F12', 'Switch operator / Sign off (shift & sale stay open)'],
               ['F2, / or Ctrl+K', 'Search the menu'],
               ['Enter (payment)', 'Cash for the amount shown'],
               ['Esc', 'Back / close'],
@@ -2556,87 +2666,7 @@ export default function StaffPOSPage() {
         </div>
       )}
 
-      {isManagerAuthModalOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center [align-items:safe_center] justify-center overflow-y-auto p-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Manager approval">
-          <div className="w-full max-w-sm rounded-3xl border border-amber-400/50 bg-slate-900 p-6 shadow-2xl space-y-4 text-white font-body text-center">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2 text-left">
-                <span className="text-xl">🛡️</span>
-                <div>
-                  <h3 className="font-black text-sm text-white">{managerActionTitle || 'Manager approval'}</h3>
-                  <p className="text-[10px] text-white/60">{managerActionDescription}</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => setIsManagerAuthModalOpen(false)} className="text-white/60 hover:text-white" aria-label="Close">
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-amber-300 font-bold">Supervisor or manager PIN</p>
-            <input
-              type="password"
-              maxLength={8}
-              value={managerPinInput}
-              onChange={(e) => setManagerPinInput(e.target.value)}
-              placeholder="••••"
-              autoFocus
-              className="w-full rounded-2xl border border-white/20 bg-black/60 py-3 text-center font-mono text-3xl tracking-[0.5em] text-white focus:border-amber-400 focus:outline-none"
-            />
-            {managerPinError && <p className="rounded-xl bg-red-950/50 border border-red-500/40 p-2 text-xs text-red-300">{managerPinError}</p>}
-            <div className="grid grid-cols-3 gap-1.5 pt-1">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => {
-                    playPOSTouchTone('numpad')
-                    setManagerPinInput((prev) => (prev.length < 8 ? prev + num : prev))
-                  }}
-                  className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15"
-                >
-                  {num}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => {
-                  setManagerPinInput('')
-                  setManagerPinError(null)
-                }}
-                className="rounded-xl border border-red-500/30 bg-red-950/20 py-2.5 text-xs font-bold text-red-400 hover:bg-red-900/40"
-              >
-                Clear
-              </button>
-              <button type="button" onClick={() => setManagerPinInput((prev) => (prev.length < 8 ? prev + '0' : prev))} className="rounded-xl border border-white/10 bg-white/5 py-3 font-mono text-lg font-bold text-white hover:bg-white/15">
-                0
-              </button>
-              <button type="button" onClick={() => setManagerPinInput((prev) => prev.slice(0, -1))} className="rounded-xl border border-white/10 bg-white/5 py-2.5 text-xs font-bold text-white/70 hover:bg-white/15" aria-label="Delete digit">
-                ⌫
-              </button>
-            </div>
-            <div className="pt-2 flex gap-2">
-              <button type="button" onClick={() => setIsManagerAuthModalOpen(false)} className="flex-1 rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-white/60 hover:bg-white/15">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  const check = await verifyManagerPinAsync(managerPinInput)
-                  if (check.ok) {
-                    playPOSTouchTone('action')
-                    onManagerApproved?.(check.managerName || 'Manager')
-                    setIsManagerAuthModalOpen(false)
-                  } else {
-                    setManagerPinError(check.message || 'That PIN is not a supervisor or manager PIN.')
-                  }
-                }}
-                className="flex-[2] rounded-xl bg-amber-400 py-3 text-xs font-black uppercase text-ink hover:bg-amber-300 shadow-glow"
-              >
-                Approve →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {managerAuthModal}
 
       {isBarcodeModalOpen && (
         <SimpleDialog title="📟 Barcode / SKU" onClose={() => setIsBarcodeModalOpen(false)}>

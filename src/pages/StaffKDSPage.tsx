@@ -264,19 +264,20 @@ export default function StaffKDSPage() {
 
         <div className="relative z-10 mb-6 flex items-center gap-3">
           <Link
-            to="/"
+            to="/pos"
             className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 font-body text-xs font-bold text-white hover:bg-white/15 transition backdrop-blur-md"
           >
-            <span>←</span>
-            <span>Customer Website</span>
+            <span>🥔</span>
+            <span>Counter Till</span>
           </Link>
           <Link
             to="/admin"
             className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition backdrop-blur-md"
           >
-            <span>📊</span>
-            <span>Admin Console</span>
+            <span>🔐</span>
+            <span>Admin Vault</span>
           </Link>
+          <FullscreenButton showLabel className="rounded-full px-4 py-2 backdrop-blur-md" />
         </div>
 
         {alerts.length > 0 && (

@@ -74,7 +74,7 @@ export default function TillSideMenu({
     {
       title: 'Cash',
       items: [
-        { action: 'float', icon: '💷', label: 'Adjust float', hint: 'Change in, bank drop out' },
+        { action: 'float', icon: '💷', label: 'Adjust float', hint: 'Change in, bank drop out — manager PIN' },
         { action: 'petty', icon: '🧾', label: 'Petty cash', hint: 'Supplies paid from the drawer' },
         { action: 'tip_out', icon: '🙌', label: 'Tip out', hint: 'Tips paid to the team' },
         { action: 'no_sale', icon: '🔓', label: 'No sale', hint: 'Open the drawer — manager PIN' },
@@ -84,7 +84,7 @@ export default function TillSideMenu({
       title: 'Reports',
       items: [
         { action: 'x_read', icon: '📊', label: 'X read', hint: 'Today so far — till stays open' },
-        { action: 'close_till', icon: '🔒', label: 'Close till', hint: 'Cash up and print the end-of-day report', danger: true },
+        { action: 'close_till', icon: '🔒', label: 'Close till (Z-Report)', hint: 'End-of-day cash up — manager PIN', danger: true },
         { action: 'history', icon: '🗂️', label: 'Past end-of-day reports', hint: 'Reprint an earlier day' },
       ],
     },
@@ -182,8 +182,9 @@ export default function TillSideMenu({
               <span className="block text-[11px] text-white/45">Last sync {ago(sync?.lastSyncAt)}</span>
             </span>
           </button>
-          <button type="button" onClick={() => onAction('lock')} className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/30 py-2.5 text-xs font-black uppercase tracking-wider text-rose-200 hover:bg-rose-900/50">
-            🔒 Lock till
+          <button type="button" onClick={() => onAction('lock')} className="flex w-full flex-col items-center justify-center gap-0.5 rounded-xl border border-amber-400/40 bg-amber-500/15 py-2.5 text-amber-200 hover:bg-amber-500/25 transition">
+            <span className="text-xs font-black uppercase tracking-wider">🔄 Switch Operator / Sign Off (F12)</span>
+            <span className="text-[10px] text-white/60">Shift &amp; current sale stay open</span>
           </button>
         </div>
       </nav>
