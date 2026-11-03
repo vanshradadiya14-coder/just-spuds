@@ -7,7 +7,6 @@
 
 import { callServer, getDocSyncState, isCloudSyncConfigured, markStaffDevice, setAccessProbe, syncNow } from './cloudSync'
 import { matchStaffPin, pinFingerprint, subscribeRoster, getRoster, getPinSalt, type StaffMember } from './staffRoster'
-import { findDriverByPin, getDrivers, isDriverPinTaken, subscribeDrivers } from './driverStore'
 import { hasAdminPasskey, verifyAdminPasskey } from './terminalLockStore'
 import { getServerAuthMode, isDevicePaired, isServerAuth, setServerAuthMode, subscribeServerAuth } from './serverAuthState'
 import {
@@ -304,16 +303,6 @@ export function getCurrentUser(): AuthUser | null {
       return null
     }
     // Cryptographic & live-roster verification for every internal role (prevents DevTools tampering)
-    if (parsed.role === 'DRIVER') {
-      const driver = getDrivers().find((d) => d.id === parsed.id)
-      const fp = (driver?.pinHash || '').slice(-12)
-      const expectedSig = computeSessionSig(parsed.id, 'DRIVER', 'ACTIVE', fp)
-      if (!driver || driver.status !== 'ACTIVE' || parsed.pinFp !== fp || parsed.sessionSig !== expectedSig) {
-        localStorage.removeItem(AUTH_STORAGE_KEY)
-        return null
-      }
-      return parsed
-    }
     const member = getRoster().find((m) => m.id === parsed.id)
     if (!member || member.status !== 'ACTIVE' || member.role !== parsed.role) {
       localStorage.removeItem(AUTH_STORAGE_KEY)
@@ -402,31 +391,8 @@ export function checkPin(pin: string): PinCheck {
     return { ok: true, user: memberToUser(staff.member) }
   }
 
-  const driver = findDriverByPin(clean)
-  if (driver) {
-    // Same rule as staff: a starter PIN only counts once the server confirmed there is no real list.
-    const trusted = !driver.defaultPin || !isCloudSyncConfigured() || getDocSyncState('drivers') !== 'unknown'
-    if (!trusted) return { ok: false, message: 'Checking the driver list with the server — try again in a few seconds.' }
-    clearPinFailures()
-    const fp = (driver.pinHash || '').slice(-12)
-    return {
-      ok: true,
-      user: {
-        id: driver.id,
-        name: driver.name,
-        email: driver.email,
-        phone: driver.phone,
-        role: 'DRIVER',
-        status: 'ACTIVE',
-        pinFp: fp,
-        sessionSig: computeSessionSig(driver.id, 'DRIVER', 'ACTIVE', fp),
-        ...STORE_FIELDS,
-      },
-    }
-  }
-
   recordPinFailure()
-  return { ok: false, message: 'Invalid PIN. Please enter an authorized staff or courier PIN.' }
+  return { ok: false, message: 'Invalid PIN. Only authorized Manager, Staff, or Admin PINs can sign in.' }
 }
 
 /**
@@ -437,21 +403,6 @@ export function checkPin(pin: string): PinCheck {
 export function findUserByPin(pin: string): AuthUser | undefined {
   const staff = matchStaffPin(pin)
   if (staff && 'member' in staff && staff.member.status === 'ACTIVE') return memberToUser(staff.member)
-  const driver = findDriverByPin(pin)
-  if (driver) {
-    const fp = (driver.pinHash || '').slice(-12)
-    return {
-      id: driver.id,
-      name: driver.name,
-      email: driver.email,
-      phone: driver.phone,
-      role: 'DRIVER',
-      status: 'ACTIVE',
-      pinFp: fp,
-      sessionSig: computeSessionSig(driver.id, 'DRIVER', 'ACTIVE', fp),
-      ...STORE_FIELDS,
-    }
-  }
   return undefined
 }
 
@@ -459,7 +410,7 @@ export function findUserByPin(pin: string): AuthUser | undefined {
 export function isPinTaken(pin: string, exceptId?: string): boolean {
   const staff = matchStaffPin(pin)
   if (staff && 'member' in staff && staff.member.id !== exceptId) return true
-  return isDriverPinTaken(pin, exceptId)
+  return false
 }
 
 export function loginWithPin(pin: string, allowedRoles?: Role[]): { ok: boolean; user?: AuthUser; message: string } {
@@ -485,7 +436,7 @@ export function loginWithPin(pin: string, allowedRoles?: Role[]): { ok: boolean;
   return {
     ok: true,
     user,
-    message: user.role === 'DRIVER' ? `Welcome back, Courier ${user.name}!` : `Welcome back, ${user.name}!`,
+    message: `Welcome back, ${user.name}!`,
   }
 }
 
@@ -613,11 +564,6 @@ function serverUser(person: Pick<ServerPerson, 'id' | 'name' | 'role' | 'kind'> 
 
 /** Is a server-checked account still listed as active in that role on this device? */
 function stillListed(user: AuthUser): boolean {
-  if (user.role === 'DRIVER' || user.kind === 'driver') {
-    if (getDocSyncState('drivers') !== 'remote') return true
-    const driver = getDrivers().find((d) => d.id === user.id)
-    return !driver || driver.status === 'ACTIVE'
-  }
   if (getDocSyncState('staff.roster') !== 'remote') return true
   const member = getRoster().find((m) => m.id === user.id)
   // Someone added since this device last synced isn't listed yet; the server session check covers them.
@@ -695,7 +641,7 @@ export async function signInWithPin(pin: string, allowedRoles?: Role[]): Promise
     return { ok: false, message: 'That PIN does not have access to this area.' }
   }
   // Someone added since this device last synced: fetch the staff list first.
-  if (!getRoster().some((m) => m.id === user.id) && user.kind !== 'driver') await syncNow().catch(() => false)
+  if (!getRoster().some((m) => m.id === user.id)) await syncNow().catch(() => false)
   const previous = getCurrentUser()
   if (previous?.serverToken && previous.serverToken !== user.serverToken) void serverSignOut(previous.serverToken)
   setCurrentUser(user)
@@ -709,8 +655,6 @@ export async function signInWithPin(pin: string, allowedRoles?: Role[]): Promise
     message:
       user.authMode === 'offline'
         ? `Signed in offline as ${user.name}. Changes upload when the connection is back.`
-        : user.role === 'DRIVER'
-        ? `Welcome back, Courier ${user.name}!`
         : `Welcome back, ${user.name}!`,
   }
 }
@@ -838,7 +782,6 @@ if (typeof window !== 'undefined') {
     }
     validateSession()
   })
-  subscribeDrivers(() => validateSession())
   // Switching to server sign-in (or being unpaired) ends sessions from before.
   subscribeServerAuth(() => validateSession())
   const timer = setInterval(() => {

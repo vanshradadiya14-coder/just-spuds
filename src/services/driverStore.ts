@@ -260,6 +260,8 @@ export function subscribeDrivers(fn: DriverListener): () => void {
 }
 
 if (typeof window !== 'undefined') {
+  // Ensure starter drivers are seeded and PINs are salted in storage
+  getDrivers()
   // Drivers sign in on their own phones, so the roster (PINs hashed) is shared with every device.
   registerDoc({
     name: 'drivers',

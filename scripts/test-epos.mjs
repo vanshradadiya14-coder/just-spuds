@@ -86,6 +86,7 @@ if (supabaseMod.isSupabaseConfigured) throw new Error('Refusing to run: Supabase
 const menuStore = await load('/src/services/menuStore.ts')
 const orderStore = await load('/src/services/orderStore.ts')
 const authStore = await load('/src/services/authStore.ts')
+const driverStore = await load('/src/services/driverStore.ts')
 const checkoutModule = await load('/src/services/checkout.ts')
 /**
  * Checkout tests run at midday today: the shop's last-orders cut-offs would

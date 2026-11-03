@@ -57,7 +57,7 @@ export const ASSIGNABLE_ROLES: { role: Role; label: string; hint: string }[] = [
   { role: 'STORE_MANAGER', label: 'Manager', hint: 'Everything, including staff and PINs' },
 ]
 
-/** Starter accounts. Their PINs are public (README / source) — change them before trading. */
+/** Starter accounts: strictly Owner, Managers, Shop Floor Staff, and Admin only. */
 const STARTER_STAFF: { id: string; name: string; role: Role; pin: string; email: string }[] = [
   { id: 'usr-owner-1', name: 'Sunny (Store Owner)', role: 'STORE_MANAGER', pin: '2468', email: 'sunny@justspuds.uk' },
   { id: 'usr-mgr-1', name: 'Elena Rostova (Store Manager)', role: 'STORE_MANAGER', pin: '5555', email: 'manager@justspuds.uk' },

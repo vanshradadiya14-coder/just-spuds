@@ -9,7 +9,6 @@ import {
   homePortalForRole,
   isAdminConsoleRole,
   ADMIN_CONSOLE_ROLES,
-  MANAGEMENT_ROLES,
   SHOP_FLOOR_ROLES,
 } from '../services/authStore'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
@@ -133,7 +132,7 @@ export default function LoginPage() {
 
       if (portalMode === 'pos') {
 
-        const allowedRoles = isDriverTarget ? (['DRIVER', ...MANAGEMENT_ROLES] as const) : SHOP_FLOOR_ROLES
+        const allowedRoles = SHOP_FLOOR_ROLES
         setVerifying(true)
         const res = await signInWithPin(cleanPin, [...allowedRoles])
         setVerifying(false)
@@ -141,11 +140,7 @@ export default function LoginPage() {
           playPOSTouchTone('action')
           navigate(defaultTarget, { replace: true })
         } else {
-          if (!serverMode && !isDriverTarget && (cleanPin === '7777' || cleanPin === '7778' || cleanPin === '7779')) {
-            setError('🚫 Delivery Driver PIN detected. In-store till register is reserved for counter & kitchen staff.')
-          } else {
-            setError(res.message || 'Invalid PIN.')
-          }
+          setError(res.message || 'Invalid PIN. Only authorized Manager, Staff, or Admin PINs can sign in.')
           playPOSTouchTone('numpad')
           setPin('')
         }
@@ -240,19 +235,17 @@ export default function LoginPage() {
               <div className="flex items-center gap-2">
                 <span className="font-display text-sm font-black tracking-wider text-white">JUST SPUDS</span>
                 <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-300 border border-amber-400/30">
-                  {isDriverTarget ? 'COURIER DISPATCH' : 'IN-STORE POS REGISTER'}
+                  IN-STORE POS REGISTER
                 </span>
-                {!isDriverTarget && (
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider border ${
-                      terminalEnrolled
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                        : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                    }`}
-                  >
-                    {terminalEnrolled ? '✓ Store Hardware Enrolled' : '🔒 Unenrolled Hardware'}
-                  </span>
-                )}
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider border ${
+                    terminalEnrolled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                  }`}
+                >
+                  {terminalEnrolled ? '✓ Store Hardware Enrolled' : '🔒 Unenrolled Hardware'}
+                </span>
               </div>
               <p className="text-[11px] text-slate-400">
                 {getLocalDeviceName()} &bull; Market Square, Aylesbury
@@ -272,16 +265,16 @@ export default function LoginPage() {
         {/* CENTER AUTHENTICATION CARD (FITS 100% WITHOUT SCROLLING) */}
         <main className="relative z-10 flex-1 min-h-0 w-full flex items-center justify-center overflow-y-auto py-2">
           {needsPairing ? (
-            <PairDeviceScreen portal={isDriverTarget ? 'driver' : 'pos'} onDone={() => setPaired(true)} />
+            <PairDeviceScreen portal="pos" onDone={() => setPaired(true)} />
           ) : (
           <div className="w-full max-w-sm rounded-3xl border border-amber-500/30 bg-slate-900/95 p-4 sm:p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-center">
             {/* Terminal Title */}
             <div className="text-center mb-3">
               <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400 text-2xl shadow-lg ring-2 ring-amber-400/50">
-                {isDriverTarget ? '🛵' : '👨‍🍳'}
+                👨‍🍳
               </div>
               <h1 className="text-lg sm:text-xl font-black text-white uppercase tracking-wider">
-                {isDriverTarget ? 'Courier Hub Sign-In' : 'In-Store Till Sign-In'}
+                In-Store Till Sign-In
               </h1>
               <p className="text-[11px] text-slate-400">
                 {hardwareLockActive && !terminalEnrolled

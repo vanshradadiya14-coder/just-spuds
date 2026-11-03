@@ -3,11 +3,11 @@ import {
   getDeviceId,
   getEpoch,
   publishAllDocs,
-  startFresh,
   subscribeSyncStatus,
   syncNow,
   type SyncStatus,
 } from '../../../services/cloudSync'
+import { resetAllStoreData } from '../../../services/resetService'
 import { subscribeRoster, type StaffMember } from '../../../services/staffRoster'
 import { getDrivers, subscribeDrivers } from '../../../services/driverStore'
 import {
@@ -166,11 +166,11 @@ export default function GoLivePanel({ user, onGoTo, onSimulateRush }: GoLivePane
 
   const doStartFresh = async () => {
     const typed = window.prompt(
-      'This clears every order, till shift, timecard and audit entry made before now — on every device — so you open with clean books. Menu, prices, stock, staff and settings are kept.\n\nDo it before opening the till on launch day.\n\nType START to confirm:',
+      'This clears every order, till shift, active check, timecard, and cart made before now — on every device — so you open with clean books from the start.\n\nMenu, prices, stock, and authorized accounts (Manager, Staff, Admin) are kept.\n\nType START to confirm:',
     )
     if (typed?.trim().toUpperCase() !== 'START') return
     setBusy('fresh')
-    const res = await startFresh(actor)
+    const res = await resetAllStoreData({ actor, wipeRemoteEpoch: true })
     setBusy(null)
     say(res.message)
   }
