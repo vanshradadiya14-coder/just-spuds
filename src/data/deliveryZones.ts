@@ -44,10 +44,23 @@ export interface PostcodeValidationResult {
   zone: DeliveryZone | null
   message: string
   canDeliver: boolean
+  /** True when the postcode is empty, partial (only outward prefix), or malformed. */
+  isIncomplete?: boolean
+  /** True when the postcode is a real UK postcode format, but outside HP17–HP22. */
+  isOutsideArea?: boolean
 }
 
 /**
- * Normalizes and checks a UK postcode against our delivery zones
+ * Standard Royal Mail UK postcode pattern:
+ * Outward code (2–4 chars, starts with 1–2 letters) + Inward code (1 digit + 2 letters, excluding CIKMOV).
+ * We also allow standard A-Z in the inward code so legitimate edge cases are caught by live lookup.
+ */
+const FULL_UK_POSTCODE_REGEX = /^([A-Z]{1,2}[0-9][0-9A-Z]?)\s*([0-9][A-Z]{2})$/i
+const OUTWARD_ONLY_REGEX = /^[A-Z]{1,2}[0-9][0-9A-Z]?$/i
+
+/**
+ * Normalizes and checks a full UK postcode against our Aylesbury delivery zones.
+ * Rejects partial postcodes (e.g. "HP20" without inward code) and fake inward codes (e.g. "HP20 123").
  */
 export function validateDeliveryPostcode(rawPostcode: string): PostcodeValidationResult {
   if (!rawPostcode || !rawPostcode.trim()) {
@@ -55,53 +68,88 @@ export function validateDeliveryPostcode(rawPostcode: string): PostcodeValidatio
       valid: false,
       formatted: '',
       zone: null,
-      message: 'Please enter your Aylesbury postcode (e.g. HP20 1SN)',
+      message: 'Please enter your full Aylesbury postcode (e.g. HP19 8EQ)',
       canDeliver: false,
+      isIncomplete: true,
     }
   }
 
-  // Normalize: uppercase and remove extraneous whitespace
+  // Normalize: uppercase and remove extraneous non-alphanumeric characters
   const clean = rawPostcode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
-  
-  if (clean.length < 3) {
+
+  if (clean.length < 5) {
+    // Check if they typed a valid Aylesbury outward prefix so far (e.g. "HP20")
+    const matchingZone = DELIVERY_ZONES.find((z) => z.prefixes.some((p) => clean === p || p.startsWith(clean)))
+    if (matchingZone && OUTWARD_ONLY_REGEX.test(clean)) {
+      return {
+        valid: false,
+        formatted: clean,
+        zone: matchingZone,
+        message: `Almost there — please enter the last 3 characters of your ${clean} postcode (e.g. ${clean} 1SN).`,
+        canDeliver: false,
+        isIncomplete: true,
+      }
+    }
     return {
       valid: false,
       formatted: clean,
       zone: null,
-      message: 'Postcode is too short',
+      message: 'Please enter your full UK postcode (e.g. HP19 8EQ).',
       canDeliver: false,
+      isIncomplete: true,
     }
   }
 
-  // Extract outward code prefix (e.g. "HP20" from "HP201SN" or "HP20")
-  let outward = clean
-  if (clean.length > 4 && (clean.endsWith('SN') || clean.endsWith('EQ') || clean.endsWith('AA') || clean.length >= 6)) {
-    outward = clean.slice(0, clean.length - 3)
+  const match = clean.match(FULL_UK_POSTCODE_REGEX)
+  if (!match) {
+    return {
+      valid: false,
+      formatted: clean,
+      zone: null,
+      message: 'Invalid UK postcode format — must end with 1 number and 2 letters (e.g. HP19 8EQ).',
+      canDeliver: false,
+      isIncomplete: true,
+    }
   }
 
-  // Check matching zone
-  for (const zone of DELIVERY_ZONES) {
-    if (zone.prefixes.some((p) => clean.startsWith(p) || outward === p)) {
-      // Format with a space: "HP20 1SN"
-      const formatted = clean.length > 4
-        ? `${clean.slice(0, clean.length - 3)} ${clean.slice(clean.length - 3)}`
-        : clean
+  const outward = match[1].toUpperCase()
+  const inward = match[2].toUpperCase()
+  const formatted = `${outward} ${inward}`
 
+  // Reject Royal Mail forbidden inward letters (C, I, K, M, O, V are never used in the final two letters of UK postcodes)
+  if (/[CIKMOV]/.test(inward.slice(1))) {
+    return {
+      valid: false,
+      formatted,
+      zone: null,
+      message: `"${formatted}" is not a valid Royal Mail postcode (letters C, I, K, M, O, V are never used at the end of a UK postcode).`,
+      canDeliver: false,
+      isIncomplete: true,
+    }
+  }
+
+  // Check matching Aylesbury zone
+  for (const zone of DELIVERY_ZONES) {
+    if (zone.prefixes.includes(outward)) {
       return {
         valid: true,
         formatted,
         zone,
         message: `✓ Delivery available in ${zone.name} (${zone.description})`,
         canDeliver: true,
+        isIncomplete: false,
+        isOutsideArea: false,
       }
     }
   }
 
   return {
     valid: false,
-    formatted: clean,
+    formatted,
     zone: null,
-    message: `Sorry, we only deliver to Aylesbury postcodes (HP17-HP22). Store Pick Up at Market Square is available!`,
+    message: `Sorry, we only deliver to Aylesbury postcodes (HP17–HP22). Store Pick Up at Market Square is available!`,
     canDeliver: false,
+    isIncomplete: false,
+    isOutsideArea: true,
   }
 }

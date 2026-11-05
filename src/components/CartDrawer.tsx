@@ -9,6 +9,11 @@ import { optionLabel, getProduct, MEAL_DEAL } from '../data/menu'
 import { gbp, cx } from '../utils/format'
 import { getScheduleDates, getScheduleTimes } from '../utils/scheduling'
 import { getBusinessDetails } from '../services/menuStore'
+import {
+  validateStreetAddress,
+  verifyPostcodeOnline,
+  type LivePostcodeLookupResult,
+} from '../services/customerVerification'
 
 const ease = [0.16, 1, 0.3, 1] as const
 
@@ -31,9 +36,40 @@ export default function CartDrawer() {
     isOnlineOrderingEnabled, orderingPausedTitle, orderingPausedMessage,
   } = useCart()
 
-  // "No postcode yet" and "postcode outside the area" need different messages and actions.
-  const needsPostcode = fulfilment === 'delivery' && !deliveryAddress.postcode.trim()
-  const outsideArea = fulfilment === 'delivery' && !needsPostcode && !postcodeValidation.canDeliver
+  const [livePostcode, setLivePostcode] = useState<LivePostcodeLookupResult | null>(null)
+  const [checkingPostcode, setCheckingPostcode] = useState(false)
+
+  useEffect(() => {
+    if (!deliveryAddress.postcode.trim() || !postcodeValidation.canDeliver) {
+      setLivePostcode(null)
+      setCheckingPostcode(false)
+      return
+    }
+    let cancelled = false
+    setCheckingPostcode(true)
+    const timer = setTimeout(() => {
+      void verifyPostcodeOnline(deliveryAddress.postcode).then((res) => {
+        if (!cancelled) {
+          setLivePostcode(res)
+          setCheckingPostcode(false)
+        }
+      })
+    }, 280)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [deliveryAddress.postcode, postcodeValidation.canDeliver])
+
+  const streetValidation = validateStreetAddress(deliveryAddress.street, deliveryAddress.postcode)
+
+  // "No postcode yet", "invalid/non-existent postcode", and "postcode outside area" need distinct states.
+  const postcodeNotFound = fulfilment === 'delivery' && livePostcode?.status === 'not_found'
+  const needsPostcode =
+    fulfilment === 'delivery' &&
+    (!deliveryAddress.postcode.trim() || Boolean(postcodeValidation.isIncomplete) || postcodeNotFound)
+  const outsideArea = fulfilment === 'delivery' && Boolean(postcodeValidation.isOutsideArea)
+  const needsStreet = fulfilment === 'delivery' && !needsPostcode && !outsideArea && !streetValidation.valid
 
   const [inputCode, setInputCode] = useState('')
   const [promoError, setPromoError] = useState<string | null>(null)
@@ -480,42 +516,124 @@ export default function CartDrawer() {
                       <div className="flex items-center justify-between">
                         <span className="font-body text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-1.5">
                           <span>🏠</span>
-                          <span>Delivery Address (Aylesbury)</span>
+                          <span>Delivery Address Verification</span>
                         </span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${postcodeValidation.canDeliver ? 'text-emerald-800 bg-emerald-100' : 'text-amber-800 bg-amber-200/80'}`}>
-                          {postcodeValidation.canDeliver ? postcodeValidation.zone?.name : 'Zone Check'}
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            postcodeNotFound
+                              ? 'text-red-800 bg-red-100'
+                              : postcodeValidation.canDeliver
+                              ? 'text-emerald-800 bg-emerald-100'
+                              : 'text-amber-800 bg-amber-200/80'
+                          }`}
+                        >
+                          {postcodeNotFound
+                            ? 'Invalid Postcode'
+                            : checkingPostcode
+                            ? 'Verifying…'
+                            : postcodeValidation.canDeliver
+                            ? postcodeValidation.zone?.name
+                            : 'Zone Check'}
                         </span>
                       </div>
 
                       <div className="space-y-2">
+                        {/* Postcode first so we can verify zone & suggest street */}
                         <div>
+                          <label className="block font-body text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            1. Aylesbury Postcode *
+                          </label>
+                          <input
+                            type="text"
+                            value={deliveryAddress.postcode}
+                            onChange={(e) => setDeliveryAddress((prev) => ({ ...prev, postcode: e.target.value.toUpperCase() }))}
+                            placeholder="Full postcode (e.g. HP19 8EQ)"
+                            autoComplete="postal-code"
+                            className={cx(
+                              'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs uppercase text-ink placeholder:normal-case placeholder:text-steel focus:outline-none',
+                              postcodeNotFound
+                                ? 'border-red-400 focus:border-red-500'
+                                : postcodeValidation.canDeliver
+                                ? 'border-emerald-400 focus:border-emerald-500'
+                                : 'border-ink/15 focus:border-amber-500',
+                            )}
+                          />
+                        </div>
+
+                        {/* Live Postcode Validation Feedback */}
+                        {deliveryAddress.postcode && (
+                          <div
+                            className={cx(
+                              'rounded-xl p-2 text-[11px] font-body flex items-start gap-1.5',
+                              postcodeNotFound
+                                ? 'bg-red-50 text-red-800 border border-red-200'
+                                : postcodeValidation.canDeliver
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300',
+                            )}
+                          >
+                            <span>{postcodeNotFound ? '❌' : postcodeValidation.canDeliver ? '✓' : 'ℹ️'}</span>
+                            <span>
+                              {checkingPostcode
+                                ? 'Checking Royal Mail / Ordnance Survey postcode directory…'
+                                : livePostcode?.message || postcodeValidation.message}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Street suggestion chip from live lookup */}
+                        {livePostcode?.suggestedStreets && livePostcode.suggestedStreets.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-body text-[10px] font-bold text-emerald-800">📍 Verified street for {livePostcode.postcode}:</span>
+                            {livePostcode.suggestedStreets.map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() => {
+                                  const numMatch = deliveryAddress.street.trim().match(/^(\d+[a-zA-Z]?)\b/)
+                                  const nextStreet = numMatch ? `${numMatch[1]} ${st}` : st
+                                  setDeliveryAddress((prev) => ({ ...prev, street: nextStreet }))
+                                }}
+                                className="rounded-lg border border-emerald-300 bg-emerald-100/80 px-2 py-0.5 font-body text-[10px] font-bold text-emerald-900 hover:bg-emerald-200 transition"
+                              >
+                                + Use &ldquo;{st}&rdquo;
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Street & Door Number Input */}
+                        <div>
+                          <label className="block font-body text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            2. House / Flat No. &amp; Street Name *
+                          </label>
                           <input
                             type="text"
                             value={deliveryAddress.street}
                             onChange={(e) => setDeliveryAddress((prev) => ({ ...prev, street: e.target.value }))}
-                            placeholder="Street Address, Flat / House No. *"
-                            className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs text-ink placeholder:text-steel focus:border-amber-500 focus:outline-none"
+                            placeholder="e.g. 14 Oxford Road, or Flat 2B, 8 High St"
+                            autoComplete="street-address"
+                            className={cx(
+                              'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs text-ink placeholder:text-steel focus:outline-none',
+                              deliveryAddress.street.trim()
+                                ? streetValidation.valid
+                                  ? 'border-emerald-400 focus:border-emerald-500'
+                                  : 'border-amber-400 focus:border-amber-500'
+                                : 'border-ink/15 focus:border-amber-500',
+                            )}
                           />
+                          {deliveryAddress.street.trim() && (
+                            <p
+                              className={cx(
+                                'mt-1 font-body text-[10px] font-semibold flex items-center gap-1',
+                                streetValidation.valid ? 'text-emerald-700' : 'text-amber-800',
+                              )}
+                            >
+                              <span>{streetValidation.valid ? '✓' : '⚠️'}</span>
+                              <span>{streetValidation.message}</span>
+                            </p>
+                          )}
                         </div>
-
-                        {/* Delivery time is the ASAP / Schedule choice at the top of the bag
-                            (a separate time list here was never sent with the order). */}
-                        <input
-                          type="text"
-                          value={deliveryAddress.postcode}
-                          onChange={(e) => setDeliveryAddress((prev) => ({ ...prev, postcode: e.target.value.toUpperCase() }))}
-                          placeholder="Postcode (e.g. HP20 1SN)"
-                          autoComplete="postal-code"
-                          className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs uppercase text-ink placeholder:normal-case placeholder:text-steel focus:border-amber-500 focus:outline-none"
-                        />
-
-                        {/* Live Postcode Validation Feedback */}
-                        {deliveryAddress.postcode && (
-                          <div className={`rounded-xl p-2 text-[11px] font-body flex items-start gap-1.5 ${postcodeValidation.canDeliver ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-900 border border-amber-300'}`}>
-                            <span>{postcodeValidation.canDeliver ? '✓' : 'ℹ️'}</span>
-                            <span>{postcodeValidation.message}</span>
-                          </div>
-                        )}
 
                         {/* Delivery Instructions & Preset Chips */}
                         <div className="space-y-1.5 pt-1">
@@ -803,15 +921,22 @@ export default function CartDrawer() {
                       }
                       checkout()
                     }}
-                    disabled={isOnlineOrderingEnabled && (needsPostcode || (fulfilment === 'delivery' && !outsideArea && !isMinOrderMet))}
+                    disabled={
+                      isOnlineOrderingEnabled &&
+                      (needsPostcode || needsStreet || (fulfilment === 'delivery' && !outsideArea && !isMinOrderMet))
+                    }
                     className="mt-4 w-full rounded-full bg-amber-400 py-4 font-body text-[12px] font-bold uppercase tracking-[0.14em] text-ink shadow-glow transition-all duration-300 hover:bg-amber-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {!isOnlineOrderingEnabled
                       ? '📢 Online Ordering Launching Soon →'
                       : outsideArea
                       ? 'Switch to Store Pick Up'
+                      : postcodeNotFound
+                      ? 'Enter a Valid UK Postcode'
                       : needsPostcode
-                      ? 'Add your postcode to deliver'
+                      ? 'Enter Full Postcode to Deliver'
+                      : needsStreet
+                      ? 'Enter Door No. & Street Name'
                       : fulfilment === 'delivery' && !isMinOrderMet
                       ? `Add ${gbp(minOrderPence - rawSubtotal)} to Deliver`
                       : (storeStatus.isKitchenPaused || kitchenPause.isPaused) && !isScheduled

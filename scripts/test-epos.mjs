@@ -598,6 +598,64 @@ await test('delivery needs a postcode we cover and the minimum basket', async ()
   deliverySettings.saveDeliverySettings({ minOrderPence: 1000 })
 })
 
+await test('customer verification refuses false names, fake UK phone numbers, partial postcodes and doorless addresses', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+
+  // 1. Fake / gibberish name
+  const badName = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, name: 'asdf' } }, middayToday())
+  assert.equal(badName.ok, false, 'gibberish placeholder name refused')
+
+  // 2. Fake / sequential / repeated UK phone numbers
+  const seqPhone = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, phone: '07123456789' } }, middayToday())
+  assert.equal(seqPhone.ok, false, 'sequential fake phone number refused')
+
+  const repPhone = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, phone: '07777777777' } }, middayToday())
+  assert.equal(repPhone.ok, false, 'repeated-digit fake phone number refused')
+
+  const shortPhone = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, phone: '07890123' } }, middayToday())
+  assert.equal(shortPhone.ok, false, 'incomplete UK mobile number refused')
+
+  // 3. Partial postcode ("HP20" without inward code) or fake inward code ("HP20 123")
+  const partialPc = checkout.validateCheckout({
+    ...webPayload(p, 2),
+    fulfilment: 'delivery',
+    customer: { ...customer, streetAddress: '14 Oxford Road', postcode: 'HP20' },
+  }, middayToday())
+  assert.equal(partialPc.ok, false, 'partial postcode without inward code refused')
+
+  const fakeInwardPc = checkout.validateCheckout({
+    ...webPayload(p, 2),
+    fulfilment: 'delivery',
+    customer: { ...customer, streetAddress: '14 Oxford Road', postcode: 'HP20 123' },
+  }, middayToday())
+  assert.equal(fakeInwardPc.ok, false, 'numeric-only inward postcode refused')
+
+  // 4. Street address without a door/flat number ("Oxford Road") or number without street ("14")
+  const noDoorNo = checkout.validateCheckout({
+    ...webPayload(p, 2),
+    fulfilment: 'delivery',
+    customer: { ...customer, streetAddress: 'Oxford Road', postcode: 'HP20 1SN' },
+  }, middayToday())
+  assert.equal(noDoorNo.ok, false, 'street address missing house/flat number refused')
+
+  const noStreetName = checkout.validateCheckout({
+    ...webPayload(p, 2),
+    fulfilment: 'delivery',
+    customer: { ...customer, streetAddress: '14', postcode: 'HP20 1SN' },
+  }, middayToday())
+  assert.equal(noStreetName.ok, false, 'door number without street name refused')
+
+  // 5. Real customer details & full Aylesbury address pass cleanly
+  const validOrder = checkout.validateCheckout({
+    ...webPayload(p, 3),
+    fulfilment: 'delivery',
+    customer: { name: 'Sarah Mitchell', phone: '07890 482917', email: 'sarah@example.com', streetAddress: '14 Oxford Road', postcode: 'HP19 8EQ' },
+  }, middayToday())
+  assert.equal(validOrder.ok, true, validOrder.reason || 'valid UK customer details and full Aylesbury address accepted')
+})
+
 // ---------------------------------------------------------------------------
 section('🔒 Order lifecycle guards')
 

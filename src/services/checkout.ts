@@ -30,6 +30,12 @@ import { getDeliverySettings } from './deliverySettingsStore'
 import { getStoreStatus } from '../data/site'
 import { validateDeliveryPostcode } from '../data/deliveryZones'
 import { absoluteScheduleDate, validateScheduledSlot } from '../utils/scheduling'
+import {
+  validateCustomerName,
+  validateUKPhone,
+  validateCustomerEmail,
+  validateStreetAddress,
+} from './customerVerification'
 
 export type Fulfilment = 'collection' | 'delivery'
 
@@ -140,6 +146,24 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
     }
   }
 
+  // Customer identity & contact verification (prevents fake/false names & phone numbers)
+  const nameCheck = validateCustomerName(payload.customer?.name || '')
+  if (!nameCheck.valid) {
+    return { ok: false, reason: nameCheck.message }
+  }
+
+  const phoneCheck = validateUKPhone(payload.customer?.phone || '')
+  if (!phoneCheck.valid) {
+    return { ok: false, reason: phoneCheck.message }
+  }
+
+  if (payload.customer?.email?.trim()) {
+    const emailCheck = validateCustomerEmail(payload.customer.email)
+    if (!emailCheck.valid) {
+      return { ok: false, reason: emailCheck.message }
+    }
+  }
+
   const pauseCheck = isOrderAllowedDuringPause({
     isScheduled: payload.isScheduled,
     scheduleDate: payload.scheduleDate,
@@ -196,8 +220,9 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
     if (!postcode.canDeliver) {
       return { ok: false, reason: postcode.message }
     }
-    if (!payload.customer.streetAddress?.trim()) {
-      return { ok: false, reason: 'Please enter your delivery street address.' }
+    const streetCheck = validateStreetAddress(payload.customer.streetAddress || '', postcode.formatted)
+    if (!streetCheck.valid) {
+      return { ok: false, reason: streetCheck.message }
     }
     if (priced.subtotal < settings.minOrderPence) {
       return { ok: false, reason: `Minimum delivery order is £${(settings.minOrderPence / 100).toFixed(2)}. Please add more items.` }
@@ -211,6 +236,17 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
   const check = validateCheckout(payload, now)
   if (!check.ok) return { ok: false, reason: check.reason }
   const { priced } = check
+
+  const normalizedName = validateCustomerName(payload.customer.name).formatted || payload.customer.name.trim()
+  const normalizedPhone = validateUKPhone(payload.customer.phone).formatted || payload.customer.phone.trim()
+  const normalizedPostcode =
+    payload.fulfilment === 'delivery'
+      ? validateDeliveryPostcode(payload.customer.postcode || '').formatted || payload.customer.postcode
+      : payload.customer.postcode
+  const normalizedStreet =
+    payload.fulfilment === 'delivery'
+      ? validateStreetAddress(payload.customer.streetAddress || '', normalizedPostcode).formatted || payload.customer.streetAddress
+      : payload.customer.streetAddress
 
   if (priced.total !== payload.total) {
     // The basket was priced against an older menu (or tampered with); the live
@@ -230,6 +266,14 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
   try {
     const order = createNewOrder({
       ...payload,
+      customer: {
+        ...payload.customer,
+        name: normalizedName,
+        phone: normalizedPhone,
+        email: payload.customer.email?.trim() || '',
+        streetAddress: normalizedStreet,
+        postcode: normalizedPostcode,
+      },
       scheduleDate,
       scheduledFor,
       lines: priced.lines,

@@ -11,6 +11,14 @@ import { validateDeliveryPostcode } from '../data/deliveryZones'
 import { getNotificationPermission, requestNotificationPermission } from '../services/notificationService'
 import { getProductById, isProductSoldOut } from '../services/menuStore'
 import { getCurrentUser, loginWithGoogle, subscribeAuth, type AuthUser } from '../services/authStore'
+import {
+  validateCustomerName,
+  validateUKPhone,
+  validateCustomerEmail,
+  validateStreetAddress,
+  verifyPostcodeOnline,
+  type LivePostcodeLookupResult,
+} from '../services/customerVerification'
 interface CheckoutModalProps {
   isOpen: boolean
   onClose: () => void
@@ -68,8 +76,56 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
     })
   }, [])
 
+  // Keep customer address fields synchronized whenever the cart's deliveryAddress changes
+  // (e.g. when the customer fills out their postcode and street inside CartDrawer before opening CheckoutModal).
+  useEffect(() => {
+    setCustomer((prev) => ({
+      ...prev,
+      streetAddress: deliveryAddress.street || prev.streetAddress || '',
+      postcode: deliveryAddress.postcode || prev.postcode || '',
+      instructions: deliveryAddress.instructions ?? prev.instructions ?? '',
+    }))
+  }, [deliveryAddress.street, deliveryAddress.postcode, deliveryAddress.instructions, isOpen])
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [livePostcode, setLivePostcode] = useState<LivePostcodeLookupResult | null>(null)
+  const [checkingPostcode, setCheckingPostcode] = useState(false)
+
+  // Live validation results for real-time customer feedback
+  const nameCheck = validateCustomerName(customer.name)
+  const phoneCheck = validateUKPhone(customer.phone)
+  const emailCheck = validateCustomerEmail(customer.email)
+  const streetCheck = validateStreetAddress(customer.streetAddress || '', customer.postcode)
+
+  useEffect(() => {
+    if (!isOpen || fulfilment !== 'delivery' || !customer.postcode?.trim() || !postcodeValidation.canDeliver) {
+      setLivePostcode(null)
+      setCheckingPostcode(false)
+      return
+    }
+    let cancelled = false
+    setCheckingPostcode(true)
+    const timer = setTimeout(() => {
+      void verifyPostcodeOnline(customer.postcode || '').then((res) => {
+        if (!cancelled) {
+          setLivePostcode(res)
+          setCheckingPostcode(false)
+        }
+      })
+    }, 260)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [isOpen, fulfilment, customer.postcode, postcodeValidation.canDeliver])
+
+  const allDetailsVerified =
+    nameCheck.valid &&
+    phoneCheck.valid &&
+    emailCheck.valid &&
+    (fulfilment === 'pickup' ||
+      (postcodeValidation.canDeliver && livePostcode?.status !== 'not_found' && streetCheck.valid))
 
   /**
    * The delivery address is ONE concept with one owner: the cart.
@@ -131,46 +187,46 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
       return
     }
 
-    if (!customer.name.trim()) {
-      setError('Please enter your full name.')
+    if (!nameCheck.valid) {
+      setError(nameCheck.message)
       return
     }
-    if (!customer.phone.trim()) {
-      setError('Please enter your phone number for order updates.')
+    if (!phoneCheck.valid) {
+      setError(phoneCheck.message)
       return
     }
-    if (customer.phone.trim().length < 8) {
-      setError('Please enter a valid phone number.')
+    if (!emailCheck.valid) {
+      setError(emailCheck.message)
       return
     }
-    if (customer.email.trim() && !/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(customer.email.trim())) {
-      setError('Please enter a valid email address.')
-      return
-    }
+
     if (fulfilment === 'delivery') {
-      // Last orders for delivery close before the kitchen does. This was computed
-      // and shown in the banner but never enforced, so a delivery order placed
-      // after the cutoff still went through.
+      // Last orders for delivery close before the kitchen does.
       if (!storeStatus.isAcceptingDelivery && !isScheduled) {
         setError(
           `${storeStatus.message} Please switch to Store Pick Up, or schedule this order for tomorrow.`,
         )
         return
       }
-      if (!customer.streetAddress?.trim()) {
-        setError('Please enter your delivery street address.')
+      // Validate the postcode actually being submitted, not a derived copy of it.
+      const submittedPostcode = validateDeliveryPostcode(customer.postcode || '')
+      if (!submittedPostcode.canDeliver || !postcodeValidation.canDeliver) {
+        setError(submittedPostcode.message)
+        return
+      }
+      // Verify against official Royal Mail / OS records so fake postcodes (e.g. HP20 9ZZ) are blocked
+      const onlineCheck = await verifyPostcodeOnline(submittedPostcode.formatted)
+      if (onlineCheck.status === 'not_found') {
+        setLivePostcode(onlineCheck)
+        setError(onlineCheck.message)
+        return
+      }
+      if (!streetCheck.valid) {
+        setError(streetCheck.message)
         return
       }
       if (!isMinOrderMet) {
         setError(`Minimum delivery order is £${(minOrderPence / 100).toFixed(2)}. Please add more items.`)
-        return
-      }
-      // Validate the postcode actually being submitted, not a derived copy of it.
-      // `postcodeValidation` follows cart state; re-checking `customer.postcode`
-      // here means the gate holds even if the two ever drift apart again.
-      const submittedPostcode = validateDeliveryPostcode(customer.postcode || '')
-      if (!submittedPostcode.canDeliver || !postcodeValidation.canDeliver) {
-        setError(submittedPostcode.message)
         return
       }
     }
@@ -332,75 +388,283 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                 <div className="flex items-center justify-between">
                   <span className="font-body text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-1.5">
                     <span>👤</span>
-                    <span>1. Contact &amp; {fulfilment === 'delivery' ? 'Delivery Address' : 'Pick Up Details'}</span>
+                    <span>1. Customer &amp; {fulfilment === 'delivery' ? 'Delivery Address Verification' : 'Pick Up Details'}</span>
+                  </span>
+                  <span
+                    className={cx(
+                      'rounded-full px-2.5 py-0.5 font-body text-[10px] font-bold flex items-center gap-1 border',
+                      allDetailsVerified
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        : 'bg-amber-100/80 text-amber-900 border-amber-300',
+                    )}
+                  >
+                    <span>{allDetailsVerified ? '✓' : '🛡️'}</span>
+                    <span>{allDetailsVerified ? 'Details Verified' : 'Verification Active'}</span>
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Full Name</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-body text-[10px] font-bold uppercase text-slate-600">
+                        Full Name *
+                      </label>
+                      {customer.name.trim() && (
+                        <span className={cx('font-body text-[10px] font-bold', nameCheck.valid ? 'text-emerald-700' : 'text-red-600')}>
+                          {nameCheck.valid ? '✓ Verified' : 'Check name'}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={customer.name}
-                      onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
+                      onChange={(e) => {
+                        setError(null)
+                        setCustomer({ ...customer, name: e.target.value })
+                      }}
+                      autoComplete="name"
                       placeholder="e.g. Sarah Mitchell"
-                      className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
+                      className={cx(
+                        'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs text-ink focus:outline-none',
+                        customer.name.trim()
+                          ? nameCheck.valid
+                            ? 'border-emerald-400 focus:border-emerald-500'
+                            : 'border-red-400 focus:border-red-500'
+                          : 'border-ink/15 focus:border-amber-500',
+                      )}
                     />
+                    {customer.name.trim() && !nameCheck.valid && (
+                      <p className="mt-1 font-body text-[10px] font-semibold text-red-600">{nameCheck.message}</p>
+                    )}
                   </div>
 
                   <div>
-                    <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Phone (SMS ETA)</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-body text-[10px] font-bold uppercase text-slate-600">
+                        UK Mobile / Phone *
+                      </label>
+                      {customer.phone.trim() && (
+                        <span className={cx('font-body text-[10px] font-bold', phoneCheck.valid ? 'text-emerald-700' : 'text-amber-800')}>
+                          {phoneCheck.valid
+                            ? phoneCheck.lineType === 'mobile'
+                              ? '✓ UK Mobile'
+                              : '✓ UK Landline'
+                            : '11-digit UK No.'}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="tel"
+                      inputMode="tel"
                       value={customer.phone}
-                      onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
+                      onChange={(e) => {
+                        setError(null)
+                        setCustomer({ ...customer, phone: e.target.value })
+                      }}
+                      onBlur={() => {
+                        if (phoneCheck.valid && phoneCheck.formatted) {
+                          setCustomer((prev) => ({ ...prev, phone: phoneCheck.formatted }))
+                        }
+                      }}
+                      autoComplete="tel"
                       placeholder="e.g. 07890 123456"
-                      className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
+                      className={cx(
+                        'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs text-ink focus:outline-none',
+                        customer.phone.trim()
+                          ? phoneCheck.valid
+                            ? 'border-emerald-400 focus:border-emerald-500'
+                            : 'border-amber-400 focus:border-amber-500'
+                          : 'border-ink/15 focus:border-amber-500',
+                      )}
                     />
+                    {customer.phone.trim() && (
+                      <p
+                        className={cx(
+                          'mt-1 font-body text-[10px] font-semibold',
+                          phoneCheck.valid ? 'text-emerald-700' : 'text-amber-800',
+                        )}
+                      >
+                        {phoneCheck.message}
+                      </p>
+                    )}
                   </div>
 
-                  <div>
-                    <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Email (Optional)</label>
+                  <div className="sm:col-span-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-body text-[10px] font-bold uppercase text-slate-600">
+                        Email Address <span className="text-slate-400 font-normal">(Optional — for digital receipt)</span>
+                      </label>
+                      {customer.email.trim() && (
+                        <span className={cx('font-body text-[10px] font-bold', emailCheck.valid ? 'text-emerald-700' : 'text-red-600')}>
+                          {emailCheck.valid ? '✓ Valid Email' : 'Invalid email'}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="email"
                       value={customer.email}
-                      onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
+                      onChange={(e) => {
+                        setError(null)
+                        setCustomer({ ...customer, email: e.target.value })
+                      }}
+                      autoComplete="email"
                       placeholder="e.g. sarah@example.com"
-                      className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
+                      className={cx(
+                        'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs text-ink focus:outline-none',
+                        customer.email.trim()
+                          ? emailCheck.valid
+                            ? 'border-emerald-400 focus:border-emerald-500'
+                            : 'border-red-400 focus:border-red-500'
+                          : 'border-ink/15 focus:border-amber-500',
+                      )}
                     />
+                    {customer.email.trim() && !emailCheck.valid && (
+                      <p className="mt-1 font-body text-[10px] font-semibold text-red-600">{emailCheck.message}</p>
+                    )}
                   </div>
                 </div>
 
                 {fulfilment === 'delivery' ? (
-                  <div className="space-y-2 pt-1 border-t border-ink/8">
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="col-span-2">
-                        <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Street Address / Flat</label>
-                        <input
-                          type="text"
-                          value={customer.streetAddress || ''}
-                          onChange={(e) => updateDeliveryField('streetAddress', e.target.value)}
-                          placeholder="e.g. 14 Oxford Road, Flat 2B"
-                          className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs text-ink focus:border-amber-500 focus:outline-none"
-                        />
-                      </div>
+                  <div className="space-y-2.5 pt-2 border-t border-ink/8">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                       <div>
-                        <label className="block font-body text-[10px] font-bold uppercase text-slate-500 mb-1">Postcode</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block font-body text-[10px] font-bold uppercase text-slate-600">
+                            Aylesbury Postcode *
+                          </label>
+                          {customer.postcode?.trim() && (
+                            <span
+                              className={cx(
+                                'font-body text-[10px] font-bold',
+                                livePostcode?.status === 'not_found'
+                                  ? 'text-red-600'
+                                  : postcodeValidation.canDeliver
+                                  ? 'text-emerald-700'
+                                  : 'text-amber-800',
+                              )}
+                            >
+                              {livePostcode?.status === 'not_found'
+                                ? 'Not Found'
+                                : checkingPostcode
+                                ? 'Checking…'
+                                : postcodeValidation.canDeliver
+                                ? '✓ In Zone'
+                                : 'Check'}
+                            </span>
+                          )}
+                        </div>
                         <input
                           type="text"
                           value={customer.postcode || ''}
-                          onChange={(e) => updateDeliveryField('postcode', e.target.value.toUpperCase())}
-                          placeholder="HP19 8EQ"
-                          className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 font-body text-xs uppercase text-ink focus:border-amber-500 focus:outline-none"
+                          onChange={(e) => {
+                            setError(null)
+                            updateDeliveryField('postcode', e.target.value.toUpperCase())
+                          }}
+                          onBlur={() => {
+                            if (postcodeValidation.valid && postcodeValidation.formatted) {
+                              updateDeliveryField('postcode', postcodeValidation.formatted)
+                            }
+                          }}
+                          autoComplete="postal-code"
+                          placeholder="e.g. HP19 8EQ"
+                          className={cx(
+                            'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs uppercase text-ink focus:outline-none',
+                            customer.postcode?.trim()
+                              ? livePostcode?.status === 'not_found'
+                                ? 'border-red-400 focus:border-red-500'
+                                : postcodeValidation.canDeliver
+                                ? 'border-emerald-400 focus:border-emerald-500'
+                                : 'border-amber-400 focus:border-amber-500'
+                              : 'border-ink/15 focus:border-amber-500',
+                          )}
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block font-body text-[10px] font-bold uppercase text-slate-600">
+                            House / Flat No. &amp; Street Name *
+                          </label>
+                          {customer.streetAddress?.trim() && (
+                            <span
+                              className={cx(
+                                'font-body text-[10px] font-bold',
+                                streetCheck.valid ? 'text-emerald-700' : 'text-amber-800',
+                              )}
+                            >
+                              {streetCheck.valid ? '✓ Verified Address' : 'Add Door No. & Street'}
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          value={customer.streetAddress || ''}
+                          onChange={(e) => {
+                            setError(null)
+                            updateDeliveryField('streetAddress', e.target.value)
+                          }}
+                          autoComplete="street-address"
+                          placeholder="e.g. 14 Oxford Road, or Flat 2B, 8 High St"
+                          className={cx(
+                            'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs text-ink focus:outline-none',
+                            customer.streetAddress?.trim()
+                              ? streetCheck.valid
+                                ? 'border-emerald-400 focus:border-emerald-500'
+                                : 'border-amber-400 focus:border-amber-500'
+                              : 'border-ink/15 focus:border-amber-500',
+                          )}
                         />
                       </div>
                     </div>
 
-                    {/* Postcode validation feedback */}
+                    {/* Live street suggestion from verified Royal Mail / OS coordinates */}
+                    {livePostcode?.suggestedStreets && livePostcode.suggestedStreets.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-body text-[10px] font-bold text-emerald-800">
+                          📍 Street for {livePostcode.postcode}:
+                        </span>
+                        {livePostcode.suggestedStreets.map((st) => (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => {
+                              const numMatch = (customer.streetAddress || '').trim().match(/^(\d+[a-zA-Z]?)\b/)
+                              const nextStreet = numMatch ? `${numMatch[1]} ${st}` : st
+                              updateDeliveryField('streetAddress', nextStreet)
+                            }}
+                            className="rounded-lg border border-emerald-300 bg-emerald-100/80 px-2 py-0.5 font-body text-[10px] font-bold text-emerald-900 hover:bg-emerald-200 transition"
+                          >
+                            + Use &ldquo;{st}&rdquo;
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Postcode & Street validation feedback banner */}
                     {customer.postcode && (
-                      <div className={`rounded-xl p-2 text-[11px] font-body flex items-start gap-1.5 ${postcodeValidation.canDeliver ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-900 border border-amber-300'}`}>
-                        <span>{postcodeValidation.canDeliver ? '✓' : 'ℹ️'}</span>
-                        <span>{postcodeValidation.message}</span>
+                      <div
+                        className={cx(
+                          'rounded-xl p-2 text-[11px] font-body flex items-start gap-1.5',
+                          livePostcode?.status === 'not_found'
+                            ? 'bg-red-50 text-red-800 border border-red-200'
+                            : postcodeValidation.canDeliver
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300',
+                        )}
+                      >
+                        <span>{livePostcode?.status === 'not_found' ? '❌' : postcodeValidation.canDeliver ? '✓' : 'ℹ️'}</span>
+                        <span>
+                          {checkingPostcode
+                            ? 'Verifying postcode with UK Royal Mail / Ordnance Survey records…'
+                            : livePostcode?.message || postcodeValidation.message}
+                        </span>
+                      </div>
+                    )}
+
+                    {customer.streetAddress?.trim() && !streetCheck.valid && (
+                      <div className="rounded-xl bg-amber-100 border border-amber-300 p-2 text-[11px] font-body text-amber-900 flex items-start gap-1.5">
+                        <span>⚠️</span>
+                        <span>{streetCheck.message}</span>
                       </div>
                     )}
 
@@ -417,7 +681,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                           <button
                             key={preset}
                             type="button"
-                            onClick={() => setCustomer({ ...customer, instructions: preset })}
+                            onClick={() => updateDeliveryField('instructions', preset)}
                             className="rounded-lg border border-ink/10 bg-white px-2 py-1 font-body text-[10px] font-medium text-slate-700 hover:bg-amber-100 hover:text-ink transition"
                           >
                             {preset}

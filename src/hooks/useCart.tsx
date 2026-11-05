@@ -97,11 +97,17 @@ function loadPersistedCart(): CartLine[] {
 }
 
 function loadPersistedAddress(): DeliveryAddress {
-  const fallback: DeliveryAddress = { street: '', postcode: 'HP20 1SN', instructions: '' }
+  const fallback: DeliveryAddress = { street: '', postcode: '', instructions: '' }
   if (typeof window === 'undefined') return fallback
   try {
     const raw = localStorage.getItem(ADDRESS_STORAGE_KEY)
-    return raw ? JSON.parse(raw) : fallback
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as DeliveryAddress
+    // Clear legacy default shop postcode if the customer never entered a street address
+    if (!parsed.street?.trim() && parsed.postcode === 'HP20 1SN') {
+      return fallback
+    }
+    return parsed
   } catch {
     return fallback
   }
