@@ -16,6 +16,8 @@ export interface StoreDeliverySettings {
   minOrderPence: number
   /** Percentage of delivery fee paid out to couriers (Default: 100%) */
   driverPayoutPercent: number
+  /** How far from the shop we deliver, in metres as the crow flies (Default: 5000 = within Aylesbury). */
+  deliveryRadiusMetres: number
   /** Whether online ordering (delivery & pickup) is currently enabled. Default false for temporary pause */
   isOnlineOrderingEnabled: boolean
   /** Title shown to customers when ordering is paused */
@@ -50,6 +52,7 @@ export const DEFAULT_DELIVERY_SETTINGS: StoreDeliverySettings = {
   freeDeliveryThresholdPence: 2500, // £25.00 free delivery
   minOrderPence: 1000, // £10.00 minimum order
   driverPayoutPercent: 100, // 100% of delivery fee goes to courier (£4.00)
+  deliveryRadiusMetres: 5000, // the town, not the villages HP17–HP22 reach
   isOnlineOrderingEnabled: false, // Temporarily unavailable as requested
   orderingPausedTitle: 'Online Ordering Launching Soon!',
   orderingPausedMessage: 'Online delivery and store pick-up orders are temporarily unavailable while our kitchen prepares for online dispatch. Please visit us in Market Square, Aylesbury!',

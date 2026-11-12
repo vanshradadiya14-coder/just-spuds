@@ -2961,6 +2961,45 @@ export default function AdminPage() {
 
                 </div>
 
+                {/* DELIVERY RADIUS — how far from Market Square the drivers go */}
+                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 space-y-2">
+                  <label className="block font-body text-xs font-bold uppercase tracking-wider text-white/70">
+                    📍 Delivery radius from the shop (km)
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      max="30"
+                      value={(deliverySettings.deliveryRadiusMetres / 1000).toFixed(1)}
+                      onChange={(e) => {
+                        const kmVal = parseFloat(e.target.value) || 0
+                        setDeliverySettingsState((s) => ({ ...s, deliveryRadiusMetres: Math.max(500, Math.round(kmVal * 1000)) }))
+                      }}
+                      aria-label="Delivery radius in kilometres"
+                      className="w-32 rounded-xl border border-amber-400/40 bg-black/50 px-4 py-3 font-mono text-2xl font-bold text-white focus:border-amber-400 focus:outline-none"
+                    />
+                    {[3000, 5000, 8000, 12000].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setDeliverySettingsState((s) => ({ ...s, deliveryRadiusMetres: m }))}
+                        className={cx(
+                          'rounded-xl px-3 py-1.5 font-mono text-xs font-bold transition-all',
+                          deliverySettings.deliveryRadiusMetres === m ? 'bg-amber-400 text-ink font-black shadow-glow' : 'bg-white/10 text-white/80 hover:bg-white/20',
+                        )}
+                      >
+                        {m / 1000} km
+                      </button>
+                    ))}
+                  </div>
+                  <p className="font-body text-[11px] text-white/50">
+                    Straight-line distance from Market Square to the customer's postcode (checked against Royal Mail data at checkout).
+                    5 km covers Aylesbury town; the villages in HP17, HP18 and HP22 are 8–20 km out.
+                  </p>
+                </div>
+
                 {/* LIVE COURIER PAYOUT PREVIEW BANNER */}
                 <div className="rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-body text-emerald-200">
                   <div className="flex items-center gap-3">

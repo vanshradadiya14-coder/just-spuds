@@ -64,7 +64,7 @@ export default function CartDrawer() {
   const streetValidation = validateStreetAddress(deliveryAddress.street, deliveryAddress.postcode)
 
   // "No postcode yet", "invalid/non-existent postcode", and "postcode outside area" need distinct states.
-  const postcodeNotFound = fulfilment === 'delivery' && livePostcode?.status === 'not_found'
+  const postcodeNotFound = fulfilment === 'delivery' && (livePostcode?.status === 'not_found' || livePostcode?.status === 'too_far')
   const needsPostcode =
     fulfilment === 'delivery' &&
     (!deliveryAddress.postcode.trim() || Boolean(postcodeValidation.isIncomplete) || postcodeNotFound)
@@ -528,7 +528,7 @@ export default function CartDrawer() {
                           }`}
                         >
                           {postcodeNotFound
-                            ? 'Invalid Postcode'
+                            ? (livePostcode?.status === 'too_far' ? 'Too Far to Deliver' : 'Invalid Postcode')
                             : checkingPostcode
                             ? 'Verifying…'
                             : postcodeValidation.canDeliver
@@ -932,7 +932,7 @@ export default function CartDrawer() {
                       : outsideArea
                       ? 'Switch to Store Pick Up'
                       : postcodeNotFound
-                      ? 'Enter a Valid UK Postcode'
+                      ? (livePostcode?.status === 'too_far' ? 'Too Far — Switch to Pick Up' : 'Enter a Valid UK Postcode')
                       : needsPostcode
                       ? 'Enter Full Postcode to Deliver'
                       : needsStreet

@@ -10,6 +10,8 @@ export const SITE = {
     line2: 'Market Square',
     town: 'Aylesbury',
     postcode: 'HP20 1SN',
+    /** Market Square, for the delivery-distance check (deliveries are limited to a radius of the shop). */
+    location: { lat: 51.8162, lng: -0.8127 },
   },
   openingHours: {
     display: 'Everyday: 11:00 AM – 10:00 PM',

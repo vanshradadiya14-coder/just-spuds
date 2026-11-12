@@ -13,6 +13,43 @@
  */
 
 import { validateDeliveryPostcode, type PostcodeValidationResult } from '../data/deliveryZones'
+import { SITE } from '../data/site'
+import { getDeliverySettings } from './deliverySettingsStore'
+
+/** Straight-line distance between two points on the earth, in metres. */
+export function distanceMetres(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
+  return Math.round(2 * 6371000 * Math.asin(Math.sqrt(h)))
+}
+
+const km = (m: number) => (m / 1000).toFixed(m < 9500 ? 1 : 0)
+
+/**
+ * Is a found postcode close enough to deliver to? The radius comes from Admin
+ * (Store & Delivery Ops), so it is applied every time, not frozen into the
+ * cached lookup.
+ */
+function withinDeliveryRadius(found: LivePostcodeLookupResult, zoneName?: string): LivePostcodeLookupResult {
+  if (found.status !== 'verified' || typeof found.latitude !== 'number' || typeof found.longitude !== 'number') return found
+  const metres = distanceMetres(SITE.address.location, { lat: found.latitude, lng: found.longitude })
+  const radius = getDeliverySettings().deliveryRadiusMetres
+  if (metres > radius) {
+    return {
+      ...found,
+      status: 'too_far',
+      distanceMetres: metres,
+      message: `Sorry — ${found.postcode} is about ${km(metres)} km from the shop and we deliver up to ${km(radius)} km. Store Pick Up at Market Square is available!`,
+    }
+  }
+  return {
+    ...found,
+    distanceMetres: metres,
+    message: `✓ ${found.postcode} found — about ${km(metres)} km from the shop${found.localityLabel ? ` (${found.localityLabel})` : ''}${zoneName ? `, ${zoneName}` : ''}`,
+  }
+}
 
 export interface NameValidationResult {
   valid: boolean
@@ -43,8 +80,11 @@ export interface StreetValidationResult {
 }
 
 export interface LivePostcodeLookupResult {
-  status: 'verified' | 'not_found' | 'outside_zone' | 'invalid_format' | 'offline'
+  /** 'too_far' = a real postcode, but further from the shop than the delivery radius set in Admin. */
+  status: 'verified' | 'not_found' | 'too_far' | 'outside_zone' | 'invalid_format' | 'offline'
   postcode: string
+  /** Straight-line distance from the shop, metres (when the postcode was found). */
+  distanceMetres?: number
   ward?: string
   parish?: string
   adminDistrict?: string
@@ -475,7 +515,8 @@ const livePostcodeCache = new Map<string, LivePostcodeLookupResult>()
 export function getCachedPostcodeLookup(rawPostcode: string): LivePostcodeLookupResult | null {
   const syncCheck = validateDeliveryPostcode(rawPostcode)
   if (!syncCheck.formatted) return null
-  return livePostcodeCache.get(syncCheck.formatted) || null
+  const cached = livePostcodeCache.get(syncCheck.formatted)
+  return cached ? withinDeliveryRadius(cached, syncCheck.zone?.name) : null
 }
 
 export async function verifyPostcodeOnline(rawPostcode: string): Promise<LivePostcodeLookupResult> {
@@ -499,7 +540,7 @@ export async function verifyPostcodeOnline(rawPostcode: string): Promise<LivePos
 
   const formatted = syncCheck.formatted
   const cached = livePostcodeCache.get(formatted)
-  if (cached) return cached
+  if (cached) return withinDeliveryRadius(cached, syncCheck.zone?.name)
 
   if (typeof fetch === 'undefined') {
     return {
@@ -578,7 +619,7 @@ export async function verifyPostcodeOnline(rawPostcode: string): Promise<LivePos
     }
 
     livePostcodeCache.set(formatted, verifiedResult)
-    return verifiedResult
+    return withinDeliveryRadius(verifiedResult, syncCheck.zone?.name)
   } catch {
     return {
       status: 'offline',

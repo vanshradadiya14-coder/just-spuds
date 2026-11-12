@@ -1889,6 +1889,48 @@ await test('a delivery to a postcode that does not exist is refused at checkout,
   }
 })
 
+await test('deliveries are limited to a radius of the shop, set in Admin, using the postcode lookup’s coordinates', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 30, 'test', 'seed')
+  deliverySettings.saveDeliverySettings({ deliveryRadiusMetres: 5000 })
+  const delivery = (postcode) => ({
+    ...webPayload(p, 3),
+    fulfilment: 'delivery',
+    customer: { ...customer, streetAddress: '14 Oxford Road', postcode },
+  })
+  // Market Square to Bedgrove (~2 km) and to Haddenham (~11 km, still HP17).
+  assert.ok(verification.distanceMetres({ lat: 51.8162, lng: -0.8127 }, { lat: 51.8075, lng: -0.7865 }) < 2500)
+  assert.ok(verification.distanceMetres({ lat: 51.8162, lng: -0.8127 }, { lat: 51.7715, lng: -0.9275 }) > 9000)
+  const realFetch = globalThis.fetch
+  try {
+    const coords = { 'HP218AA': { latitude: 51.8075, longitude: -0.7865 }, 'HP178BB': { latitude: 51.7715, longitude: -0.9275 } }
+    globalThis.fetch = async (url) => {
+      const pc = String(url).split('/').pop()
+      const found = coords[pc]
+      return found
+        ? { status: 200, ok: true, json: async () => ({ status: 200, result: { postcode: pc, admin_district: 'Buckinghamshire', ...found } }) }
+        : { status: 404, ok: false, json: async () => ({ status: 404 }) }
+    }
+    const near = await checkout.processCheckout(delivery('HP21 8AA'))
+    assert.equal(near.ok, true, `2 km away is delivered: ${near.reason || ''}`)
+    assert.equal(typeof near.order.customer.latitude, 'number', 'the order keeps the postcode’s coordinates for the driver')
+    const far = await checkout.processCheckout(delivery('HP17 8BB'))
+    assert.equal(far.ok, false, 'a real HP17 postcode 11 km out is refused')
+    assert.match(far.reason, /km from the shop/)
+    // The owner widens the radius: the same cached lookup is now deliverable, no new request needed.
+    globalThis.fetch = async () => {
+      throw new Error('no second lookup expected')
+    }
+    deliverySettings.saveDeliverySettings({ deliveryRadiusMetres: 15000 })
+    const widened = await checkout.processCheckout(delivery('HP17 8BB'))
+    assert.equal(widened.ok, true, `radius change applies at once: ${widened.reason || ''}`)
+  } finally {
+    globalThis.fetch = realFetch
+    deliverySettings.saveDeliverySettings({ deliveryRadiusMetres: 5000 })
+  }
+})
+
 await test('a staff-entered delivery order is charged the same delivery and service fee as the website', () => {
   deliverySettings.saveDeliverySettings({ deliveryFeePence: 400, freeDeliveryThresholdPence: 2500, minOrderPence: 1000 })
   const p = firstSpud()

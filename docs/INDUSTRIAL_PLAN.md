@@ -132,40 +132,40 @@ run the SQL.
 
 ---
 
-## Phase 2 — real phone and address verification
+## Phase 2 — phone and address checks, free tools only (DONE 2026-11-12)
 
-- **Phone:** one-time code by SMS before the first order from a browser
-  (Twilio Verify or Supabase phone auth, called from a Supabase Edge Function so
-  the secret stays on the server). Remember a verified number on that browser.
-  Staff-entered orders skip it.
-- **Address:** postcode → list of real addresses from a Royal Mail PAF lookup
-  (Ideal Postcodes or getAddress.io), proxied through an Edge Function and
-  cached. The customer picks one; free text is the fallback only when the
-  lookup is down, and the order is flagged for staff.
-- **Delivery area:** distance from the shop using the lookup's coordinates;
-  fee, minimum and ETA by distance band, editable in Admin. Store coordinates
-  on the order for the driver app.
-- Replace the pattern rules from Phase 0 with these; keep only basic format
-  checks in the browser for instant feedback.
+The owner chose free options, so there is no SMS code and no paid address
+lookup. What that leaves:
 
-**Done when:** an order cannot be placed with an unverified phone, an address
-outside the radius or a postcode that does not exist, checked on the server.
+- **Phone:** format check only (UK mobile or 01/02/03 landline). Nothing free
+  can prove a customer holds a number; the driver or the shop phones before
+  setting off if anything looks off. Revisit SMS codes only if fake orders
+  become a problem (about 4p each).
+- **Address:** the postcode must exist (Postcodes.io, free, Royal Mail data)
+  and the street line must carry a door number and a street name. There is no
+  free list of real addresses, so the street stays typed.
+- **Delivery area: a radius from the shop**, not postcode districts. The
+  postcode lookup gives coordinates; the order is refused when the straight-line
+  distance from Market Square is over the radius set in *Admin › Store &
+  Delivery Ops* (default 5 km — the town). HP17–HP22 stays as a cheap first
+  filter. The coordinates are stored on the order for the driver app. A radius
+  change applies at once, without a new lookup.
+- When Phase 1 lands, these checks run again in SQL (the browser's copy is for
+  instant feedback only).
+
+**Done:** a well-formed postcode that does not exist, or one 11 km out, is
+refused at checkout; 2 km in is accepted and the order carries its
+coordinates; the radius is editable in Admin. Tests in `scripts/test-epos.mjs`
+("Phase 0" section).
 
 ---
 
-## Phase 3 — payments
+## Phase 3 — payments (NOT WANTED)
 
-- Online: Stripe (Payment Element → card, Apple Pay, Google Pay). Create the
-  payment on the server from the server-priced order; confirm by webhook, not
-  by the browser. Keep pay-at-counter as an option the owner can switch off.
-- Till: card terminal integration with the shop's acquirer (Stripe Terminal,
-  SumUp or Dojo), so the amount is pushed to the machine and the result comes
-  back — today the cashier types "approved".
-- Refunds through the gateway from the existing refund flow; daily
-  reconciliation of gateway payouts against the Z-report.
-
-**Done when:** a paid web order appears as paid without staff action, a
-declined card creates no order, and refunds reach the customer's card.
+The owner takes payment at the counter and by the driver's card machine. No
+online payment, no terminal integration. The code paths stay as they are:
+web orders are `pending_store` / `pending_delivery` until paid on the till or
+by the driver.
 
 ---
 
@@ -211,14 +211,18 @@ In rough order of value for a takeaway:
 
 ---
 
-## Decisions needed from the owner
+## Decisions from the owner (2026-11-12)
 
-1. Payment provider (Stripe, SumUp or Dojo) and whether pay-at-counter stays.
-2. Budget for SMS codes (about 4p each) and address lookup (about 2–4p each).
-3. Are delivery and drivers launching, or collection only for now? This decides
-   how much of Phases 2 and 5.4 is needed.
-4. Delivery radius and fee bands.
-5. One shop or more planned.
+1. **Payments:** pay at the counter and pay the driver. No online payments —
+   Phase 3 is dropped.
+2. **Phone and address:** free options only — no SMS codes, no paid address
+   lookup. Phase 2 is done with Postcodes.io and a distance check.
+3. **Delivery:** yes, with drivers, **within Aylesbury** — a 5 km radius from
+   Market Square by default, editable in Admin.
+4. **One shop.** Multi-store (5.9) is not needed.
+
+Next up is **Phase 1** (the server owns orders and stock). It needs the owner
+to run one SQL file in Supabase after the matching app is deployed, as before.
 
 ---
 

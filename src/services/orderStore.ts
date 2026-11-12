@@ -77,6 +77,9 @@ export interface CustomerInfo {
   email: string
   streetAddress?: string
   postcode?: string
+  /** Postcode centre from the lookup at checkout, for the distance check and the driver's map. */
+  latitude?: number
+  longitude?: number
   instructions?: string
   buzzerNumber?: string
   tableNumber?: string

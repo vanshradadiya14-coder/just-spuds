@@ -120,12 +120,13 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
     }
   }, [isOpen, fulfilment, customer.postcode, postcodeValidation.canDeliver])
 
+  // A postcode that does not exist, or is further out than the delivery radius, cannot be delivered to.
+  const postcodeBlocked = livePostcode?.status === 'not_found' || livePostcode?.status === 'too_far'
   const allDetailsVerified =
     nameCheck.valid &&
     phoneCheck.valid &&
     emailCheck.valid &&
-    (fulfilment === 'pickup' ||
-      (postcodeValidation.canDeliver && livePostcode?.status !== 'not_found' && streetCheck.valid))
+    (fulfilment === 'pickup' || (postcodeValidation.canDeliver && !postcodeBlocked && streetCheck.valid))
 
   /**
    * The delivery address is ONE concept with one owner: the cart.
@@ -216,7 +217,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
       }
       // Verify against official Royal Mail / OS records so fake postcodes (e.g. HP20 9ZZ) are blocked
       const onlineCheck = await verifyPostcodeOnline(submittedPostcode.formatted)
-      if (onlineCheck.status === 'not_found') {
+      if (onlineCheck.status === 'not_found' || onlineCheck.status === 'too_far') {
         setLivePostcode(onlineCheck)
         setError(onlineCheck.message)
         return
@@ -536,15 +537,15 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                             <span
                               className={cx(
                                 'font-body text-[10px] font-bold',
-                                livePostcode?.status === 'not_found'
+                                postcodeBlocked
                                   ? 'text-red-600'
                                   : postcodeValidation.canDeliver
                                   ? 'text-emerald-700'
                                   : 'text-amber-800',
                               )}
                             >
-                              {livePostcode?.status === 'not_found'
-                                ? 'Not Found'
+                              {postcodeBlocked
+                                ? (livePostcode?.status === 'too_far' ? 'Too far' : 'Not Found')
                                 : checkingPostcode
                                 ? 'Checking…'
                                 : postcodeValidation.canDeliver
@@ -570,7 +571,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                           className={cx(
                             'w-full rounded-xl border bg-white px-3 py-2 font-body text-xs uppercase text-ink focus:outline-none',
                             customer.postcode?.trim()
-                              ? livePostcode?.status === 'not_found'
+                              ? postcodeBlocked
                                 ? 'border-red-400 focus:border-red-500'
                                 : postcodeValidation.canDeliver
                                 ? 'border-emerald-400 focus:border-emerald-500'
@@ -645,14 +646,14 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                       <div
                         className={cx(
                           'rounded-xl p-2 text-[11px] font-body flex items-start gap-1.5',
-                          livePostcode?.status === 'not_found'
+                          postcodeBlocked
                             ? 'bg-red-50 text-red-800 border border-red-200'
                             : postcodeValidation.canDeliver
                             ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                             : 'bg-amber-100 text-amber-900 border border-amber-300',
                         )}
                       >
-                        <span>{livePostcode?.status === 'not_found' ? '❌' : postcodeValidation.canDeliver ? '✓' : 'ℹ️'}</span>
+                        <span>{postcodeBlocked ? '❌' : postcodeValidation.canDeliver ? '✓' : 'ℹ️'}</span>
                         <span>
                           {checkingPostcode
                             ? 'Verifying postcode with UK Royal Mail / Ordnance Survey records…'

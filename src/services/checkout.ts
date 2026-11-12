@@ -255,9 +255,12 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
   // A delivery postcode must exist, not just look right. The format and area
   // checks above are instant; this asks Royal Mail's data (via Postcodes.io).
   // If the lookup can't be reached the order goes through on the format check.
+  let location: { latitude?: number; longitude?: number } = {}
   if (payload.fulfilment === 'delivery') {
     const live = await verifyPostcodeOnline(normalizedPostcode || '')
-    if (live.status === 'not_found') return { ok: false, reason: live.message }
+    // A real postcode further out than the delivery radius set in Admin is refused too.
+    if (live.status === 'not_found' || live.status === 'too_far') return { ok: false, reason: live.message }
+    if (typeof live.latitude === 'number' && typeof live.longitude === 'number') location = { latitude: live.latitude, longitude: live.longitude }
   }
 
   // Store the calendar date, not "Tomorrow" — it must still be right after midnight.
@@ -276,6 +279,7 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
         email: payload.customer.email?.trim() || '',
         streetAddress: normalizedStreet,
         postcode: normalizedPostcode,
+        ...location,
       },
       scheduleDate,
       scheduledFor,
