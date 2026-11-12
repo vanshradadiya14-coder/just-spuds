@@ -332,6 +332,17 @@ function notifySettings() {
   settingsListeners.forEach((l) => l({ ...tillSettings }))
 }
 
+/**
+ * Drop the in-memory shift and settings and re-read storage — after a "start
+ * fresh" wipe, so the open shift this store still held is not written straight
+ * back on the next sale.
+ */
+export function reloadTillFromStorage(): void {
+  reloadFromStorage()
+  notifyShift()
+  notifySettings()
+}
+
 // Initial load
 reloadFromStorage()
 

@@ -257,6 +257,21 @@ Deliveroo tablet or a Subway KDS behaves.
   stock and channel, delivery postcode and minimum basket, and it re-prices the
   basket from the live menu — stale prices, a voucher that no longer applies or
   a smuggled price override are corrected, never trusted.
+- **Customer details** (`services/customerVerification.ts`): a name needs two
+  letters in any script and no digits; a phone must be a UK mobile or 01 / 02 /
+  03 landline, and six of the same digit in a row is refused; a delivery
+  address needs a door number (or named building) *and* a street. A delivery
+  postcode must be in HP17–HP22 and must exist — checkout asks Postcodes.io
+  (Royal Mail data) and refuses one that does not; if the lookup is down the
+  order goes through on the format check. The blocked-numbers list is checked
+  on the normalised number, so `+44`, `44…` and `07…` spellings all match.
+  These are format checks only: proving the customer holds the phone (SMS code)
+  and picking a real address from a lookup are Phase 2 of
+  `docs/INDUSTRIAL_PLAN.md`.
+- **Delivery and service charge** come from one rule (`deliveryCharges()` in
+  `services/deliverySettingsStore.ts`): the fee and free-delivery threshold set
+  in *Admin › Store & Delivery Ops* plus the 49p service charge — the same for
+  the website and for phone orders staff enter.
 - **Pre-orders** (`utils/scheduling.ts`) only offer slots the kitchen is open
   for, from the hours in *Admin › Store Ops*: never in the past (20 min lead for
   pick-up, 40 for delivery), never on a closed day, never after last orders.

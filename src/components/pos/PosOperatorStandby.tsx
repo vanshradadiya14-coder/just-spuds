@@ -176,7 +176,8 @@ export default function PosOperatorStandby({
         logout()
         playPOSTouchTone('numpad')
         setError(
-          `That PIN does not match ${selectedMember.name}. Tap "All Operators (Auto-ID)" or enter ${selectedMember.name}'s PIN.`,
+          // Never say the PIN was right for someone else — that tells a guesser whose PIN they just found.
+          `Wrong PIN for ${selectedMember.name}. Tap "All Operators (Auto-ID)" to sign in as yourself.`,
         )
         setPinInput('')
         return

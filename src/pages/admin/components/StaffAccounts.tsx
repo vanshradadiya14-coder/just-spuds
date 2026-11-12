@@ -8,7 +8,7 @@ import {
   type StaffMember,
 } from '../../../services/staffRoster'
 import { getDrivers, isDriverPinTaken, subscribeDrivers } from '../../../services/driverStore'
-import { loginWithPin, currentSessionToken, ADMIN_CONSOLE_ROLES, type AuthUser, type Role } from '../../../services/authStore'
+import { signInWithPin, currentSessionToken, ADMIN_CONSOLE_ROLES, type AuthUser, type Role } from '../../../services/authStore'
 import { syncNow } from '../../../services/cloudSync'
 import { isServerAuth, subscribeServerAuth } from '../../../services/serverAuthState'
 import {
@@ -513,7 +513,7 @@ export default function StaffAccounts({ user }: StaffAccountsProps) {
                     const res = setStaffPin(m.id, pin, actor, takenByDriver)
                     if (!res.ok) return res.message
                     // Changing your own PIN ends your session (it was opened with the old one) — reopen it.
-                    if (isMe) loginWithPin(pin)
+                    if (isMe) void signInWithPin(pin)
                     setPinFor(null)
                     say(res.message)
                     return null

@@ -14,6 +14,7 @@ import { getSharedAudioContext } from './printerBridge'
 import { deductStockForOrderLines, getBusinessDetails, getProducts, restoreStockForOrderLines } from './menuStore'
 import { recordOnlineOrderInShift, recordTillRefund } from './tillStore'
 import { settleLoyaltyFromOrders } from './loyaltyStore'
+import { deliveryCharges } from './deliverySettingsStore'
 import { SITE } from '../data/site'
 
 /** The "your first one's on us" voucher — valid on a customer's first order only. */
@@ -2641,8 +2642,8 @@ export function createManualCounterOrder(
   const nowStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   const subtotal = params.lines.reduce((acc, l) => acc + lineUnitPrice(l) * l.qty, 0)
-  const deliveryFee = params.fulfilment === 'delivery' ? 399 : 0
-  const serviceFee = params.fulfilment === 'delivery' ? 99 : 0
+  // Same delivery and service charge as the website — one rule for every channel.
+  const { deliveryFee, serviceFee } = deliveryCharges(subtotal, params.fulfilment)
   const discount = params.discount || 0
   const tip = params.tip || 0
   const total = Math.max(0, subtotal + deliveryFee + serviceFee - discount) + tip

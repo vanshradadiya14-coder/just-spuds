@@ -87,6 +87,8 @@ const FAKE_NAME_WORDS = new Set([
 
 const NAMED_BUILDING_KEYWORDS = /\b(house|cottage|lodge|manor|hall|court|farm|rectory|vicarage|bungalow|villa|chambers|inn|arms|hotel|barn|mill|priory|grange|tower|abbey|mews|annexe|flat|apt|apartment|unit|suite|room|block|studio)\b/i
 
+const STREET_FILLER_WORDS = new Set(['the', 'and', 'of', 'at', 'in', 'on', 'to', 'no', 'st', 'rd', 'ave', 'ln', 'cl'])
+
 const FAKE_STREET_WORDS = new Set([
   'test',
   'testing',
@@ -123,7 +125,8 @@ export function validateCustomerName(rawName: string): NameValidationResult {
     return { valid: false, formatted: '', message: 'Please enter your full name.' }
   }
 
-  const lettersOnly = clean.replace(/[^a-zA-Z\u00C0-\u024F]/g, '')
+  // Letters in any script: Chinese, Arabic, Gujarati and Polish names are as real as English ones.
+  const lettersOnly = clean.replace(/[^\p{L}]/gu, '')
   if (lettersOnly.length < 2) {
     return {
       valid: false,
@@ -160,24 +163,27 @@ export function validateCustomerName(rawName: string): NameValidationResult {
     }
   }
 
-  // Reject consonant-only gibberish of 4+ chars with no vowels (including y)
-  const words = clean.split(' ').filter(Boolean)
-  for (const w of words) {
-    const alpha = w.replace(/[^a-zA-Z]/g, '')
-    if (alpha.length >= 4 && !/[aeiouyAEIOUY]/.test(alpha)) {
-      return {
-        valid: false,
-        formatted: clean,
-        message: 'Please enter a recognisable name.',
-      }
-    }
-  }
+  // No "looks like gibberish" rule: it refused real names (Srdjan, Krk, Ng) and
+  // never stopped a made-up one. Only the server-side phone check (SMS code)
+  // can tell a real customer from a fake one.
 
   return {
     valid: true,
     formatted: clean,
-    message: '✓ Name verified',
+    // A format check, not a check that this is who they say they are.
+    message: '✓ Looks good',
   }
+}
+
+/**
+ * Groups a national number the way people write it: 07911 654987, 020 7946 0958,
+ * 0113 496 0123, 01296 423456, 0330 123 4567.
+ */
+function formatUkNumber(digits: string): string {
+  if (digits.startsWith('07')) return `${digits.slice(0, 5)} ${digits.slice(5)}`
+  if (digits.startsWith('02') && digits.length === 11) return `${digits.slice(0, 3)} ${digits.slice(3, 7)} ${digits.slice(7)}`
+  if (/^011|^01[2-9]1|^03/.test(digits) && digits.length === 11) return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`
+  return `${digits.slice(0, 5)} ${digits.slice(5)}`
 }
 
 /**
@@ -234,18 +240,19 @@ export function validateUKPhone(rawPhone: string): PhoneValidationResult {
     }
   }
 
-  // Reject personal/premium/non-geographic rate numbers
+  // Reject personal (070), premium (09), freephone / business (08) and corporate (05) numbers —
+  // nobody is reached about their dinner on those. 03 numbers cost the same as a landline and are kept.
   if (digits.startsWith('070') || digits.startsWith('08') || digits.startsWith('09') || digits.startsWith('05')) {
     return {
       valid: false,
       formatted: raw,
       normalized: digits,
-      message: 'Please enter a standard UK mobile (07) or local landline (01/02) number.',
+      message: 'Please enter a standard UK mobile (07) or landline (01, 02 or 03) number.',
     }
   }
 
   const isMobile = digits.startsWith('07')
-  const isLandline = digits.startsWith('01') || digits.startsWith('02')
+  const isLandline = digits.startsWith('01') || digits.startsWith('02') || digits.startsWith('03')
 
   if (!isMobile && !isLandline) {
     return {
@@ -292,9 +299,11 @@ export function validateUKPhone(rawPhone: string): PhoneValidationResult {
     }
   }
 
-  // Anti-fake / anti-bogus number checks:
-  // 1. Reject 6 or more identical consecutive digits anywhere (e.g. 07000000000, 07777777777, 07111111111)
-  if (/(.)\1{5,}/.test(digits)) {
+  // The only "fake" pattern worth refusing: six or more of the same digit in a
+  // row (07000 000000, 07777 777777). Numbers like 07911 123456 or 07400 121212
+  // are ordinary allocated numbers — refusing "sequences" turned real customers
+  // away. Whether the customer holds the number is for an SMS code to prove.
+  if (/(\d)\1{5,}/.test(digits)) {
     return {
       valid: false,
       formatted: raw,
@@ -303,55 +312,7 @@ export function validateUKPhone(rawPhone: string): PhoneValidationResult {
     }
   }
 
-  // 2. Reject subscriber tail (last 6 digits) where all 6 digits are identical,
-  //    except the official Ofcom test range 07700 900000 used in automated tests.
-  const tail6 = digits.slice(-6)
-  if (/^(\d)\1{5}$/.test(tail6) && !digits.startsWith('077009')) {
-    return {
-      valid: false,
-      formatted: raw,
-      normalized: digits,
-      message: 'This phone number looks fake. Please enter your active phone number so we can contact you.',
-    }
-  }
-
-  // 3. Reject obvious sequential runs of 6+ digits (e.g. 07123456789, 07987654321, 07700123456)
-  const subscriber = digits.slice(5) // last 6 digits
-  const sequentialPatterns = [
-    '012345',
-    '123456',
-    '234567',
-    '345678',
-    '456789',
-    '567890',
-    '987654',
-    '876543',
-    '765432',
-    '654321',
-    '543210',
-  ]
-  if (sequentialPatterns.some((seq) => digits.includes(seq)) || subscriber === '123456' || subscriber === '654321') {
-    return {
-      valid: false,
-      formatted: raw,
-      normalized: digits,
-      message: 'Sequential test numbers (e.g. 123456) are not accepted. Please enter your real phone number.',
-    }
-  }
-
-  // 4. Reject repeating 2-digit or 3-digit loops in the last 6 digits (e.g. 07700 121212, 07890 123123)
-  if (/^(\d\d)\1\1$/.test(subscriber) || /^(\d{3})\1$/.test(subscriber)) {
-    return {
-      valid: false,
-      formatted: raw,
-      normalized: digits,
-      message: 'This phone number appears invalid (repeating pattern). Please double-check your number.',
-    }
-  }
-
-  const formatted = isMobile
-    ? `${digits.slice(0, 5)} ${digits.slice(5)}`
-    : `${digits.slice(0, 5)} ${digits.slice(5)}`
+  const formatted = formatUkNumber(digits)
 
   return {
     valid: true,
@@ -438,8 +399,9 @@ export function validateStreetAddress(rawStreet: string, postcode?: string): Str
     }
   }
 
+  // Letters only: "10000 Tring Road" is not gibberish, "ssss road" is.
   const lower = clean.toLowerCase()
-  if (FAKE_STREET_WORDS.has(lower) || /(.)\1{3,}/i.test(clean)) {
+  if (FAKE_STREET_WORDS.has(lower) || /(\p{L})\1{3,}/iu.test(clean)) {
     return {
       valid: false,
       formatted: clean,
@@ -454,24 +416,14 @@ export function validateStreetAddress(rawStreet: string, postcode?: string): Str
   const hasNamedBuilding = NAMED_BUILDING_KEYWORDS.test(clean)
   const hasDoorIdentifier = hasNumber || hasNamedBuilding
 
-  // Extract alphabetic words (excluding pure numbers and single-letter flat suffixes attached to numbers)
+  // The street name is whatever is left once door numbers, building words
+  // ("Flat", "Unit", "Cottage") and filler ("the", "and") are taken out — so
+  // "Flat 3" or "14 the" is not an address, "Flat 3, 14 Oxford Road" is.
   const withoutDoorNumbers = clean.replace(/\b\d+[a-zA-Z]?\b/g, ' ').trim()
   const alphaWords = withoutDoorNumbers
     .split(/[\s,.-]+/)
-    .map((w) => w.replace(/[^a-zA-Z]/g, ''))
-    .filter((w) => w.length >= 2)
-
-  // Reject if any word is gibberish (4+ consonants in a row with no vowels)
-  const hasGibberish = alphaWords.some((w) => w.length >= 4 && !/[aeiouyAEIOUY]/.test(w))
-  if (hasGibberish) {
-    return {
-      valid: false,
-      formatted: clean,
-      hasDoorIdentifier,
-      hasStreetName: false,
-      message: 'Street name not recognised — please enter a valid street or road name.',
-    }
-  }
+    .map((w) => w.replace(/[^\p{L}]/gu, ''))
+    .filter((w) => w.length >= 2 && !NAMED_BUILDING_KEYWORDS.test(w) && !STREET_FILLER_WORDS.has(w.toLowerCase()))
 
   const totalLetters = alphaWords.join('').length
   const hasStreetName = alphaWords.length >= 1 && totalLetters >= 3 && !FAKE_STREET_WORDS.has(alphaWords.join(' ').toLowerCase())
@@ -605,32 +557,12 @@ export async function verifyPostcodeOnline(rawPostcode: string): Promise<LivePos
     const localityParts = [...new Set([ward, parish, district].filter(Boolean))]
     const localityLabel = localityParts.slice(0, 2).join(', ') || 'Aylesbury'
 
-    let suggestedStreets: string[] = []
-    if (typeof r?.latitude === 'number' && typeof r?.longitude === 'number') {
-      try {
-        const osmCtrl = new AbortController()
-        const osmTimeout = setTimeout(() => osmCtrl.abort(), 2200)
-        const osmRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${r.latitude}&lon=${r.longitude}&zoom=17&addressdetails=1`,
-          {
-            signal: osmCtrl.signal,
-            headers: { Accept: 'application/json' },
-          },
-        )
-        clearTimeout(osmTimeout)
-        if (osmRes.ok) {
-          const osmData = (await osmRes.json()) as {
-            address?: { road?: string; pedestrian?: string; residential?: string; suburb?: string }
-          }
-          const primaryRoad = osmData.address?.road || osmData.address?.pedestrian
-          if (primaryRoad) {
-            suggestedStreets = [primaryRoad]
-          }
-        }
-      } catch {
-        // Ignore optional reverse-geocoding street suggestion failure
-      }
-    }
+    // Street suggestions come back with the Royal Mail address lookup (plan,
+    // phase 2). The OpenStreetMap reverse lookup that used to sit here ran from
+    // every customer's browser without identification or attribution, against
+    // Nominatim's usage policy, and sent the customer's location to a third
+    // party the privacy page does not name.
+    const suggestedStreets: string[] = []
 
     const verifiedResult: LivePostcodeLookupResult = {
       status: 'verified',
@@ -655,3 +587,4 @@ export async function verifyPostcodeOnline(rawPostcode: string): Promise<LivePos
     }
   }
 }
+

@@ -9,6 +9,7 @@ import {
   homePortalForRole,
   isAdminConsoleRole,
   ADMIN_CONSOLE_ROLES,
+  MANAGEMENT_ROLES,
   SHOP_FLOOR_ROLES,
 } from '../services/authStore'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
@@ -132,7 +133,9 @@ export default function LoginPage() {
 
       if (portalMode === 'pos') {
 
-        const allowedRoles = SHOP_FLOOR_ROLES
+        // The till and kitchen admit shop-floor staff only. The courier hub
+        // (/driver) admits drivers and managers — a driver PIN is still refused on the till.
+        const allowedRoles = isDriverTarget ? (['DRIVER', ...MANAGEMENT_ROLES] as const) : SHOP_FLOOR_ROLES
         setVerifying(true)
         const res = await signInWithPin(cleanPin, [...allowedRoles])
         setVerifying(false)

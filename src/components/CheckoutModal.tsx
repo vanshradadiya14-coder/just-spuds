@@ -399,7 +399,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                     )}
                   >
                     <span>{allDetailsVerified ? '✓' : '🛡️'}</span>
-                    <span>{allDetailsVerified ? 'Details Verified' : 'Verification Active'}</span>
+                    <span>{allDetailsVerified ? 'Details complete' : 'Checking your details'}</span>
                   </span>
                 </div>
 
@@ -411,7 +411,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                       </label>
                       {customer.name.trim() && (
                         <span className={cx('font-body text-[10px] font-bold', nameCheck.valid ? 'text-emerald-700' : 'text-red-600')}>
-                          {nameCheck.valid ? '✓ Verified' : 'Check name'}
+                          {nameCheck.valid ? '✓ Looks good' : 'Check name'}
                         </span>
                       )}
                     </div>
@@ -592,7 +592,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                                 streetCheck.valid ? 'text-emerald-700' : 'text-amber-800',
                               )}
                             >
-                              {streetCheck.valid ? '✓ Verified Address' : 'Add Door No. & Street'}
+                              {streetCheck.valid ? '✓ Door number & street' : 'Add Door No. & Street'}
                             </span>
                           )}
                         </div>

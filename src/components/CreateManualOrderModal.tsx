@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { getProducts, getSauces } from '../services/menuStore'
 import { createManualCounterOrder, type Order, type OrderSource, type PaymentMethod } from '../services/orderStore'
-import { getDeliverySettings } from '../services/deliverySettingsStore'
+import { deliveryCharges } from '../services/deliverySettingsStore'
 import { extrasFor, FRESH_SALAD_OPTIONS, MEAL_DEAL, sellPrice, type Product } from '../data/menu'
 import { gbp, cx } from '../utils/format'
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
@@ -92,14 +92,9 @@ export default function CreateManualOrderModal({
 
   const getLineTotal = (l: CartLine) => lineUnitPrice(l) * l.qty
   const subtotal = orderLines.reduce((acc, l) => acc + getLineTotal(l), 0)
-  const delivCfg = getDeliverySettings()
-  const deliveryFee =
-    fulfilment === 'delivery' && orderLines.length > 0
-      ? subtotal >= delivCfg.freeDeliveryThresholdPence
-        ? 0
-        : delivCfg.deliveryFeePence
-      : 0
-  const total = subtotal + deliveryFee
+  // What the order will actually be charged (the same rule the website uses).
+  const { deliveryFee, serviceFee } = deliveryCharges(subtotal, fulfilment, orderLines.length > 0)
+  const total = subtotal + deliveryFee + serviceFee
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

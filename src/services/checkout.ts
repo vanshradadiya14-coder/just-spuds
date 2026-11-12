@@ -26,7 +26,7 @@ import {
 import { isPhoneBlacklisted } from './blacklistStore'
 import { getBusinessDetails, getConfiguredHours, getProducts, getRedeemablePromo, isProductSoldOut } from './menuStore'
 import { markRewardVoucherUsed, recordLoyaltyOrder } from './loyaltyStore'
-import { getDeliverySettings } from './deliverySettingsStore'
+import { deliveryCharges, getDeliverySettings, SERVICE_FEE_PENCE } from './deliverySettingsStore'
 import { getStoreStatus } from '../data/site'
 import { validateDeliveryPostcode } from '../data/deliveryZones'
 import { absoluteScheduleDate, validateScheduledSlot } from '../utils/scheduling'
@@ -35,12 +35,13 @@ import {
   validateUKPhone,
   validateCustomerEmail,
   validateStreetAddress,
+  verifyPostcodeOnline,
 } from './customerVerification'
 
 export type Fulfilment = 'collection' | 'delivery'
 
 /** Packaging & service fee added to every web order (pence). */
-export const SERVICE_FEE_PENCE = 49
+export { SERVICE_FEE_PENCE }
 
 export interface CheckoutPayload {
   lines: CartLine[]
@@ -90,7 +91,6 @@ export interface PricedBasket {
  */
 export function priceBasket(payload: Pick<CheckoutPayload, 'lines' | 'fulfilment' | 'tip' | 'promoCode'>): PricedBasket {
   const products = getProducts()
-  const settings = getDeliverySettings()
 
   const lines: CartLine[] = payload.lines.map((l) => {
     const product = products.find((p) => p.id === l.productId)
@@ -113,12 +113,9 @@ export function priceBasket(payload: Pick<CheckoutPayload, 'lines' | 'fulfilment
     else if (promo.discountPence) discount = Math.min(promo.discountPence, subtotal)
   }
 
-  const deliveryFee =
-    payload.fulfilment === 'delivery' && lines.length > 0
-      ? subtotal >= settings.freeDeliveryThresholdPence
-        ? 0
-        : settings.deliveryFeePence
-      : 0
+  const charges = deliveryCharges(subtotal, payload.fulfilment, lines.length > 0)
+  const deliveryFee = charges.deliveryFee
+  // The service charge applies to every web order, collection included.
   const serviceFee = SERVICE_FEE_PENCE
   const tip = Math.max(0, Math.round(payload.tip || 0))
   const total = Math.max(0, subtotal - discount) + deliveryFee + serviceFee + tip
@@ -137,8 +134,9 @@ export function validateCheckout(payload: CheckoutPayload, now = new Date()): { 
     return { ok: false, reason: settings.orderingPausedMessage }
   }
 
-  // Fraud & abuse prevention check
-  const blk = isPhoneBlacklisted(payload.customer.phone)
+  // Fraud & abuse prevention check — on the normalised number, so "+44", "44…"
+  // and "07…" spellings of a blocked number are all caught.
+  const blk = isPhoneBlacklisted(validateUKPhone(payload.customer?.phone || '').normalized || payload.customer?.phone || '')
   if (blk.blacklisted) {
     return {
       ok: false,
@@ -254,8 +252,13 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
     console.warn(`Checkout repriced from ${payload.total} to ${priced.total} pence`)
   }
 
-  // Simulate rapid 400ms secure gateway verification (Stripe / SumUp / Apple Pay)
-  await new Promise((res) => setTimeout(res, 450))
+  // A delivery postcode must exist, not just look right. The format and area
+  // checks above are instant; this asks Royal Mail's data (via Postcodes.io).
+  // If the lookup can't be reached the order goes through on the format check.
+  if (payload.fulfilment === 'delivery') {
+    const live = await verifyPostcodeOnline(normalizedPostcode || '')
+    if (live.status === 'not_found') return { ok: false, reason: live.message }
+  }
 
   // Store the calendar date, not "Tomorrow" — it must still be right after midnight.
   const scheduleDate =

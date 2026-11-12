@@ -26,6 +26,23 @@ export interface StoreDeliverySettings {
   updatedAt: string
 }
 
+/** Packaging / service charge on every web order, in pence. */
+export const SERVICE_FEE_PENCE = 49
+
+/**
+ * The one rule for what a delivery costs, used by the website, the till and
+ * the admin's phone-order form alike — they used to disagree (£3.99 + 99p on
+ * staff-entered orders, the settings fee + 49p on the website).
+ */
+export function deliveryCharges(subtotalPence: number, fulfilment: 'delivery' | 'pickup', hasLines = true): { deliveryFee: number; serviceFee: number } {
+  if (fulfilment !== 'delivery' || !hasLines) return { deliveryFee: 0, serviceFee: 0 }
+  const settings = getDeliverySettings()
+  return {
+    deliveryFee: subtotalPence >= settings.freeDeliveryThresholdPence ? 0 : settings.deliveryFeePence,
+    serviceFee: SERVICE_FEE_PENCE,
+  }
+}
+
 const STORAGE_KEY = 'just_spuds_delivery_settings_v1'
 
 export const DEFAULT_DELIVERY_SETTINGS: StoreDeliverySettings = {

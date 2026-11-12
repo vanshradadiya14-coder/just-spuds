@@ -26,11 +26,12 @@ const STORAGE_KEY = 'just_spuds_blacklist_v1'
 const HASHES_KEY = 'just_spuds_blacklist_hashes_v1'
 const BC_NAME = 'just_spuds_blacklist_channel'
 
-/** "+44 7700 900123", "07700-900123" and "0044 7700900123" are the same number. */
+/** "+44 7700 900123", "07700-900123", "447700900123" and "0044 7700900123" are the same number. */
 export function normalizePhone(raw: string): string {
-  let n = raw.replace(/[\s\-().]/g, '').trim()
+  let n = (raw || '').replace(/[\s\-().]/g, '').trim()
   if (n.startsWith('+44')) n = `0${n.slice(3)}`
   else if (n.startsWith('0044')) n = `0${n.slice(4)}`
+  else if (n.startsWith('44') && n.length >= 12) n = `0${n.slice(2)}`
   return n
 }
 

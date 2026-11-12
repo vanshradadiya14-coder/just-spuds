@@ -607,10 +607,8 @@ await test('customer verification refuses false names, fake UK phone numbers, pa
   const badName = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, name: 'asdf' } }, middayToday())
   assert.equal(badName.ok, false, 'gibberish placeholder name refused')
 
-  // 2. Fake / sequential / repeated UK phone numbers
-  const seqPhone = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, phone: '07123456789' } }, middayToday())
-  assert.equal(seqPhone.ok, false, 'sequential fake phone number refused')
-
+  // 2. Repeated-digit / incomplete UK phone numbers. (A "sequential" number such as
+  // 07123 456789 is an ordinary allocated number and is accepted — see the Phase 0 tests.)
   const repPhone = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, phone: '07777777777' } }, middayToday())
   assert.equal(repPhone.ok, false, 'repeated-digit fake phone number refused')
 
@@ -1803,6 +1801,140 @@ await test('the owner’s daily report covers that day only, and splits website 
   const before = orderStore.generateZReport(all, new Date(Date.now() - 24 * 60 * 60 * 1000))
   assert.equal(before.orderCount, 1, 'yesterday’s report shows yesterday')
   assert.equal(orderStore.generateZReport(all, new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)).orderCount, 0)
+})
+
+// ---------------------------------------------------------------------------
+section('🧹 Phase 0 of docs/INDUSTRIAL_PLAN.md: verification rules, fees, fresh start')
+
+const verification = await load('/src/services/customerVerification.ts')
+
+await test('a blocked phone number is blocked however it is written', () => {
+  blacklist.blacklistPhone('07911 654987', 'abuse', 'Sunny')
+  for (const spelling of ['07911654987', '+44 7911 654987', '447911654987', '0044 7911 654987']) {
+    assert.equal(blacklist.isPhoneBlacklisted(spelling).blacklisted, true, `${spelling} is the same number`)
+    openTheShop()
+    const p = firstSpud()
+    menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+    const res = checkout.validateCheckout({ ...webPayload(p), customer: { ...customer, phone: spelling } }, middayToday())
+    assert.equal(res.ok, false, `${spelling} cannot order (it used to slip past as 44…)`)
+    assert.match(res.reason, /flagged|counter/i)
+  }
+  blacklist.unblacklistPhone('07911 654987')
+  assert.equal(blacklist.isPhoneBlacklisted('447911654987').blacklisted, false)
+})
+
+await test('ordinary phone numbers are accepted, only all-the-same-digit ones refused', () => {
+  for (const real of ['07911 123456', '07812 345678', '07400 121212', '0330 123 4567', '020 7946 0958', '01296 423456']) {
+    const r = verification.validateUKPhone(real)
+    assert.equal(r.valid, true, `${real} is a real number: ${r.message}`)
+  }
+  assert.equal(verification.validateUKPhone('020 7946 0958').formatted, '020 7946 0958', 'London numbers read as London numbers')
+  assert.equal(verification.validateUKPhone('0113 496 0123').formatted, '0113 496 0123')
+  assert.equal(verification.validateUKPhone('+44 7911 654987').formatted, '07911 654987')
+  for (const fake of ['07000 000000', '07777 777777', '0800 123 4567', '0906 123 4567', '07890123']) {
+    assert.equal(verification.validateUKPhone(fake).valid, false, `${fake} refused`)
+  }
+})
+
+await test('names in any script are accepted; placeholders are not', () => {
+  for (const real of ['王伟', 'محمد علي', 'Srdjan Krk', 'Nguyễn Văn', "Siobhán O'Brien", 'Ng Ka']) {
+    assert.equal(verification.validateCustomerName(real).valid, true, `${real} is a name`)
+  }
+  for (const fake of ['asdf', 'test', 'J', 'John123', 'aaaa bbbb']) {
+    assert.equal(verification.validateCustomerName(fake).valid, false, `${fake} refused`)
+  }
+})
+
+await test('a street address needs a street, not just a building word or a number', () => {
+  for (const bad of ['Flat 3', 'Unit 5', '14 the', '14', 'Oxford Road', 'ssss road 4']) {
+    assert.equal(verification.validateStreetAddress(bad, 'HP20 1SN').valid, false, `"${bad}" refused`)
+  }
+  for (const good of ['14 Oxford Road', 'Flat 2, 10000 Tring Rd', 'Flat 3, 14 Oxford Road', 'Rose Cottage, Church Lane', '2B High St']) {
+    const r = verification.validateStreetAddress(good, 'HP20 1SN')
+    assert.equal(r.valid, true, `"${good}" accepted: ${r.message}`)
+  }
+})
+
+await test('a delivery to a postcode that does not exist is refused at checkout, not only in the form', async () => {
+  openTheShop()
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 20, 'test', 'seed')
+  const delivery = (postcode) => ({
+    ...webPayload(p, 3),
+    fulfilment: 'delivery',
+    customer: { ...customer, streetAddress: '14 Oxford Road', postcode },
+  })
+  const realFetch = globalThis.fetch
+  const calls = []
+  try {
+    // Royal Mail (via Postcodes.io) says the postcode does not exist.
+    globalThis.fetch = async (url) => {
+      calls.push(String(url))
+      return { status: 404, ok: false, json: async () => ({ status: 404 }) }
+    }
+    const unknown = await checkout.processCheckout(delivery('HP20 9ZZ'))
+    assert.equal(unknown.ok, false, 'a well-formed postcode that is not real is refused')
+    assert.match(unknown.reason, /does not exist/)
+    assert.ok(calls.some((u) => /postcodes\.io/.test(u)), 'the lookup was asked')
+    assert.ok(!calls.some((u) => /openstreetmap/.test(u)), 'no customer location is sent to OpenStreetMap')
+
+    // The lookup is down: the order still goes through on the format check.
+    globalThis.fetch = async () => {
+      throw new Error('offline')
+    }
+    const offline = await checkout.processCheckout(delivery('HP20 1SN'))
+    assert.equal(offline.ok, true, `the shop keeps taking orders while the lookup is down: ${offline.reason || ''}`)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+await test('a staff-entered delivery order is charged the same delivery and service fee as the website', () => {
+  deliverySettings.saveDeliverySettings({ deliveryFeePence: 400, freeDeliveryThresholdPence: 2500, minOrderPence: 1000 })
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 20, 'test', 'seed')
+  const small = orderStore.createManualCounterOrder(
+    { fulfilment: 'delivery', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'pending_delivery', streetAddress: '14 Oxford Road', postcode: 'HP20 1SN' },
+    'Sunny',
+  )
+  assert.equal(small.payment.deliveryFee, 400, 'the fee set in Admin, not a hard-coded £3.99')
+  assert.equal(small.payment.serviceFee, checkout.SERVICE_FEE_PENCE, 'the same 49p service charge as the website, not 99p')
+  const web = checkout.priceBasket({ lines: [line(p, 1)], fulfilment: 'delivery', tip: 0 })
+  assert.equal(web.deliveryFee + web.serviceFee, small.payment.deliveryFee + small.payment.serviceFee, 'phone and web delivery cost the same')
+  const big = orderStore.createManualCounterOrder(
+    { fulfilment: 'delivery', customer, lines: [line(p, 6)], paymentMethod: 'cash', paymentStatus: 'pending_delivery', streetAddress: '14 Oxford Road', postcode: 'HP20 1SN' },
+    'Sunny',
+  )
+  assert.equal(big.payment.deliveryFee, 0, 'free delivery over the threshold applies to phone orders too')
+  const pickup = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Sunny')
+  assert.equal(pickup.payment.deliveryFee + pickup.payment.serviceFee, 0, 'counter sales carry no fees')
+})
+
+await test('"Start trading fresh" does nothing when the server cannot be reached, and clears the open shift when it can', async () => {
+  const resetService = await load('/src/services/resetService.ts')
+  const memReset = createMemoryBackend()
+  await cloud.startCloudSync({ backend: memReset, timers: false })
+  while (tillStore.getCurrentShift()) tillStore.closeTillShift('Cleanup', null)
+  tillStore.openTillShift('Chloe', 10000)
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p, 1)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Chloe')
+  const ordersBefore = orderStore.getStoredOrders().length
+  assert.ok(ordersBefore > 0)
+
+  memReset.state.fail = true
+  const refused = await resetService.resetAllStoreData({ actor: 'Sunny' })
+  assert.equal(refused.ok, false, 'offline: the reset is refused rather than wiping this device only')
+  assert.match(refused.message, /Nothing was reset/)
+  assert.equal(orderStore.getStoredOrders().length, ordersBefore, 'orders untouched')
+  assert.ok(tillStore.getCurrentShift(), 'the shift is still open')
+
+  memReset.state.fail = false
+  const done = await resetService.resetAllStoreData({ actor: 'Sunny' })
+  assert.equal(done.ok, true, done.message)
+  assert.equal(tillStore.getCurrentShift(), null, 'the shift the till held in memory is gone too, not written back on the next sale')
+  assert.equal(localStorage.getItem('just_spuds_till_active_shift_v1'), null)
+  cloud.stopCloudSync()
 })
 
 // ---------------------------------------------------------------------------

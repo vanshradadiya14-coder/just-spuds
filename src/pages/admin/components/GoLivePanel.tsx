@@ -173,6 +173,8 @@ export default function GoLivePanel({ user, onGoTo, onSimulateRush }: GoLivePane
     const res = await resetAllStoreData({ actor, wipeRemoteEpoch: true })
     setBusy(null)
     say(res.message)
+    // Every open screen on this device still shows the old orders: start again from storage.
+    if (res.ok) window.setTimeout(() => window.location.reload(), 1500)
   }
 
   const inputCls = 'w-full rounded-lg border border-white/15 bg-black/50 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-amber-400 focus:outline-none'
