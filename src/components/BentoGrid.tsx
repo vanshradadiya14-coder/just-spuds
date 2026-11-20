@@ -29,7 +29,7 @@ export default function BentoGrid() {
               to="/menu"
               className="group inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-6 py-3 font-body text-[11px] font-bold uppercase tracking-wider text-white backdrop-blur-md transition hover:border-amber-400 hover:bg-white/10"
             >
-              <span>Explore All 30+ Items</span>
+              <span>Explore the Full Menu</span>
               <span className="transition-transform group-hover:translate-x-1">→</span>
             </Link>
           </div>

@@ -6,7 +6,7 @@ import { getConfiguredHours, getRedeemablePromo, getProducts, subscribeMenu } fr
 import { getStoreStatus, type StoreStatus } from '../data/site'
 import { validateDeliveryPostcode, type PostcodeValidationResult } from '../data/deliveryZones'
 import { FIRST_ORDER_CODE, getKitchenPauseState, hasPlacedOrderBefore, subscribeKitchenPause, type KitchenPauseState } from '../services/orderStore'
-import { getDeliverySettings, subscribeDeliverySettings, type StoreDeliverySettings } from '../services/deliverySettingsStore'
+import { getDeliverySettings, SERVICE_FEE_PENCE, subscribeDeliverySettings, type StoreDeliverySettings } from '../services/deliverySettingsStore'
 import { getScheduleDates, getScheduleTimes } from '../utils/scheduling'
 
 export type ModifierType = 'regular' | 'extra' | 'no' | 'lite' | 'side'
@@ -236,6 +236,9 @@ interface CartApi {
   freeDeliveryThreshold: number
   minOrderPence: number
   isMinOrderMet: boolean
+  /** Packaging & service charge on this basket (0 when empty). */
+  serviceFee: number
+  /** What checkout will ask for before any tip: items − discount + delivery + service. */
   finalTotal: number
   kitchenNotes: string
   setKitchenNotes: (notes: string) => void
@@ -406,7 +409,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return rawSubtotal >= activeFreeThreshold ? 0 : activeBaseFee
   }, [fulfilment, lines.length, rawSubtotal, activeFreeThreshold, activeBaseFee])
 
-  const finalTotal = subtotal + (fulfilment === 'delivery' ? deliveryFee : 0)
+  // The same total checkout asks for (before any tip): every web order carries
+  // the packaging & service charge, so the basket must show it too.
+  const serviceFee = lines.length > 0 ? SERVICE_FEE_PENCE : 0
+  const finalTotal = subtotal + (fulfilment === 'delivery' ? deliveryFee : 0) + serviceFee
 
   const applyPromo = useCallback((code: string) => {
     const trimmed = code.trim().toUpperCase()
@@ -510,6 +516,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     freeDeliveryThreshold: activeFreeThreshold,
     minOrderPence,
     isMinOrderMet,
+    serviceFee,
     finalTotal,
     kitchenNotes,
     setKitchenNotes,
@@ -534,7 +541,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     fulfilment, handleSetFulfilment, timingMode, handleSetTimingMode, scheduleDate,
     scheduleTime, isScheduled, formattedScheduledTime,
     deliveryAddress, postcodeValidation, storeStatus, kitchenPause, deliverySettings, deliveryFee, activeFreeThreshold,
-    minOrderPence, isMinOrderMet, finalTotal, kitchenNotes, isOpen, bump, toasts,
+    minOrderPence, isMinOrderMet, serviceFee, finalTotal, kitchenNotes, isOpen, bump, toasts,
     dismissToast, add, reorder, toggleMeal, updateMeal,
   ])
 

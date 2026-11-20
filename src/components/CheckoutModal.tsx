@@ -39,7 +39,9 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
 
   const [paymentPreference, setPaymentPreference] = useState<'device' | 'cash'>('device')
   const paymentMethod: PaymentMethod = paymentPreference === 'cash' ? 'cash' : (fulfilment === 'delivery' ? 'driver_device' : 'in_store')
-  const [selectedTip, setSelectedTip] = useState(100) // £1.00 default tip
+  // No tip unless the customer picks one — a pre-ticked £1 made checkout ask
+  // for more than the basket showed.
+  const [selectedTip, setSelectedTip] = useState(0)
   const [customTipInput, setCustomTipInput] = useState('')
   const [isCustomTip, setIsCustomTip] = useState(false)
 
@@ -386,21 +388,21 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                   </div>
                 )}
 
-                <div className="flex items-center justify-between">
-                  <span className="font-body text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-body text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-1.5 min-w-0">
                     <span>👤</span>
-                    <span>1. Customer &amp; {fulfilment === 'delivery' ? 'Delivery Address Verification' : 'Pick Up Details'}</span>
+                    <span>1. Your {fulfilment === 'delivery' ? 'Delivery Details' : 'Details'}</span>
                   </span>
                   <span
                     className={cx(
-                      'rounded-full px-2.5 py-0.5 font-body text-[10px] font-bold flex items-center gap-1 border',
+                      'shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 font-body text-[10px] font-bold flex items-center gap-1 border',
                       allDetailsVerified
                         ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                         : 'bg-amber-100/80 text-amber-900 border-amber-300',
                     )}
                   >
                     <span>{allDetailsVerified ? '✓' : '🛡️'}</span>
-                    <span>{allDetailsVerified ? 'Details complete' : 'Fill in your details'}</span>
+                    <span>{allDetailsVerified ? 'Complete' : 'Required'}</span>
                   </span>
                 </div>
 

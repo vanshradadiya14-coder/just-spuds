@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import Reveal from './Reveal'
 import { getOnlineProducts, getExtras, getSauces, subscribeMenu } from '../services/menuStore'
 import { gbp } from '../utils/format'
+import { type CategoryId } from '../data/menu'
+
+const MAIN_CATEGORIES: readonly CategoryId[] = ['SPUDS', 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS']
 
 /**
  * Four terse facts, one idea each, with a lot of air around them -- the
@@ -26,11 +29,14 @@ export default function FactsBand() {
   // Priced items only: a few snack lines carry no price on the board yet, and
   // counting them would quietly overstate the menu.
   const priced = products.filter((p) => p.price > 0)
-  const from = priced.reduce((min, p) => Math.min(min, p.price), Infinity)
+  // "Mains" means food, not a can of drink — the cheapest drink used to show
+  // here as "mains starting from £1.40".
+  const mains = priced.filter((p) => MAIN_CATEGORIES.includes(p.category))
+  const from = (mains.length ? mains : priced).reduce((min, p) => Math.min(min, p.price), Infinity)
 
   const facts = [
-    { figure: `${priced.length}+`, label: 'Fresh Menu Items Made Daily' },
-    { figure: gbp(from), label: 'Wholesome Mains Starting From' },
+    { figure: `${priced.length}+`, label: 'Items On Our Menu' },
+    { figure: gbp(from), label: 'Mains Starting From' },
     { figure: `${extras.length}+`, label: 'Fresh Toppings & Grated Cheeses' },
     { figure: `${sauces.length}`, label: 'Signature Sauces Free With Order' },
   ]

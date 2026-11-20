@@ -32,7 +32,7 @@ export default function CartDrawer() {
     formattedScheduledTime, isScheduled, kitchenPause,
     deliveryAddress, setDeliveryAddress, deliveryFee, freeDeliveryThreshold,
     postcodeValidation, minOrderPence, isMinOrderMet, storeStatus,
-    finalTotal, kitchenNotes, setKitchenNotes, count, add, updateMeal,
+    finalTotal, serviceFee, kitchenNotes, setKitchenNotes, count, add, updateMeal,
     isOnlineOrderingEnabled, orderingPausedTitle, orderingPausedMessage,
   } = useCart()
 
@@ -801,6 +801,13 @@ export default function CartDrawer() {
                         <span className={deliveryFee === 0 ? 'text-emerald-600 font-bold' : ''}>
                           {deliveryFee === 0 ? 'FREE' : gbp(deliveryFee)}
                         </span>
+                      </div>
+                    )}
+
+                    {serviceFee > 0 && (
+                      <div className="flex justify-between text-steel">
+                        <span>Packaging &amp; Service</span>
+                        <span>{gbp(serviceFee)}</span>
                       </div>
                     )}
 

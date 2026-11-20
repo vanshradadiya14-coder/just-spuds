@@ -319,16 +319,16 @@ export default function MenuPage() {
                 <div className="pointer-events-none absolute bottom-40 left-10 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-amber-500/15 to-transparent blur-[120px]" />
                 <div className="relative mx-auto max-w-[1400px] space-y-6 px-4 sm:space-y-16 sm:px-8">
                   
-                  {/* Meal Deal Promo Callout & Fast Delivery Bar */}
-                  <div className="grid gap-4 sm:gap-6 lg:grid-cols-12">
-                    <div className="rounded-2xl sm:rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-amber-500/10 p-4 sm:p-8 backdrop-blur-sm lg:col-span-8">
+                  {/* Meal Deal Promo Callout */}
+                  <div>
+                    <div className="rounded-2xl sm:rounded-3xl border border-amber-400/40 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-amber-500/10 p-4 sm:p-8 backdrop-blur-sm">
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
                         <div>
                           <span className="rounded-full bg-amber-500 px-2.5 py-0.5 font-body text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-slate-950 shadow-xs">
                             {MEAL_DEAL.saving}
                           </span>
                           <h3 className="mt-1 sm:mt-2 display text-lg sm:text-2xl text-slate-950">
-                            Make Any Main A Meal Deal (+{gbp(MEAL_DEAL.price)})
+                            Make Any Main A Meal Deal <span className="whitespace-nowrap">(+{gbp(MEAL_DEAL.price)})</span>
                           </h3>
                           <p className="mt-0.5 font-body text-[12px] sm:text-[13px] text-slate-600">
                             {MEAL_DEAL.detail} &bull; Cold drink + crisps/snack of your choice.
@@ -337,37 +337,14 @@ export default function MenuPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            setIsBuilderOpen(true)
-                            requestAnimationFrame(() => document.getElementById('craft-spud')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+                            // The meal deal is added to a main in the basket, so take them to the mains.
+                            setActiveCategory('ALL')
+                            requestAnimationFrame(() => document.getElementById('SPUDS')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
                           }}
                           className="shrink-0 rounded-full bg-ink px-4 py-2 sm:px-6 sm:py-3 font-body text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-paper transition hover:bg-slate-800 shadow-sm"
                         >
-                          🥔 Craft Custom Spud ↑
+                          Choose a main ↓
                         </button>
-                      </div>
-                    </div>
-
-                    {/* Delivery Partners Quick Pill */}
-                    <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-sm lg:col-span-4 flex flex-col justify-between">
-                      <div>
-                        <span className="font-body text-[10px] font-bold uppercase tracking-wider text-steel">
-                          Home &amp; Office Delivery
-                        </span>
-                        <h4 className="mt-1 display text-xl text-ink">Prefer Partner Apps?</h4>
-                        <p className="mt-1 font-body text-[12px] text-slate-500">Order directly to your door in Aylesbury via our official partners:</p>
-                      </div>
-                      <div className="mt-4 flex items-center gap-2">
-                        {SITE.deliveryPartners.map((partner) => (
-                          <a
-                            key={partner.name}
-                            href={partner.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 rounded-xl border border-ink/10 bg-paper py-2 text-center font-body text-[11px] font-bold text-ink hover:bg-amber-100/60 hover:border-amber-300 transition"
-                          >
-                            {partner.name}
-                          </a>
-                        ))}
                       </div>
                     </div>
                   </div>
@@ -649,6 +626,29 @@ export default function MenuPage() {
                       </section>
                     )
                   })}
+
+                  {/* Delivery partners — after the menu, so ordering direct comes first */}
+                  {SITE.deliveryPartners.length > 0 && (
+                    <div className="flex flex-col gap-4 rounded-2xl sm:rounded-3xl border border-ink/10 bg-white p-5 sm:p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h4 className="display text-lg sm:text-xl text-ink">Prefer a delivery app?</h4>
+                        <p className="mt-0.5 font-body text-[12px] text-slate-500">You can also find us on:</p>
+                      </div>
+                      <div className="flex items-center gap-2 sm:min-w-[360px]">
+                        {SITE.deliveryPartners.map((partner) => (
+                          <a
+                            key={partner.name}
+                            href={partner.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 rounded-xl border border-ink/10 bg-paper py-2 text-center font-body text-[11px] font-bold text-ink hover:bg-amber-100/60 hover:border-amber-300 transition"
+                          >
+                            {partner.name}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="rounded-2xl border border-ink/10 bg-white/70 p-5 text-center shadow-xs">
                     <p className="font-body text-[11px] leading-relaxed text-steel">{ALLERGY_NOTICE}</p>

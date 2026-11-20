@@ -22,7 +22,7 @@ import { gbp, cx } from '../utils/format'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 
 const STAGES: { key: OrderStatus; label: string; icon: string; desc: string }[] = [
-  { key: 'placed', label: 'Order Placed', icon: '📝', desc: 'Received and payment verified' },
+  { key: 'placed', label: 'Order Placed', icon: '📝', desc: 'Sent to the kitchen — pay the driver on arrival' },
   { key: 'accepted', label: 'Accepted', icon: '👨‍🍳', desc: 'Kitchen printed your ticket' },
   { key: 'baking', label: 'Baking in Oven', icon: '🔥', desc: 'King Edwards roasting & toppings prepared' },
   { key: 'out_for_delivery', label: 'Out for Delivery', icon: '🛵', desc: 'Courier on the road to your door' },
@@ -30,7 +30,7 @@ const STAGES: { key: OrderStatus; label: string; icon: string; desc: string }[] 
 ]
 
 const PICKUP_STAGES: { key: OrderStatus; label: string; icon: string; desc: string }[] = [
-  { key: 'placed', label: 'Order Placed', icon: '📝', desc: 'Received and payment verified' },
+  { key: 'placed', label: 'Order Placed', icon: '📝', desc: 'Sent to the kitchen — pay at the counter' },
   { key: 'accepted', label: 'Accepted', icon: '👨‍🍳', desc: 'Kitchen printed your ticket' },
   { key: 'baking', label: 'Baking in Oven', icon: '🔥', desc: 'King Edwards roasting hot' },
   { key: 'ready_for_pickup', label: 'Ready for Collection', icon: '🛍️', desc: 'Waiting at Market Square counter' },
@@ -550,7 +550,7 @@ export default function OrderTrackingPage() {
 
               <h1 className="display text-3xl sm:text-4xl text-white">
                 {isCancelled
-                  ? 'Order Declined & Refunded'
+                  ? (order.payment.status === 'refunded' ? 'Order Cancelled & Refunded' : 'Order Cancelled')
                   : isFailed
                   ? 'We couldn’t complete your delivery'
                   : order.isScheduled
@@ -564,8 +564,8 @@ export default function OrderTrackingPage() {
                   : order.status === 'accepted'
                   ? 'Kitchen Accepted Your Order'
                   : isComplete
-                  ? 'Order Delivered!'
-                  : 'Order Placed & Confirmed'}
+                  ? (isDelivery ? 'Order Delivered!' : 'Collected — enjoy!')
+                  : 'Order Placed'}
               </h1>
 
               <p className="mt-1 font-body text-sm text-white/70 max-w-xl">
@@ -636,10 +636,10 @@ export default function OrderTrackingPage() {
                 </span>
                 <div>
                   <span className="font-body text-[10px] font-black uppercase tracking-widest text-amber-800 block">
-                    Counter Pickup Pass &bull; Market Square, Aylesbury
+                    Market Square, Aylesbury
                   </span>
-                  <h3 className="display text-2xl font-bold text-ink">
-                    Order #{order.shortId}
+                  <h3 className="display text-xl sm:text-2xl font-bold text-ink">
+                    Your collection pass
                   </h3>
                   <p className="font-body text-xs text-slate-600">
                     Present this collection pass at our hot potato counter when arriving at the shop.
@@ -857,7 +857,7 @@ export default function OrderTrackingPage() {
 
             {/* LIVE STEPPER PROGRESSION */}
             <div className="rounded-3xl border border-ink/10 bg-white p-6 sm:p-8 shadow-xl">
-              <h2 className="display text-xl text-ink mb-6">Kitchen &amp; Delivery Progress</h2>
+              <h2 className="display text-xl text-ink mb-6">{isDelivery ? 'Kitchen & Delivery Progress' : 'Kitchen Progress'}</h2>
 
               <div className="space-y-6 relative before:absolute before:left-5 before:top-3 before:bottom-3 before:w-0.5 before:bg-ink/10">
                 {stages.map((stage, idx) => {
@@ -1179,6 +1179,18 @@ export default function OrderTrackingPage() {
                     <span className="font-mono text-ink">
                       {order.payment.deliveryFee === 0 ? 'FREE' : gbp(order.payment.deliveryFee)}
                     </span>
+                  </div>
+                )}
+                {order.payment.serviceFee > 0 && (
+                  <div className="flex justify-between">
+                    <span>Packaging &amp; Service</span>
+                    <span className="font-mono text-ink">{gbp(order.payment.serviceFee)}</span>
+                  </div>
+                )}
+                {order.payment.tip > 0 && (
+                  <div className="flex justify-between">
+                    <span>Tip for the team</span>
+                    <span className="font-mono text-ink">{gbp(order.payment.tip)}</span>
                   </div>
                 )}
                 {order.payment.discount > 0 && (

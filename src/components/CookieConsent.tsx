@@ -83,10 +83,11 @@ function ConsentBar({ onChoose }: { onChoose: (value: Consent) => void }) {
       aria-label="Cookie choice"
       className="fixed inset-x-3 bottom-[calc(max(var(--dock-h,0px),var(--orderbar-h,0px))+10px)] z-50 rounded-2xl border border-amber-400/40 bg-[#161310]/95 p-3 text-white shadow-2xl backdrop-blur-xl animate-rise sm:inset-x-auto sm:left-6 sm:max-w-md"
     >
-      <p className="font-body text-[12px] leading-snug text-white/85">
-        🍪 Can we use analytics cookies to see which pages help customers order? No ads, and we never sell your data.
+      <div className="flex flex-col gap-2 min-[440px]:flex-row min-[440px]:items-center">
+      <p className="flex-1 font-body text-[12px] leading-snug text-white/85">
+        🍪 Can we use analytics cookies to improve the site? No ads, and we never sell your data.
       </p>
-      <div className="mt-2.5 flex justify-end gap-2">
+      <div className="flex shrink-0 justify-end gap-2">
         <button
           type="button"
           onClick={() => onChoose('denied')}
@@ -101,6 +102,7 @@ function ConsentBar({ onChoose }: { onChoose: (value: Consent) => void }) {
         >
           Accept
         </button>
+      </div>
       </div>
     </div>
   )

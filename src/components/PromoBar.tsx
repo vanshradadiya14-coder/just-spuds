@@ -78,7 +78,12 @@ export default function PromoBar() {
                 <span>✨</span>
                 <span>First Visit</span>
               </span>
-              <span className="font-semibold text-amber-200 truncate">
+              {/* Phones get a line that fits and matches the Claim button (it applies
+                  the first-visit code); wider screens show the owner's banner text. */}
+              <span className="font-semibold text-amber-200 truncate sm:hidden">
+                🎁 First order? Free coffee or shake
+              </span>
+              <span className="hidden sm:inline font-semibold text-amber-200 truncate">
                 {settings.announcementBanner.text || 'Free Barista Coffee or Thick Shake with your first spud!'}
               </span>
               <button type="button" onClick={handleClaim} className={pill}>

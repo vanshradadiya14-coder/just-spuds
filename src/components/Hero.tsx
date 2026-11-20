@@ -152,19 +152,25 @@ export default function Hero() {
             <Link
               to="/menu"
               onClick={() => setFulfilment('pickup')}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 rounded-full bg-amber-400 px-6 sm:px-7 py-3.5 sm:py-4 font-body text-[12px] font-black uppercase tracking-[0.12em] text-ink shadow-hearth transition-all duration-300 hover:bg-amber-300 hover:scale-105 active:scale-95"
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2.5 rounded-full bg-amber-400 px-5 sm:px-7 py-3 sm:py-3.5 font-body text-ink shadow-hearth transition-all duration-300 hover:bg-amber-300 hover:scale-105 active:scale-95"
             >
-              <span>🛍️</span>
-              <span>Store Pick Up (~15m) →</span>
+              <span aria-hidden className="text-lg leading-none">🛍️</span>
+              <span className="flex flex-col items-start leading-tight">
+                <span className="text-[13px] font-black uppercase tracking-[0.08em] whitespace-nowrap">Pick Up →</span>
+                <span className="text-[11px] font-semibold text-ink/70 whitespace-nowrap">Ready in ~15 min</span>
+              </span>
             </Link>
 
             <Link
               to="/menu"
               onClick={() => setFulfilment('delivery')}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/15 px-6 sm:px-7 py-3.5 sm:py-4 font-body text-[12px] font-black uppercase tracking-[0.12em] text-amber-300 backdrop-blur-md transition-all duration-300 hover:bg-amber-400 hover:text-ink hover:scale-105 active:scale-95"
+              className="group flex-1 sm:flex-none inline-flex items-center justify-center gap-2.5 rounded-full border border-amber-400/60 bg-amber-500/15 px-5 sm:px-7 py-3 sm:py-3.5 font-body text-amber-300 backdrop-blur-md transition-all duration-300 hover:bg-amber-400 hover:text-ink hover:scale-105 active:scale-95"
             >
-              <span>🛵</span>
-              <span>Home Delivery (25-35m) →</span>
+              <span aria-hidden className="text-lg leading-none">🛵</span>
+              <span className="flex flex-col items-start leading-tight">
+                <span className="text-[13px] font-black uppercase tracking-[0.08em] whitespace-nowrap">Delivery →</span>
+                <span className="text-[11px] font-semibold text-amber-200/80 group-hover:text-ink/70 whitespace-nowrap">25–35 min</span>
+              </span>
             </Link>
 
             <Link

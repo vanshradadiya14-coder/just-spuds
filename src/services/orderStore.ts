@@ -639,10 +639,11 @@ export function createNewOrder(params: {
       {
         status: 'placed',
         timestamp: nowStr,
-        title: params.isScheduled ? `Order Scheduled (${params.scheduledFor})` : 'Order Placed & Verified',
-        description: params.paymentMethod === 'cash'
-          ? (params.isScheduled ? `Scheduled for ${params.scheduledFor}. Pay upon arrival.` : 'Pay upon delivery / counter')
-          : (params.isScheduled ? `Scheduled for ${params.scheduledFor}. Payment approved.` : 'Payment approved and verified.'),
+        title: params.isScheduled ? `Order Scheduled (${params.scheduledFor})` : 'Order Placed',
+        // No money is taken online: web orders are paid at the counter or to the driver.
+        description: `${params.isScheduled ? `Scheduled for ${params.scheduledFor}. ` : ''}${
+          params.paymentMethod === 'cash' ? 'Pay in cash' : 'Pay by card or cash'
+        } ${params.fulfilment === 'delivery' ? 'to the driver' : 'at the counter'}.`,
       },
     ],
   }
