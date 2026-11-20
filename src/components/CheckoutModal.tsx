@@ -314,7 +314,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                   💳
                 </span>
                 <div>
-                  <h3 className="display text-xl text-ink leading-tight">Checkout &amp; Payment</h3>
+                  <h3 className="display text-xl text-ink leading-tight">Checkout</h3>
                   <p className="font-body text-[11px] text-slate-500 flex items-center gap-1.5">
                     <span>{fulfilment === 'delivery' ? '🛵 Home Delivery' : '🛍️ Store Pick Up'}</span>
                     <span>&bull;</span>
@@ -400,7 +400,7 @@ export default function CheckoutModal({ isOpen, onClose }: CheckoutModalProps) {
                     )}
                   >
                     <span>{allDetailsVerified ? '✓' : '🛡️'}</span>
-                    <span>{allDetailsVerified ? 'Details complete' : 'Checking your details'}</span>
+                    <span>{allDetailsVerified ? 'Details complete' : 'Fill in your details'}</span>
                   </span>
                 </div>
 

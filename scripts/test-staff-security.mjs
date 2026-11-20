@@ -12,10 +12,12 @@
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { PGlite } from '@electric-sql/pglite'
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 
 const MIGRATION = readFileSync(new URL('../supabase/migrations/20261028_staff_security.sql', import.meta.url), 'utf8')
+const MIGRATION_ORDERS = readFileSync(new URL('../supabase/migrations/20261120_orders_server.sql', import.meta.url), 'utf8')
 // The base schema minus the realtime publication (PGlite has no logical replication).
 const SCHEMA = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8').split('-- 5. ENABLE REALTIME')[0]
 
@@ -84,15 +86,19 @@ async function migrate(db) {
   return results[results.length - 1].rows
 }
 
+/** Functions that return rows (PostgREST answers these with an array). */
+const SETOF = new Set(['jsp_sync_list', 'jsp_customer_orders', 'jsp_orders_list'])
+
 /** Call an exposed function the way the website does: as the anon role, from an IP. */
 async function rpc(db, fn, args = {}, { ip = '203.0.113.7' } = {}) {
   const names = Object.keys(args)
-  const values = names.map((n) => (args[n] !== null && typeof args[n] === 'object' ? JSON.stringify(args[n]) : args[n]))
+  // Postgres arrays (text[]) go as arrays; everything else structured goes as JSON.
+  const values = names.map((n) => (n === 'p_ids' ? args[n] : args[n] !== null && typeof args[n] === 'object' ? JSON.stringify(args[n]) : args[n]))
   return db.transaction(async (tx) => {
     await tx.query(`select set_config('request.headers', $1, true)`, [JSON.stringify({ 'cf-connecting-ip': ip })])
     await tx.query('set local role anon')
     const call = `public.${fn}(${names.map((n, i) => `${n} => $${i + 1}`).join(', ')})`
-    if (fn === 'jsp_sync_list') return (await tx.query(`select * from ${call}`, values)).rows
+    if (SETOF.has(fn)) return (await tx.query(`select * from ${call}`, values)).rows
     return (await tx.query(`select ${call} as r`, values)).rows[0].r
   })
 }
@@ -407,6 +413,252 @@ await test('emergency reset from the SQL editor gives a new temporary PIN and en
   assert.equal(res.mustChange, true)
 })
 
+// ===========================================================================
+section('🧾 Part 1b — orders and stock behind the server (20261120_orders_server.sql)')
+// ===========================================================================
+
+const sha256 = (s) => createHash('sha256').update(s).digest('hex')
+const isoNow = () => new Date().toISOString()
+let orderSeq = 0
+/** An order row as the website sends it (see supabaseOrderSync.orderToRow). */
+const webRow = (lines, extra = {}) => {
+  const n = 10000 + ++orderSeq
+  const subtotal = lines.reduce((s, l) => s + l.base * l.qty, 0)
+  const { payment: pay, customer: cust, ...rest } = extra
+  return {
+    id: `ord-${1790000000000 + orderSeq}-${n}`,
+    short_id: `JS-W-${n}`,
+    store_id: PREFIX,
+    status: 'placed',
+    fulfilment: 'pickup',
+    // A different phone per order, so only the rate-limit test trips the per-phone limit.
+    customer: { name: 'Sarah Mitchell', phone: `07700 9${n}`, email: '', ...cust },
+    lines,
+    payment: { method: 'in_store', status: 'pending_store', subtotal, deliveryFee: 0, serviceFee: 49, tip: 0, discount: 0, total: subtotal + 49, ...pay },
+    eta_minutes: 15,
+    is_scheduled: false,
+    timeline: [{ status: 'placed', timestamp: '12:00', title: 'Order Placed' }],
+    created_at: isoNow(),
+    updated_at: isoNow(),
+    ...rest,
+  }
+}
+const spudLine = (qty = 1, extra = {}) => ({ lineId: `l-${Math.random()}`, productId: 'spud-1', name: 'Just Cheese', base: 545, extras: [], sauces: [], meal: false, image: '', category: 'SPUDS', qty, ...extra })
+const drinkLine = (qty = 1, extra = {}) => ({ lineId: `l-${Math.random()}`, productId: 'drink-1', name: 'Cola', base: 150, extras: [], sauces: [], meal: false, image: '', category: 'DRINKS', qty, ...extra })
+let placeSeq = 0
+const place = (row, token = null, ip = `203.0.${Math.floor(++placeSeq / 200)}.${placeSeq % 200}`) => rpc(db, 'jsp_customer_order_save', { p_row: row, p_token: token }, { ip })
+const rowOf = async (id) => (await db.query('select * from public.orders where id = $1', [id])).rows[0]
+const stockOf = async (id) => (await db.query('select remaining_count from public.menu_stock where id = $1', [id])).rows[0]?.remaining_count
+const putDoc = (name, data) =>
+  rpc(db, 'jsp_sync_put', { p_device: tillToken, p_rows: [{ store_id: `${PREFIX}::doc::${name}`, settings: { data, at: isoNow() }, updated_at: isoNow() }] })
+
+// An order that existed before the migration, placed the old way.
+await db.query(
+  `insert into public.orders (id, short_id, status, fulfilment, customer, lines, payment, timeline) values ('ord-1700000000000-11111', 'JS-W-11111', 'placed', 'pickup', '{"name":"Old Order","phone":"07700 900555"}', '[]', '{"total":500,"status":"pending_store"}', '[]')`,
+)
+const ordersBoot = (await db.exec(MIGRATION_ORDERS)).pop().rows
+
+await putDoc('menu.products', [
+  { id: 'spud-1', name: 'Just Cheese', category: 'SPUDS', price: 545, storePrice: 495, available: true },
+  { id: 'drink-1', name: 'Cola', category: 'DRINKS', price: 150, available: true },
+  { id: 'counter-1', name: 'Counter Special', category: 'SPUDS', price: 300, available: true, channelVisibility: 'in_store_only' },
+  { id: 'off-1', name: 'Off Today', category: 'SPUDS', price: 300, available: false },
+])
+await putDoc('menu.extras', [{ id: 'beans', label: 'Beans', price: 100 }])
+await putDoc('menu.promos', [{ code: 'SPUD10', discountPercent: 10, minOrderPence: 1000, active: true, description: '' }, { code: 'OLD', discountPence: 500, active: false, description: '' }])
+await putDoc('blacklist.hashes', [sha256('just-spuds-blacklist:07911654987')])
+const deliverySettingsDoc = { isOnlineOrderingEnabled: true, deliveryFeePence: 400, freeDeliveryThresholdPence: 2500, minOrderPence: 1000, deliveryRadiusMetres: 5000, orderingPausedMessage: 'Launching soon' }
+await putDoc('delivery.settings', deliverySettingsDoc)
+await rpc(db, 'jsp_stock_put', { p_device: tillToken, p_rows: [{ id: 'spud-1', remaining_count: 3 }] })
+
+await test('the public key can no longer read or write orders; stock is read-only; old orders got a tracking key', async () => {
+  assert.equal(Number(ordersBoot[0].orders_kept), 1, 'existing orders are kept')
+  await rejects(asAnon(db, 'select id from public.orders'), /permission denied/)
+  await rejects(asAnon(db, `insert into public.orders (id, short_id, customer, lines, payment, timeline) values ('ord-x', 'JS-W-1', '{}', '[]', '{}', '[]')`), /permission denied/)
+  await rejects(asAnon(db, `update public.orders set status = 'collected'`), /permission denied/)
+  assert.equal((await asAnon(db, 'select id, remaining_count from public.menu_stock')).rows.length, 1, 'the menu can still show sold out')
+  await rejects(asAnon(db, `update public.menu_stock set remaining_count = 999`), /permission denied/)
+  await rejects(asAnon(db, `insert into public.order_events (order_id, status) values ('x', 'y')`), /permission denied/)
+  assert.match((await rowOf('ord-1700000000000-11111')).track_token, /^[0-9a-f]{32}$/)
+  const status = await rpc(db, 'jsp_auth_status', {})
+  assert.equal(status.orders, true)
+})
+
+let firstOrder
+await test('a web order is placed through the server: checked, unpaid, stock taken, tracking key returned', async () => {
+  const row = webRow([spudLine(1)], { status: 'collected', payment: { status: 'paid', paidAt: isoNow(), takenBy: 'Me' }, delivery_details: { _x: { isTest: true, scheduleDate: 'Thu 9 Oct' } } })
+  const res = await place(row)
+  assert.equal(res.ok, true, res.message)
+  assert.match(res.token, /^[0-9a-f]{32}$/)
+  const saved = await rowOf(row.id)
+  assert.equal(saved.status, 'placed', 'a browser cannot create a completed order')
+  assert.equal(saved.payment.status, 'pending_store', 'or a paid one')
+  assert.equal(saved.payment.paidAt, undefined)
+  assert.equal(saved.payment.total, 545 + 49)
+  assert.equal(saved.delivery_details._x.isTest, undefined, 'or hide it from the takings as a training order')
+  assert.equal(saved.delivery_details._x.scheduleDate, 'Thu 9 Oct')
+  assert.equal(await stockOf('spud-1'), 2)
+  const pings = (await asAnon(db, 'select order_id, status from public.order_events where order_id = $1', [row.id])).rows
+  assert.deepEqual(pings, [{ order_id: row.id, status: 'placed' }], 'screens are told an order arrived — number and status only')
+  firstOrder = { row, token: res.token }
+})
+
+await test('prices come from the shop’s menu: cheaper, off-menu, counter-only and counter-priced baskets are refused', async () => {
+  assert.equal((await place(webRow([spudLine(1, { base: 100 })]))).error, 'price')
+  assert.equal((await place(webRow([spudLine(1, { base: 495 })]))).error, 'price', 'the cheaper till price cannot be claimed online')
+  assert.equal((await place(webRow([spudLine(1, { extras: ['beans'] })]))).error, 'price', 'a topping is charged')
+  assert.equal((await place(webRow([spudLine(1, { extras: ['beans'], base: 545 })], { payment: { subtotal: 645, total: 694 } }))).ok, true)
+  assert.equal((await place(webRow([spudLine(1, { meal: true })]))).error, 'price', 'so is the meal deal')
+  assert.match((await place(webRow([{ ...spudLine(1), productId: 'ghost' }]))).message, /no longer on the menu/)
+  assert.match((await place(webRow([{ ...spudLine(1), productId: 'counter-1', base: 300 }]))).message, /can't be ordered online/)
+  assert.match((await place(webRow([{ ...spudLine(1), productId: 'off-1', base: 300 }]))).message, /can't be ordered online/)
+  assert.equal((await place(webRow([spudLine(1, { priceOverridePence: 1 })]))).ok, false, 'no manager override from a browser')
+  assert.equal((await place(webRow([drinkLine(1)], { payment: { total: 100 } }))).error, 'price', 'the total must add up')
+  assert.equal((await place({ ...webRow([drinkLine(1)]), short_id: 'JS-T-12345' })).ok, false, 'a browser cannot create a till order')
+  assert.equal(await stockOf('spud-1'), 1, 'only the one accepted spud order took stock')
+})
+
+await test('two customers cannot both buy the last one', async () => {
+  const a = await place(webRow([spudLine(1)]))
+  const b = await place(webRow([spudLine(1)]))
+  assert.equal(a.ok, true)
+  assert.equal(b.error, 'stock')
+  assert.match(b.message, /sold out/)
+  assert.equal(await stockOf('spud-1'), 0)
+  const mixed = await place(webRow([drinkLine(2), spudLine(1)]))
+  assert.equal(mixed.error, 'stock')
+  assert.equal((await db.query(`select count(*)::int n from public.orders where lines::text like '%drink-1%' and lines::text like '%spud-1%'`)).rows[0].n, 0, 'nothing of a refused basket is kept')
+  await rpc(db, 'jsp_stock_put', { p_device: tillToken, p_rows: [{ id: 'spud-1', remaining_count: 20 }] })
+})
+
+await test('blocked numbers, a paused kitchen and switched-off ordering are enforced by the server', async () => {
+  for (const phone of ['07911 654987', '+44 7911 654987', '447911654987']) {
+    assert.equal((await place(webRow([drinkLine(1)], { customer: { phone } }))).error, 'blocked', phone)
+  }
+  assert.equal((await place(webRow([drinkLine(1)], { customer: { phone: '12345' } }))).ok, false)
+  await putDoc('kitchen.pause', { isPaused: true, resumeAt: 'manual', reasonText: 'Baking a fresh batch.' })
+  const paused = await place(webRow([drinkLine(1)]))
+  assert.equal(paused.error, 'closed')
+  assert.match(paused.message, /fresh batch/)
+  assert.equal((await place(webRow([drinkLine(1)], { is_scheduled: true }))).ok, true, 'a pre-order for later is still taken')
+  await putDoc('kitchen.pause', { isPaused: false })
+  await putDoc('delivery.settings', { ...deliverySettingsDoc, isOnlineOrderingEnabled: false })
+  const off = await place(webRow([drinkLine(1)]))
+  assert.equal(off.error, 'closed')
+  assert.equal(off.message, 'Launching soon')
+  await putDoc('delivery.settings', deliverySettingsDoc)
+})
+
+await test('delivery: area, distance, minimum and fee are the server’s, vouchers are capped', async () => {
+  const delivery = (lines, cust = {}, pay = {}) => {
+    const subtotal = lines.reduce((s, l) => s + l.base * l.qty, 0)
+    const fee = subtotal >= 2500 ? 0 : 400
+    return webRow(lines, {
+      fulfilment: 'delivery',
+      customer: { streetAddress: '14 Oxford Road', postcode: 'HP21 8AA', latitude: 51.8075, longitude: -0.7865, ...cust },
+      payment: { method: 'driver_device', deliveryFee: fee, total: subtotal + fee + 49, ...pay },
+    })
+  }
+  const ok = await place(delivery([spudLine(2)]))
+  assert.equal(ok.ok, true, ok.message)
+  assert.equal((await rowOf(ok.id)).payment.status, 'pending_delivery')
+  assert.equal((await rowOf(ok.id)).payment.deliveryFee, 400)
+  assert.equal((await place(delivery([spudLine(1)]))).error, 'price', 'under the minimum')
+  assert.equal((await place(delivery([spudLine(2)], {}, { deliveryFee: 0, total: 1090 + 49 }))).error, 'price', 'the delivery fee cannot be dropped')
+  assert.equal((await place(delivery([spudLine(5)]))).ok, true, 'free delivery over the threshold')
+  assert.equal((await place(delivery([spudLine(2)], { postcode: 'MK18 1AA' }))).error, 'area')
+  const far = await place(delivery([spudLine(2)], { postcode: 'HP17 8BB', latitude: 51.7715, longitude: -0.9275 }))
+  assert.equal(far.error, 'area')
+  assert.match(far.message, /km from the shop/)
+  assert.equal((await place(delivery([spudLine(2)], { streetAddress: '' }))).ok, false)
+
+  const voucher = (code, discount) => webRow([spudLine(2)], { payment: { promoCode: code, discount, total: 1090 - discount + 49 } })
+  assert.equal((await place(voucher('SPUD10', 109))).ok, true)
+  assert.equal((await place(voucher('SPUD10', 500))).error, 'price', '10% is 10%')
+  assert.equal((await place(voucher('OLD', 500))).error, 'price', 'a switched-off voucher')
+  assert.equal((await place(voucher('MADEUP', 500))).error, 'price')
+  assert.equal((await place(voucher('FREESPUD-AB12CD', 650))).ok, true, 'a Spud Club reward up to its value')
+  assert.equal((await place(voucher('FREESPUD-AB12CD', 1000))).error, 'price')
+})
+
+await test('a customer reads, cancels and reviews only their own order, with its tracking key', async () => {
+  const { row, token } = firstOrder
+  const mine = await rpc(db, 'jsp_customer_orders', { p_refs: [{ id: row.id, token }, { id: 'ord-1700000000000-11111', token: 'guess' }] })
+  assert.deepEqual(mine.map((o) => o.id), [row.id], 'an order id without its key returns nothing')
+  assert.equal((await place({ ...row, status: 'cancelled' }, 'wrong-key')).error, 'forbidden')
+  assert.equal((await place({ ...row, status: 'cancelled' }, null)).error, 'forbidden')
+  // A browser "editing" its order changes nothing.
+  const edit = await place({ ...row, status: 'collected', payment: { ...row.payment, status: 'paid', total: 1 } }, token)
+  assert.equal(edit.unchanged, true)
+  assert.equal((await rowOf(row.id)).status, 'placed')
+  assert.equal((await place({ ...row, review: { rating: 5, comment: 'great' } }, token)).unchanged, true, 'no review before the food arrives')
+
+  const before = await stockOf('spud-1')
+  const cancelled = await place({ ...row, status: 'cancelled', cancellation: { reason: 'Changed my mind' } }, token)
+  assert.equal(cancelled.ok, true)
+  const saved = await rowOf(row.id)
+  assert.equal(saved.status, 'cancelled')
+  assert.equal(saved.cancellation.reason, 'Changed my mind')
+  assert.equal(await stockOf('spud-1'), before + 1, 'the stock comes back, once')
+  await place({ ...row, status: 'cancelled' }, token)
+  assert.equal(await stockOf('spud-1'), before + 1)
+
+  // Once the kitchen has accepted, cancelling online is too late.
+  const second = webRow([drinkLine(1)])
+  const placed = await place(second)
+  const staffCopy = await rowOf(second.id)
+  await rpc(db, 'jsp_orders_put', { p_device: tillToken, p_rows: [{ ...staffCopy, status: 'accepted', created_at: staffCopy.created_at.toISOString(), updated_at: isoNow() }] })
+  assert.equal((await place({ ...second, status: 'cancelled' }, placed.token)).error, 'too_late')
+  await rpc(db, 'jsp_orders_put', { p_device: tillToken, p_rows: [{ ...staffCopy, status: 'collected', created_at: staffCopy.created_at.toISOString(), updated_at: isoNow() }] })
+  assert.equal((await place({ ...second, review: { rating: 9, comment: 'Lovely', tags: ['Hot'] } }, placed.token)).ok, true)
+  const reviewed = await rowOf(second.id)
+  assert.equal(reviewed.review.rating, 5, 'ratings are 1 to 5')
+  assert.equal(reviewed.track_token, placed.token, 'staff updates keep the customer’s key')
+})
+
+await test('tracking on another phone needs the order number and the phone’s last digits or the postcode', async () => {
+  const row = webRow([drinkLine(1)], { customer: { phone: '07700 900777', postcode: 'HP20 1SN' } })
+  const placed = await place(row)
+  const byPhone = await rpc(db, 'jsp_track_lookup', { p_ref: row.short_id.toLowerCase(), p_verify: '0777' }, { ip: '198.51.100.20' })
+  assert.deepEqual([byPhone.ok, byPhone.id, byPhone.token], [true, row.id, placed.token])
+  assert.equal((await rpc(db, 'jsp_track_lookup', { p_ref: row.id, p_verify: 'hp20 1sn' }, { ip: '198.51.100.20' })).ok, true)
+  const digitsOnly = await rpc(db, 'jsp_track_lookup', { p_ref: row.short_id.replace('JS-W-', ''), p_verify: '07700 900777' }, { ip: '198.51.100.20' })
+  assert.equal(digitsOnly.id, row.id, 'the bare number off the receipt works too')
+  assert.equal((await rpc(db, 'jsp_track_lookup', { p_ref: row.short_id, p_verify: '1234' }, { ip: '198.51.100.20' })).error, 'not_found')
+  assert.equal((await rpc(db, 'jsp_track_lookup', { p_ref: row.short_id, p_verify: '77' }, { ip: '198.51.100.20' })).error, 'not_found', 'two digits is not enough')
+  for (let i = 0; i < 10; i++) await rpc(db, 'jsp_track_lookup', { p_ref: 'JS-W-00000', p_verify: '0000' }, { ip: '198.51.100.21' })
+  assert.equal((await rpc(db, 'jsp_track_lookup', { p_ref: row.short_id, p_verify: '0777' }, { ip: '198.51.100.21' })).error, 'rate', 'guessing is cut off')
+})
+
+await test('staff devices list and update orders; an older copy never overwrites a newer one; unpaired devices get nothing', async () => {
+  await rejects(rpc(db, 'jsp_orders_list', { p_device: 'nope' }), /not paired/)
+  await rejects(rpc(db, 'jsp_orders_put', { p_device: 'nope', p_rows: [] }), /not paired/)
+  await rejects(rpc(db, 'jsp_stock_put', { p_device: 'nope', p_rows: [] }), /not paired/)
+  const all = await rpc(db, 'jsp_orders_list', { p_device: tillToken, p_since: '2020-01-01T00:00:00Z', p_limit: 500 })
+  assert.ok(all.length >= 8)
+  const till = { id: 'ord-1800000000000-22222', short_id: 'JS-T-22222', status: 'accepted', fulfilment: 'pickup', customer: { name: 'Counter' }, lines: [], payment: { total: 500, status: 'paid' }, timeline: [], created_at: isoNow(), updated_at: '2026-11-20T12:00:00.000Z' }
+  assert.equal(await rpc(db, 'jsp_orders_put', { p_device: tillToken, p_rows: [till] }), true)
+  await rpc(db, 'jsp_orders_put', { p_device: tillToken, p_rows: [{ ...till, status: 'collected', updated_at: '2026-11-20T12:05:00.000Z' }] })
+  await rpc(db, 'jsp_orders_put', { p_device: tillToken, p_rows: [{ ...till, status: 'preparing', updated_at: '2026-11-20T12:01:00.000Z' }] })
+  assert.equal((await rowOf(till.id)).status, 'collected', 'a stale till copy arriving late is ignored')
+  const one = await rpc(db, 'jsp_orders_list', { p_device: tillToken, p_ids: [till.id] })
+  assert.equal(one.length, 1)
+})
+
+await test('too many orders from one phone in half an hour are cut off', async () => {
+  const phone = '07700 900888'
+  for (let i = 0; i < 6; i++) assert.equal((await place(webRow([drinkLine(1)], { customer: { phone } }))).ok, true, `order ${i + 1}`)
+  assert.equal((await place(webRow([drinkLine(1)], { customer: { phone } }))).error, 'rate')
+  assert.equal((await place(webRow([drinkLine(1)], { customer: { phone: '07700 900889' } }))).ok, true, 'other customers are unaffected')
+})
+
+await test('running the orders migration again keeps every order and key', async () => {
+  const before = (await db.query('select id, track_token from public.orders order by id')).rows
+  await db.exec(MIGRATION_ORDERS)
+  assert.deepEqual((await db.query('select id, track_token from public.orders order by id')).rows, before)
+  await rejects(asAnon(db, 'select id from public.orders'), /permission denied/)
+})
+
 await db.close()
 
 // ===========================================================================
@@ -465,8 +717,11 @@ const serverState = await load('/src/services/serverAuthState.ts')
 const roster = await load('/src/services/staffRoster.ts')
 const terminalLock = await load('/src/services/terminalLockStore.ts')
 const menuStore = await load('/src/services/menuStore.ts')
-await load('/src/services/orderStore.ts')
 const { createMemoryBackend } = await load('/src/services/sync/backend.ts')
+const orderStore = await load('/src/services/orderStore.ts')
+const orderRows = await load('/src/services/supabaseOrderSync.ts')
+const checkout = await load('/src/services/checkout.ts')
+const deliverySettings = await load('/src/services/deliverySettingsStore.ts')
 
 const iso = (v) => (v instanceof Date ? v.toISOString() : v)
 
@@ -512,10 +767,63 @@ function pgliteBackend(pg) {
       return false
     }
   }
+  // Orders and stock straight from the tables, as the public key — allowed before
+  // the orders migration, refused after it.
+  mem.fetchOrders = async (query) => {
+    if (mem.state.fail) return null
+    try {
+      const rows = await asAnonTx((tx) => tx.query('select * from public.orders order by created_at desc'))
+      return rows.rows
+        .map((r) => orderRows.rowToOrder(Object.fromEntries(Object.entries(r).map(([k, v]) => [k, iso(v)]))))
+        .filter((o) => (!query.ids || query.ids.includes(o.id)) && (!query.since || o.createdAt >= query.since))
+    } catch {
+      return null
+    }
+  }
+  mem.upsertOrders = async (orders) => {
+    if (mem.state.fail) return false
+    try {
+      await asAnonTx(async (tx) => {
+        for (const o of orders) {
+          const r = orderRows.orderToRow(o)
+          await tx.query(
+            `insert into public.orders (id, short_id, status, fulfilment, customer, lines, payment, timeline, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             on conflict (id) do update set status = excluded.status, payment = excluded.payment, timeline = excluded.timeline, updated_at = excluded.updated_at`,
+            [r.id, r.short_id, r.status, r.fulfilment, JSON.stringify(r.customer), JSON.stringify(r.lines), JSON.stringify(r.payment), JSON.stringify(r.timeline), r.created_at, r.updated_at],
+          )
+        }
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+  mem.listStock = async () => {
+    if (mem.state.fail) return null
+    const rows = await asAnonTx((tx) => tx.query('select id, remaining_count, updated_at from public.menu_stock'))
+    return rows.rows.filter((r) => typeof r.remaining_count === 'number').map((r) => ({ id: r.id, qty: r.remaining_count, updatedAt: iso(r.updated_at) }))
+  }
+  mem.putStock = async (rows) => {
+    if (mem.state.fail) return false
+    try {
+      await asAnonTx(async (tx) => {
+        for (const r of rows) {
+          await tx.query(
+            `insert into public.menu_stock (id, remaining_count, is_sold_out) values ($1, $2, $2 <= 0) on conflict (id, store_id) do update set remaining_count = excluded.remaining_count, is_sold_out = excluded.is_sold_out, updated_at = now()`,
+            [r.id, r.qty],
+          )
+        }
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
   mem.state.rpc = async (fn, args) => {
     try {
       const data = await rpc(pg, fn, args, { ip: '192.0.2.10' })
-      return { ok: true, data: Array.isArray(data) ? data.map((r) => ({ ...r, updated_at: iso(r.updated_at) })) : data }
+      // PostgREST sends timestamps as text.
+      return { ok: true, data: Array.isArray(data) ? data.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, iso(v)]))) : data }
     } catch (err) {
       const msg = String(err.message)
       if (/does not exist/.test(msg)) return { ok: false, kind: 'missing', message: msg }
@@ -655,6 +963,41 @@ await test('disabling the cashier ends their session on this device at the next 
   assert.equal(authStore.getCurrentUser(), null)
 })
 
+// ---- Orders behind the server: first on this paired till -------------------
+const midday = () => {
+  const d = new Date()
+  d.setHours(13, 0, 0, 0)
+  return d
+}
+const pgOrder = async (id) => (await pg.query('select * from public.orders where id = $1', [id])).rows[0]
+const pgStock = async (id) => (await pg.query('select remaining_count from public.menu_stock where id = $1', [id])).rows[0]?.remaining_count
+
+await test('after the orders migration a paired till writes orders and stock through the server, never the table', async () => {
+  await pg.exec(MIGRATION_ORDERS)
+  await cloud.refreshServerAuth()
+  assert.equal(serverState.isOrdersServer(), true)
+  assert.equal((await authStore.signInWithPin('582914')).ok, true)
+
+  const product = menuStore.getProducts()[0]
+  menuStore.adjustProductStock(product.id, 5, 'Sunny', 'stock take')
+  deliverySettings.saveDeliverySettings({ isOnlineOrderingEnabled: true, deliveryFeePence: 400, freeDeliveryThresholdPence: 2500, minOrderPence: 1000 })
+  const sale = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer: { name: 'Counter', phone: '01296 423456', email: '' }, lines: [{ lineId: 'l1', productId: product.id, name: product.name, base: product.price, extras: [], sauces: [], meal: false, image: '', category: product.category, qty: 1 }], paymentMethod: 'cash', paymentStatus: 'paid' },
+    'Sunny',
+  )
+  assert.equal(await cloud.syncNow(), true)
+  const saved = await pgOrder(sale.id)
+  assert.equal(saved.short_id, sale.shortId, 'the till sale reached the server')
+  assert.equal(saved.payment.status, 'paid')
+  assert.equal(await pgStock(product.id), 4, 'the till set the count and its sale took one')
+  // The old direct routes are closed.
+  assert.equal(await backend.upsertOrders([sale]), false)
+  assert.equal(await backend.fetchOrders({}), null)
+  assert.equal(await backend.putStock([{ id: product.id, qty: 99 }]), false)
+  const settings = (await pg.query(`select settings from public.delivery_settings where store_id = 'just_spuds::doc::delivery.settings'`)).rows[0].settings
+  assert.equal(settings.data.isOnlineOrderingEnabled, true)
+})
+
 await test('a manager unpairs this device from elsewhere: it forgets its token and every session on it', async () => {
   const owner = (await rpc(pg, 'jsp_check_pin', { p_device: serverState.getDeviceToken(), p_pin: '582914', p_open_session: true })).session.token
   await authStore.signInWithPin('582914')
@@ -664,6 +1007,110 @@ await test('a manager unpairs this device from elsewhere: it forgets its token a
   assert.equal(authStore.getCurrentUser(), null)
   const res = await authStore.signInWithPin('582914')
   assert.match(res.message, /isn.t paired/)
+})
+
+// ---- …then as a customer's browser (no pairing, no staff flag) --------------
+localStorage.removeItem('just_spuds_staff_device_v1')
+localStorage.removeItem('just_spuds_orders_v1')
+const customer = { name: 'Sarah Mitchell', phone: '07700 900321', email: '' }
+const basket = (qty = 1) => {
+  const p = menuStore.getProducts()[0]
+  return {
+    fulfilment: 'pickup',
+    customer,
+    lines: [{ lineId: `l-${Math.random()}`, productId: p.id, name: p.name, base: p.price, extras: [], sauces: [], meal: false, image: '', category: p.category, qty }],
+    subtotal: p.price * qty,
+    deliveryFee: 0,
+    serviceFee: 49,
+    tip: 0,
+    discount: 0,
+    total: p.price * qty + 49,
+    paymentMethod: 'in_store',
+  }
+}
+
+let webOrder
+await test('a customer’s order is placed through the server and comes back with a tracking key', async () => {
+  const p = menuStore.getProducts()[0]
+  const res = await checkout.processCheckout(basket(1), midday())
+  assert.equal(res.ok, true, res.reason)
+  webOrder = res.order
+  const saved = await pgOrder(webOrder.id)
+  assert.equal(saved.status, 'placed')
+  assert.equal(saved.payment.status, 'pending_store')
+  assert.equal(saved.payment.total, p.price + 49)
+  assert.match(serverState.getOrderToken(webOrder.id), /^[0-9a-f]{32}$/)
+  assert.equal(await pgStock(p.id), 3, 'the server took the stock — the browser sent no stock change of its own')
+  await cloud.syncNow()
+  assert.equal(await pgStock(p.id), 3)
+})
+
+await test('the server’s "no" is shown at checkout and leaves nothing behind on the phone', async () => {
+  const p = menuStore.getProducts()[0]
+  // The owner put the price up; this phone still has the old menu.
+  await pg.query(
+    `update public.delivery_settings set settings = jsonb_set(settings, '{data,0,price}', '999') where store_id = 'just_spuds::doc::menu.products'`,
+  )
+  const before = orderStore.getStoredOrders().length
+  const res = await checkout.processCheckout(basket(1), midday())
+  assert.equal(res.ok, false)
+  assert.match(res.reason, /Prices have changed/)
+  assert.equal(orderStore.getStoredOrders().length, before, 'no phantom order on the tracking page')
+  assert.equal(await pgStock(p.id), 3, 'and no stock taken')
+  await pg.query(
+    `update public.delivery_settings set settings = jsonb_set(settings, '{data,0,price}', $1::jsonb) where store_id = 'just_spuds::doc::menu.products'`,
+    [String(p.price)],
+  )
+  // Sold out between basket and checkout.
+  const tooMany = await checkout.processCheckout(basket(3), midday())
+  assert.equal(tooMany.ok, true, 'three left, three ordered')
+  const none = await checkout.processCheckout(basket(1), midday())
+  assert.equal(none.ok, false)
+  assert.match(none.reason, /sold out|out of stock/i)
+})
+
+await test('offline, the order waits on the phone and is placed when the shop can be reached', async () => {
+  await pg.query(`update public.menu_stock set remaining_count = 10, updated_at = now()`)
+  await cloud.syncNow({ fullOrders: true }) // the restock reaches this phone
+  backend.state.fail = true
+  const res = await checkout.processCheckout(basket(1), midday())
+  backend.state.fail = false
+  assert.equal(res.ok, true, res.reason)
+  assert.equal(await pgOrder(res.order.id), undefined, 'not on the server yet')
+  await cloud.syncNow()
+  assert.equal((await pgOrder(res.order.id)).status, 'placed')
+})
+
+await test('a customer can cancel until the kitchen accepts; after that the kitchen’s copy stands', async () => {
+  const p = menuStore.getProducts()[0]
+  const stock = await pgStock(p.id)
+  assert.equal(orderStore.cancelOrder(webOrder.id, 'Changed my mind').ok, true)
+  await cloud.syncNow()
+  assert.equal((await pgOrder(webOrder.id)).status, 'cancelled')
+  assert.equal(await pgStock(p.id), stock + 1, 'the server put the stock back')
+
+  const second = (await checkout.processCheckout(basket(1), midday())).order
+  await pg.query(`update public.orders set status = 'baking', updated_at = now() where id = $1`, [second.id])
+  assert.equal(orderStore.cancelOrder(second.id, 'Too slow').ok, true, 'this phone has not heard the kitchen started')
+  await cloud.syncNow()
+  assert.equal((await pgOrder(second.id)).status, 'baking', 'the server refused the late cancel')
+  assert.equal(orderStore.getOrderById(second.id).status, 'baking', 'and the phone shows the kitchen’s copy again')
+})
+
+await test('an order can be tracked from another phone with its number and the phone’s last digits', async () => {
+  const id = webOrder.id
+  localStorage.removeItem('just_spuds_orders_v1')
+  localStorage.removeItem('just_spuds_order_tokens_v1')
+  localStorage.removeItem('just_spuds_customer_placed_order_ids_v1')
+  localStorage.removeItem('just_spuds_active_order_id')
+  assert.equal(orderStore.getOrderById(id), undefined)
+  const wrong = await cloud.lookupOrderOnServer(webOrder.shortId, '9999')
+  assert.equal(wrong.ok, false)
+  assert.match(wrong.message, /couldn't match/)
+  const found = await cloud.lookupOrderOnServer(webOrder.shortId, '0321')
+  assert.equal(found.ok, true)
+  assert.equal(found.id, id)
+  assert.equal(orderStore.getOrderById(id).customer.name, 'Sarah Mitchell')
 })
 
 cloud.stopCloudSync()

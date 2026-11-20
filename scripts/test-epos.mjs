@@ -1931,6 +1931,22 @@ await test('deliveries are limited to a radius of the shop, set in Admin, using 
   }
 })
 
+await test('the admin overview counts what was paid: a till sale is revenue, an unpaid web order is not', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 20, 'test', 'seed')
+  const till = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [line(p)], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Chloe')
+  const unpaidWeb = { ...till, id: 'ord-web-unpaid', shortId: 'JS-W-90001', source: 'WEBSITE', status: 'baking', payment: { ...till.payment, status: 'pending_store' } }
+  const cancelled = { ...till, id: 'ord-cancelled', shortId: 'JS-T-90002', status: 'cancelled' }
+  assert.equal(till.status, 'accepted', 'a counter sale is never marked collected')
+  assert.equal(orderStore.isPaidSale(till), true)
+  assert.equal(orderStore.isPaidSale(unpaidWeb), false)
+  assert.equal(orderStore.isPaidSale(cancelled), false)
+  const today = orderStore.getDetailedBusinessAnalytics([till, unpaidWeb, cancelled], 'today')
+  assert.equal(today.grossRevenue, till.payment.total, 'the overview used to show £0 for a day of till sales')
+  assert.equal(today.completedCount, 1)
+  assert.equal(today.dailyRevenue.at(-1).revenue, till.payment.total, 'and the 7-day trend counted unpaid orders')
+})
+
 await test('a staff-entered delivery order is charged the same delivery and service fee as the website', () => {
   deliverySettings.saveDeliverySettings({ deliveryFeePence: 400, freeDeliveryThresholdPence: 2500, minOrderPence: 1000 })
   const p = firstSpud()

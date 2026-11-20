@@ -28,7 +28,17 @@
 import type { Order } from './orderStore'
 import type { KvRow, RemoteBackend, RpcResult, StockRow } from './sync/backend'
 import { isSupabaseConfigured } from './supabaseConfig'
-import { clearDevicePairing, getDeviceToken, isServerAuth, setServerAuthMode } from './serverAuthState'
+import {
+  clearDevicePairing,
+  getDeviceToken,
+  getOrderToken,
+  isOrdersServer,
+  isServerAuth,
+  setOrderToken,
+  setOrdersServer,
+  setServerAuthMode,
+} from './serverAuthState'
+import { orderToRow, rowToOrder } from './supabaseOrderSync'
 
 const STORE_ID: string = (import.meta as { env?: Record<string, string> }).env?.VITE_STORE_ID || 'just_spuds'
 export const DOC_PREFIX = `${STORE_ID}::doc::`
@@ -366,10 +376,26 @@ function pushStockOp(op: StockOp) {
   scheduleFlush()
 }
 
+/** Stock writes once the server owns it: only a paired device may set counts. */
+async function putStockRows(rows: StockRow[]): Promise<boolean> {
+  if (!backend) return false
+  if (!isOrdersServer()) return backend.putStock(rows)
+  const device = getDeviceToken()
+  if (!device || !backend.rpc) return false
+  const res = await backend.rpc('jsp_stock_put', { p_device: device, p_rows: rows.map((r) => ({ id: r.id, remaining_count: r.qty, updated_at: r.updatedAt || new Date().toISOString() })) })
+  return res.ok && res.data === true
+}
+
 async function flushStock(): Promise<boolean> {
   if (!backend || !stockSpec) return false
   const ops = readJSON<StockOp[]>(STOCK_OUTBOX_KEY, [])
   if (ops.length === 0) return true
+  if (isOrdersServer() && !getDeviceToken()) {
+    // A customer's browser: the server took (or returned) the stock itself when
+    // it accepted the order or the cancellation. Nothing to send.
+    writeJSON(STOCK_OUTBOX_KEY, readJSON<StockOp[]>(STOCK_OUTBOX_KEY, []).slice(ops.length))
+    return true
+  }
   const remote = await backend.listStock()
   if (!remote) return false
   const counts = new Map(remote.map((r) => [r.id, r.qty]))
@@ -383,7 +409,7 @@ async function flushStock(): Promise<boolean> {
     else counts.set(op.id, local.get(op.id) ?? 0)
   }
   const rows = [...touched].map((id) => ({ id, qty: counts.get(id) ?? 0 }))
-  const ok = await backend.putStock(rows)
+  const ok = await putStockRows(rows)
   if (ok) {
     const remaining = readJSON<StockOp[]>(STOCK_OUTBOX_KEY, []).slice(ops.length)
     writeJSON(STOCK_OUTBOX_KEY, remaining)
@@ -495,6 +521,10 @@ interface OrderSpec {
   get(id: string): Order | undefined
   /** Merge orders from other devices; the store keeps the newer copy of each. */
   apply(orders: Order[]): void
+  /** The server's copy replaces ours whatever the timestamps say (an edit the server refused). */
+  replace?(orders: Order[]): void
+  /** The server refused to create this order: show the customer why. */
+  rejected?(id: string, message: string): void
   /** Orders this browser placed as a customer (for customer devices). */
   customerIds(): string[]
   /** Customer devices keep only their own orders. */
@@ -523,26 +553,138 @@ export function markOrdersChanged(ids: string[]) {
   if (widened && started) resubscribe()
 }
 
+/** Drop uploaded orders from the outbox — unless they changed again while the upload was in flight. */
+function settleOrderOutbox(done: Set<string>, sentAt: Map<string, string | undefined>) {
+  const after = readJSON<string[]>(ORDER_OUTBOX_KEY, [])
+  writeJSON(
+    ORDER_OUTBOX_KEY,
+    after.filter((id) => {
+      if (!done.has(id)) return true
+      const current = orderSpec!.get(id)
+      return current ? current.updatedAt !== sentAt.get(id) : false
+    }),
+  )
+}
+
+/** What the server said about an order this browser tried to place — the checkout waits for it. */
+const placements = new Map<string, { state: 'placed' | 'rejected'; message?: string }>()
+
 async function flushOrders(): Promise<boolean> {
   if (!backend || !orderSpec) return false
   const outbox = readJSON<string[]>(ORDER_OUTBOX_KEY, [])
   if (outbox.length === 0) return true
   const orders = outbox.map((id) => orderSpec!.get(id)).filter((o): o is Order => Boolean(o))
   const sentAt = new Map(orders.map((o) => [o.id, o.updatedAt]))
+  if (isOrdersServer()) return flushOrdersToServer(outbox, orders, sentAt)
   const ok = orders.length === 0 ? true : await backend.upsertOrders(orders)
-  if (ok) {
-    const after = readJSON<string[]>(ORDER_OUTBOX_KEY, [])
-    writeJSON(
-      ORDER_OUTBOX_KEY,
-      after.filter((id) => {
-        if (!outbox.includes(id)) return true
-        const current = orderSpec!.get(id)
-        // Keep it queued if it changed again while this upload was in flight.
-        return current ? current.updatedAt !== sentAt.get(id) : false
-      }),
-    )
-  }
+  if (ok) settleOrderOutbox(new Set(outbox), sentAt)
   return ok
+}
+
+/**
+ * Once the server owns orders nobody writes the table directly.
+ *  - A paired (staff) device upserts through `jsp_orders_put`.
+ *  - A customer's browser sends each order to `jsp_customer_order_save`, which
+ *    checks and prices a new order itself, and afterwards only accepts a cancel
+ *    (while still "placed") or a review, with that order's tracking key.
+ * A refusal is final — the order leaves the outbox and the customer is told; a
+ * network failure leaves it queued.
+ */
+async function flushOrdersToServer(outbox: string[], orders: Order[], sentAt: Map<string, string | undefined>): Promise<boolean> {
+  if (!backend?.rpc || !orderSpec) return false
+  const done = new Set(outbox.filter((id) => !orders.some((o) => o.id === id)))
+  const device = getDeviceToken()
+  let ok = true
+  if (device) {
+    if (orders.length > 0) {
+      const res = await backend.rpc('jsp_orders_put', { p_device: device, p_rows: orders.map(orderToRow) })
+      if (res.ok && res.data === true) orders.forEach((o) => done.add(o.id))
+      else ok = false
+    }
+  } else {
+    const serverWins: string[] = []
+    for (const o of orders) {
+      const hadKey = Boolean(getOrderToken(o.id))
+      const res = await backend.rpc('jsp_customer_order_save', { p_row: orderToRow(o), p_token: getOrderToken(o.id) })
+      if (!res.ok) {
+        ok = false
+        continue
+      }
+      const data = (res.data || {}) as { ok?: boolean; token?: string; message?: string; unchanged?: boolean }
+      done.add(o.id)
+      if (data.ok) {
+        if (data.token) setOrderToken(o.id, data.token)
+        placements.set(o.id, { state: 'placed' })
+        // The server kept its own copy (it ignores edits from a browser): show that one.
+        if (data.unchanged) serverWins.push(o.id)
+      } else {
+        const message = data.message || 'The shop could not accept this order. Please call us.'
+        placements.set(o.id, { state: 'rejected', message })
+        if (hadKey) serverWins.push(o.id) // e.g. too late to cancel: the kitchen's copy stands
+        else orderSpec.rejected?.(o.id, message)
+      }
+    }
+    if (serverWins.length > 0) await pullOrdersByIds(serverWins, true)
+  }
+  settleOrderOutbox(done, sentAt)
+  return ok
+}
+
+type OrderRow = Parameters<typeof rowToOrder>[0]
+
+/** Fetch specific orders through the server functions and merge them (`force` = the server's copy replaces ours). */
+async function pullOrdersByIds(ids: string[], force = false): Promise<boolean> {
+  if (!backend?.rpc || !orderSpec || ids.length === 0) return true
+  const device = getDeviceToken()
+  let res: RpcResult
+  if (device) {
+    res = await backend.rpc('jsp_orders_list', { p_device: device, p_since: null, p_limit: ids.length, p_ids: ids })
+  } else {
+    const refs = ids.map((id) => ({ id, token: getOrderToken(id) })).filter((r) => r.token)
+    if (refs.length === 0) return true
+    res = await backend.rpc('jsp_customer_orders', { p_refs: refs })
+  }
+  if (!res.ok || !Array.isArray(res.data)) return false
+  const list = (res.data as OrderRow[]).map(rowToOrder)
+  if (force && orderSpec.replace) orderSpec.replace(list)
+  else applyRemoteOrders(list)
+  return true
+}
+
+/**
+ * Checkout calls this right after queueing a new order: upload it now and say
+ * what the server decided, so a refused order (sold out, prices changed, shop
+ * closed) is reported on the checkout screen instead of on a tracking page.
+ * 'queued' = the server could not be reached; the order uploads when it can.
+ */
+export async function confirmOrderPlaced(orderId: string, timeoutMs = 12_000): Promise<{ state: 'placed' | 'queued' | 'rejected'; message?: string }> {
+  if (!backend) return { state: 'queued' }
+  placements.delete(orderId)
+  const attempt = (async () => {
+    // A flush already under way may have started before this order was queued.
+    if (flushing) await flushing.catch(() => false)
+    await flushAll().catch(() => false)
+  })()
+  await Promise.race([attempt, new Promise((resolve) => setTimeout(resolve, timeoutMs))])
+  const decided = placements.get(orderId)
+  if (decided) return decided
+  return readJSON<string[]>(ORDER_OUTBOX_KEY, []).includes(orderId) ? { state: 'queued' } : { state: 'placed' }
+}
+
+/**
+ * "Track my order" on a phone that didn't place it: the order number plus the
+ * phone's last digits, the postcode or the email. On a match the server hands
+ * over that order's tracking key and the order is fetched.
+ */
+export async function lookupOrderOnServer(ref: string, verify: string): Promise<{ ok: boolean; id?: string; message?: string }> {
+  if (!backend?.rpc || !isOrdersServer()) return { ok: false }
+  const res = await backend.rpc('jsp_track_lookup', { p_ref: ref.trim(), p_verify: verify.trim() })
+  if (!res.ok) return { ok: false, message: "Couldn't reach the shop. Check your connection and try again." }
+  const data = (res.data || {}) as { ok?: boolean; id?: string; token?: string; message?: string }
+  if (!data.ok || !data.id || !data.token) return { ok: false, message: data.message }
+  setOrderToken(data.id, data.token)
+  await pullOrdersByIds([data.id], true)
+  return { ok: true, id: data.id }
 }
 
 function applyRemoteOrders(list: Order[]) {
@@ -561,6 +703,7 @@ function applyRemoteOrders(list: Order[]) {
 
 async function pullOrders(full: boolean): Promise<boolean> {
   if (!backend || !orderSpec) return false
+  if (isOrdersServer()) return pullOrdersFromServer(full)
   if (isStaffDevice()) {
     const window = full ? STAFF_FULL_ORDER_WINDOW_MS : STAFF_POLL_ORDER_WINDOW_MS
     let since = new Date(Date.now() - window).toISOString()
@@ -580,9 +723,32 @@ async function pullOrders(full: boolean): Promise<boolean> {
   return true
 }
 
+/** A paired device lists the shop's orders; a customer's browser asks for its own, each by its tracking key. */
+async function pullOrdersFromServer(full: boolean): Promise<boolean> {
+  if (!backend?.rpc || !orderSpec) return false
+  const device = getDeviceToken()
+  if (device && isStaffDevice()) {
+    const window = full ? STAFF_FULL_ORDER_WINDOW_MS : STAFF_POLL_ORDER_WINDOW_MS
+    let since = new Date(Date.now() - window).toISOString()
+    const epochAt = getEpochAt()
+    if (epochAt && epochAt > since) since = epochAt
+    const res = await backend.rpc('jsp_orders_list', { p_device: device, p_since: since, p_limit: full ? 1500 : 400, p_ids: null })
+    if (!res.ok || !Array.isArray(res.data)) return false
+    applyRemoteOrders((res.data as OrderRow[]).map(rowToOrder))
+    return true
+  }
+  const ids = orderSpec.customerIds()
+  if (!isStaffDevice()) orderSpec.pruneToCustomer(ids)
+  return pullOrdersByIds(ids)
+}
+
 /** Customer tracking page: an order this device has not seen (e.g. link opened on another phone). */
 export async function fetchOrderById(id: string): Promise<Order | null> {
   if (!backend || !orderSpec) return null
+  if (isOrdersServer()) {
+    await pullOrdersByIds([id], true)
+    return orderSpec.get(id) || null
+  }
   const list = await backend.fetchOrders({ ids: [id] })
   const found = list?.[0]
   if (!found) return null
@@ -715,9 +881,14 @@ export async function refreshServerAuth(): Promise<void> {
     setServerAuthMode('legacy')
     return
   }
+  const hadOrders = isOrdersServer()
   const res = await backend.rpc('jsp_auth_status', {})
-  if (res.ok && (res.data as { enabled?: boolean } | null)?.enabled) setServerAuthMode('server')
+  const features = res.ok ? (res.data as { enabled?: boolean; orders?: boolean } | null) : null
+  if (features?.enabled) setServerAuthMode('server')
   else if (!res.ok && res.kind === 'missing') setServerAuthMode('legacy')
+  if (features?.orders) setOrdersServer()
+  // Orders just moved behind the server: listen for pings instead of table changes.
+  if (!hadOrders && isOrdersServer() && started) resubscribe()
   const token = getDeviceToken()
   if (isServerAuth() && token) {
     const dev = await backend.rpc('jsp_device_status', { p_device: token })
@@ -769,7 +940,7 @@ export async function syncNow(opts: { fullOrders?: boolean } = {}): Promise<bool
   if (!backend) return false
   // Every few minutes a device still on the old sign-in asks again, so running
   // the migration switches open tills over without a reload.
-  if (!isServerAuth() && tick > 0 && tick % 15 === 0) await refreshServerAuth()
+  if ((!isServerAuth() || !isOrdersServer()) && tick > 0 && tick % 15 === 0) await refreshServerAuth()
   const pushed = await flushAll()
   const staff = isStaffDevice()
   tick += 1
@@ -790,6 +961,21 @@ export async function syncNow(opts: { fullOrders?: boolean } = {}): Promise<bool
   return ok
 }
 
+const pingedOrders = new Set<string>()
+let pingTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Several pings in a burst (a rush, or one order's status moving twice) become one fetch. */
+function queueOrderPing(id: string) {
+  pingedOrders.add(id)
+  if (pingTimer) return
+  pingTimer = setTimeout(() => {
+    pingTimer = null
+    const ids = [...pingedOrders]
+    pingedOrders.clear()
+    void pullOrdersByIds(ids)
+  }, 250)
+}
+
 function resubscribe() {
   if (!backend) return
   unsubscribeRealtime?.()
@@ -808,6 +994,12 @@ function resubscribe() {
         : undefined,
       stock: (row) => applyStockRows([row]),
       order: (o) => applyRemoteOrders([o]),
+      // Server-owned orders: we are told an order changed and fetch it properly.
+      orderPing: isOrdersServer()
+        ? (id) => {
+            if (staff || subscribedOrderIds.includes(id) || orderSpec?.customerIds().includes(id)) queueOrderPing(id)
+          }
+        : undefined,
     },
     staff ? 'all' : subscribedOrderIds.length ? subscribedOrderIds : null,
   )

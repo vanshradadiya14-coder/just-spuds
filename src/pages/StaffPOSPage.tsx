@@ -1274,7 +1274,7 @@ export default function StaffPOSPage() {
             <h1 className="display text-2xl font-black text-white tracking-wide">Open Till Shift &amp; Float</h1>
             <p className="font-body text-xs text-white/60 mt-0.5">
               <strong className="text-amber-400">{tillName}</strong> &bull; Signed in as{' '}
-              <span className="font-bold text-white">{user?.name}</span> ({user?.role})
+              <span className="font-bold text-white">{user?.name}</span> ({(user?.role || '').replace(/_/g, ' ').toLowerCase()})
             </p>
             {!userIsMgr && (
               <p className="mt-1 inline-block rounded-lg border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
@@ -1823,7 +1823,7 @@ export default function StaffPOSPage() {
             title="Terminal Hardware Station, Standalone Software & Offline Launchers"
           >
             <span>🛡️</span>
-            <span className="hidden xl:inline">Station &amp; Software</span>
+            <span className="hidden 2xl:inline">Station &amp; Software</span>
           </button>
 
           {/* Subway POS Per-Sale PIN Auto-Lock Indicator & Quick Toggle */}
@@ -1858,7 +1858,7 @@ export default function StaffPOSPage() {
             }
           >
             <span>{tillSettings.lockAfterSale ? '🔐' : '🔓'}</span>
-            <span className="hidden xl:inline">{tillSettings.lockAfterSale ? 'Per-Sale PIN' : 'Stay Signed In'}</span>
+            <span className="hidden 2xl:inline">{tillSettings.lockAfterSale ? 'Per-Sale PIN' : 'Stay Signed In'}</span>
           </button>
 
           <FullscreenButton />

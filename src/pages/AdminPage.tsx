@@ -18,6 +18,7 @@ import {
   subscribeKitchenPause,
   getDetailedBusinessAnalytics,
   generateZReport,
+  isPaidSale,
   exportOrdersCSV,
   exportCustomersCSV,
   injectSimulatedRushOrders,
@@ -311,7 +312,8 @@ export default function AdminPage() {
 
   // Comprehensive multi-dimensional report metrics
   const reportMetrics = useMemo(() => {
-    const validOrders = timeframeOrders.filter((o) => o.status !== 'cancelled')
+    // Takings are what was paid for — an unpaid web order is not revenue yet.
+    const validOrders = timeframeOrders.filter(isPaidSale)
     const cancelledOrders = timeframeOrders.filter((o) => o.status === 'cancelled')
 
     const grossRevenuePence = validOrders.reduce((acc, o) => acc + (o.payment?.total || 0), 0)
@@ -1071,7 +1073,7 @@ export default function AdminPage() {
 
             <Link
               to="/pos"
-              className="hidden xl:inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-emerald-400 transition"
+              className="hidden 2xl:inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 font-body text-xs font-black text-ink shadow hover:bg-emerald-400 transition"
               title="Open Counter Till with Cash Drawer"
             >
               <span>🥔</span>
@@ -1080,7 +1082,7 @@ export default function AdminPage() {
 
             <Link
               to="/staff"
-              className="hidden xl:inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
+              className="hidden 2xl:inline-flex items-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-body text-xs font-bold text-amber-300 hover:bg-amber-400 hover:text-ink transition"
             >
               <span>👨‍🍳</span>
               <span>KDS</span>
@@ -1092,7 +1094,7 @@ export default function AdminPage() {
             {/* Manager Session & Quick Lock */}
             {currentUser && (
               <div className="flex items-center gap-2 pl-1 border-l border-white/10">
-                <div className="hidden lg:block text-right leading-tight">
+                <div className="hidden 2xl:block text-right leading-tight">
                   <p className="font-body text-xs font-bold text-white truncate max-w-[120px]">{currentUser.name}</p>
                   <p className="font-body text-[10px] text-amber-400 font-semibold">{currentUser.role.replace('_', ' ')}</p>
                 </div>
@@ -1130,8 +1132,8 @@ export default function AdminPage() {
                 <MenuPopover anchorRef={headerMoreRef} onClose={() => setIsHeaderMoreOpen(false)} label="Admin tools">
                     {(
                       [
-                        { icon: '🥔', label: 'Counter till', to: '/pos', className: 'xl:hidden' },
-                        { icon: '👨‍🍳', label: 'Kitchen display', to: '/staff', className: 'xl:hidden' },
+                        { icon: '🥔', label: 'Counter till', to: '/pos', className: '2xl:hidden' },
+                        { icon: '👨‍🍳', label: 'Kitchen display', to: '/staff', className: '2xl:hidden' },
                         { icon: '⚡', label: 'Send 2 test orders', hint: 'Practise the alarm and printer', run: handleSimulateRush },
                         { icon: '🔔', label: 'Alert sound', hint: 'Choose, upload or test the alarm', run: () => setIsSoundSettingsOpen(true) },
                         { icon: '📥', label: 'Export ledger (CSV)', hint: 'Every order in this browser', run: () => exportOrdersCSV(orders) },

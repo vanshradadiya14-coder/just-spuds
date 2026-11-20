@@ -158,6 +158,49 @@ and the toolbar scrolls sideways instead of clipping. The KDS shows four
 columns on a 1366px screen and stacks on a phone; admin tables scroll inside
 their cards.
 
+### Orders and stock on the server
+
+`supabase/migrations/20261120_orders_server.sql` (run after the staff sign-in
+migration) closes the orders table to the website's public key — before it,
+anyone holding that key could read every customer's name, phone and address.
+
+- **Placing an order** goes through `jsp_customer_order_save`. The server
+  checks it before it exists: ordering on, kitchen not paused, phone not
+  blocked, every item on the online menu, prices never below the menu (the
+  cheaper till price can't be claimed), voucher valid and capped, delivery
+  minimum, fee, postcode area and distance, and **stock taken atomically** —
+  two customers cannot both buy the last one. A new order is always "placed"
+  and unpaid, whatever the browser sent. Six orders from one phone in half an
+  hour is the limit.
+- **Checkout waits for the answer.** A refusal (sold out, prices changed, shop
+  closed) shows on the checkout screen and leaves nothing on the phone. If the
+  shop can't be reached the order waits on the phone and is placed when it
+  can; a refusal then shows on its tracking page.
+- **Tracking key.** The server returns a key per order, kept in that browser.
+  Reading the order, cancelling it (only while "placed" — the stock goes back)
+  and leaving a review (only once complete) need the key; any other edit from
+  a browser is ignored and the kitchen's copy replaces it. *Track on another
+  phone* works with the order number (or just its digits) plus the phone's last
+  four digits, the postcode or the email, with guessing cut off.
+- **Staff devices** read and write orders and stock through functions that
+  check the device is paired; an older copy of an order never overwrites a
+  newer one.
+- **Live updates** come from `order_events` — order number and status only,
+  no personal details — which tells screens to fetch the order properly.
+- Stock counts stay publicly readable so the menu can show "sold out".
+
+Switching it on: deploy the app first (it uses the old path until the SQL has
+run and switches by itself within minutes), then run the file in the Supabase
+SQL editor at a quiet time. Orders already being tracked on customers' phones
+lose live tracking — those phones hold no key — but can be found again with
+*Track on another phone*.
+
+Not yet on the server: opening hours (the website and staff screens enforce
+them), prices of extras on wraps / rice boxes / paninis (their lists live in
+code, not in a shared document — staff screens still flag an underpriced
+order), and per-person permission checks on menu and settings changes (any
+paired device may write them).
+
 ### Till flow (modelled on the shop's EPOS Now till)
 
 Staff move from EPOS Now, so the screens follow it: Home tiles → category →
@@ -337,14 +380,11 @@ Staff screens get changes instantly (realtime) and poll every 20 s as a
 backstop; customer browsers poll. Every staff header shows a **Synced /
 Offline · N waiting** pill — tap it to sync now.
 
-**Security — what's left.** Once server sign-in is on, the settings table is
-locked as above. Two tables are still open to the public key because customer
-browsers write to them directly: `orders` (customers place and track orders —
-so order details, names and phone numbers can be read through the API) and
-`menu_stock`. The next step is the same pattern: order placement, tracking and
-staff updates through functions, with row security on both tables. Writes from
-a paired device are trusted per device; checking the signed-in person's role
-on the server for menu, price and settings changes would follow.
+**Security — what's left.** With both migrations run, no table can be written
+with the public key and no customer details can be read with it (see *Orders
+and stock on the server*). Still to do: writes from a paired device are trusted
+per device — checking the signed-in person's role on the server for menu,
+price and settings changes — and opening hours on the server.
 
 **Till enrolment.** With server sign-in, pairing a device as a till or kitchen
 screen also enrols it. Without it, a new till or kitchen screen enrols with one

@@ -14,6 +14,7 @@ import {
   type Order,
   type OrderStatus,
 } from '../services/orderStore'
+import { lookupOrderOnServer } from '../services/cloudSync'
 import { getCurrentUser, hasRole, SHOP_FLOOR_ROLES } from '../services/authStore'
 import { lineUnitPrice } from '../hooks/useCart'
 import ThermalReceipt from '../components/ThermalReceipt'
@@ -212,12 +213,20 @@ export default function OrderTrackingPage() {
   }
 
   // Handle Lookup for unknown order
-  const handleLookupOrder = (e: React.FormEvent) => {
+  const handleLookupOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     const cleanId = lookupOrderId.trim()
     const found = getOrderById(cleanId)
     if (!found) {
-      setLookupError(`Could not find an order matching "${cleanId}". Please check your order confirmation.`)
+      // Not on this phone: ask the shop. It only hands the order over when the
+      // phone number, postcode or email given here matches the order.
+      const remote = await lookupOrderOnServer(cleanId, lookupVerification)
+      if (remote.ok && remote.id) {
+        addCustomerPlacedOrderId(remote.id)
+        navigate(`/track/${remote.id}`)
+        return
+      }
+      setLookupError(remote.message || `Could not find an order matching "${cleanId}". Please check your order confirmation.`)
       return
     }
 
@@ -288,7 +297,7 @@ export default function OrderTrackingPage() {
                   required
                   value={lookupOrderId}
                   onChange={(e) => setLookupOrderId(e.target.value)}
-                  placeholder="e.g. JS-71934 or 71934"
+                  placeholder="e.g. JS-W-71934 or 71934"
                   className="w-full rounded-2xl border border-ink/15 bg-paper px-4 py-3 font-mono text-sm text-ink placeholder:text-steel/50 focus:border-amber-400 focus:outline-none"
                 />
               </div>

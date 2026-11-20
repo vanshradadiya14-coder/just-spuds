@@ -306,6 +306,40 @@ if (typeof window !== 'undefined') {
       // Spud Club: this customer's order was collected / delivered (earns) or cancelled (doesn't).
       settleLoyaltyFromOrders(merged)
     },
+    // The server refused an edit this browser made (e.g. cancelling after the
+    // kitchen started): its copy replaces ours whatever the timestamps say.
+    replace: (incoming) => {
+      if (incoming.length === 0) return
+      const byId = new Map(getStoredOrders().map((o) => [o.id, o]))
+      incoming.forEach((remote) => byId.set(remote.id, remote))
+      const merged = [...byId.values()].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      writeRemoteOrders(merged)
+      settleLoyaltyFromOrders(merged)
+    },
+    // The server would not create this order (sold out, prices changed, shop
+    // closed) after it had been queued offline: show it as not accepted, with why.
+    rejected: (id, message) => {
+      const current = getStoredOrders()
+      if (!current.some((o) => o.id === id)) return
+      const nowIso = new Date().toISOString()
+      writeRemoteOrders(
+        current.map((o) =>
+          o.id !== id
+            ? o
+            : {
+                ...o,
+                status: 'cancelled' as const,
+                etaMinutes: 0,
+                updatedAt: nowIso,
+                cancellation: { cancelledAt: nowIso, reason: `Not accepted: ${message}`, refundAmount: 0, refundStatus: 'not_applicable' as const },
+                timeline: [
+                  ...o.timeline,
+                  { status: 'cancelled' as const, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: 'Order Not Accepted', description: message },
+                ],
+              },
+        ),
+      )
+    },
     customerIds: () => {
       const active = getActiveCustomerOrderId()
       return Array.from(new Set([...(active ? [active] : []), ...getCustomerPlacedOrderIds()]))
@@ -434,6 +468,19 @@ export function addCustomerPlacedOrderId(id: string): void {
   } catch {
     // Ignore storage quota
   }
+}
+
+/**
+ * Checkout was told "no" by the server while the customer was still on the
+ * checkout screen: the order never existed, so remove this browser's copy.
+ */
+export function discardUnplacedOrder(id: string): void {
+  if (typeof window === 'undefined') return
+  const order = getStoredOrders().find((o) => o.id === id)
+  // Creating it took the items off this browser's copy of the stock: put them back.
+  if (order && !order.isTest) restoreStockForOrderLines(order.lines, order.shortId, 'Order not accepted')
+  writeRemoteOrders(getStoredOrders().filter((o) => o.id !== id))
+  forgetCustomerOrderIds([id])
 }
 
 /** Stops this browser treating the given orders as "my orders" (test orders placed from a staff screen). */
@@ -1253,6 +1300,13 @@ export function averagePrepMinutes(orders: Order[]): number | null {
 /** Real trading only: training orders from "Simulate rush" never reach a figure. */
 export const realOrders = (orders: Order[]) => orders.filter((o) => !o.isTest)
 
+/**
+ * The one rule for "this is money the shop took": paid for and not cancelled.
+ * Not "delivered or collected" — a counter sale is paid and handed over at once
+ * and never gets that status, so every figure built on it showed £0 for the till.
+ */
+export const isPaidSale = (o: Pick<Order, 'status' | 'payment'>): boolean => o.status !== 'cancelled' && o.payment?.status === 'paid'
+
 export function getDetailedBusinessAnalytics(allOrders: Order[], timeframe: TimeRange = 'today'): BusinessAnalytics {
   const orders = realOrders(allOrders)
   const now = new Date()
@@ -1271,7 +1325,7 @@ export function getDetailedBusinessAnalytics(allOrders: Order[], timeframe: Time
     return true // 'all'
   })
 
-  const completedOrders = filteredOrders.filter((o) => ['delivered', 'collected'].includes(o.status))
+  const completedOrders = filteredOrders.filter(isPaidSale)
   const activeOrders = filteredOrders.filter((o) => !['delivered', 'collected', 'cancelled'].includes(o.status))
   const cancelledOrders = filteredOrders.filter((o) => o.status === 'cancelled')
 
@@ -1339,7 +1393,7 @@ export function getDetailedBusinessAnalytics(allOrders: Order[], timeframe: Time
   }
 
   orders.forEach((o) => {
-    if (o.status === 'cancelled') return
+    if (!isPaidSale(o)) return
     const dateKey = localDayKey(new Date(o.createdAt))
     if (daysMap[dateKey]) {
       daysMap[dateKey].count += 1
@@ -1470,7 +1524,7 @@ export function generateZReport(allOrders: Order[], day: Date = new Date()): ZRe
   // The day's takings are what was actually paid for. A counter sale is paid and
   // handed over at once (it never gets marked "collected"), so counting only
   // delivered/collected orders used to report £0.00 on a day of till sales.
-  const completed = orders.filter((o) => o.status !== 'cancelled' && o.payment.status === 'paid')
+  const completed = orders.filter(isPaidSale)
   const cancelled = orders.filter((o) => o.status === 'cancelled')
   /** Placed today but not paid yet — a website pick-up that is settled on the till. */
   const awaitingPayment = orders.filter((o) => o.status !== 'cancelled' && o.payment.status !== 'paid' && o.payment.status !== 'refunded')

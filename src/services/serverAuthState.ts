@@ -104,6 +104,52 @@ export function clearDevicePairing() {
   notify()
 }
 
+// ---------------------------------------------------------------------------
+// Orders on the server (supabase/migrations/20261120_orders_server.sql)
+// ---------------------------------------------------------------------------
+
+const ORDERS_KEY = 'just_spuds_server_orders_v1'
+const ORDER_TOKENS_KEY = 'just_spuds_order_tokens_v1'
+
+/**
+ * True once the shop's database owns orders and stock: browsers place and read
+ * orders through checked functions instead of the table. Like server sign-in,
+ * a device that has seen it never goes back.
+ */
+export function isOrdersServer(): boolean {
+  return read(ORDERS_KEY) === '1'
+}
+
+export function setOrdersServer() {
+  if (isOrdersServer()) return
+  write(ORDERS_KEY, '1')
+  notify()
+}
+
+function readTokens(): Record<string, string> {
+  try {
+    const raw = read(ORDER_TOKENS_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+/** The tracking key the server gave this browser for an order it placed (or looked up). */
+export function getOrderToken(orderId: string): string | null {
+  return readTokens()[orderId] || null
+}
+
+export function setOrderToken(orderId: string, token: string) {
+  const tokens = readTokens()
+  if (tokens[orderId] === token) return
+  tokens[orderId] = token
+  // Keep the newest 80 — a customer's own recent orders.
+  const kept = Object.fromEntries(Object.entries(tokens).slice(-80))
+  write(ORDER_TOKENS_KEY, JSON.stringify(kept))
+}
+
 export function subscribeServerAuth(fn: () => void): () => void {
   listeners.add(fn)
   return () => listeners.delete(fn)
@@ -114,5 +160,7 @@ export function resetServerAuthState() {
   write(MODE_KEY, null)
   write(TOKEN_KEY, null)
   write(DEVICE_KEY, null)
+  write(ORDERS_KEY, null)
+  write(ORDER_TOKENS_KEY, null)
   notify()
 }

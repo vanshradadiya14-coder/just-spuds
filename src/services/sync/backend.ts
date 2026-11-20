@@ -34,6 +34,12 @@ export interface SubscribeHandlers {
   kv?: (row: KvRow) => void
   stock?: (row: StockRow) => void
   order?: (order: Order) => void
+  /**
+   * "This order changed" — id only. Once the server owns orders, browsers can
+   * no longer watch the table itself; they are pinged and fetch the order
+   * through a checked function.
+   */
+  orderPing?: (orderId: string) => void
 }
 
 /**

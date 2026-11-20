@@ -190,6 +190,18 @@ export function createSupabaseBackend(): RemoteBackend | null {
         )
       }
 
+      if (handlers.orderPing) {
+        channels.push(
+          client
+            .channel(`order-pings-${tag}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => {
+              const id = (payload.new as { order_id?: string } | null)?.order_id
+              if (id) handlers.orderPing!(id)
+            })
+            .subscribe(),
+        )
+      }
+
       return () => {
         channels.forEach((c) => client.removeChannel(c))
       }

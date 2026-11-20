@@ -14,6 +14,7 @@
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import {
   createNewOrder,
+  discardUnplacedOrder,
   FIRST_ORDER_CODE,
   hasPlacedOrderBefore,
   getKitchenPauseState,
@@ -24,6 +25,7 @@ import {
   type CustomerInfo,
 } from './orderStore'
 import { isPhoneBlacklisted } from './blacklistStore'
+import { confirmOrderPlaced } from './cloudSync'
 import { getBusinessDetails, getConfiguredHours, getProducts, getRedeemablePromo, isProductSoldOut } from './menuStore'
 import { markRewardVoucherUsed, recordLoyaltyOrder } from './loyaltyStore'
 import { deliveryCharges, getDeliverySettings, SERVICE_FEE_PENCE } from './deliverySettingsStore'
@@ -292,6 +294,17 @@ export async function processCheckout(payload: CheckoutPayload, now: Date = new 
       total: priced.total,
       paymentMethod: payload.paymentMethod || (payload.fulfilment === 'delivery' ? 'driver_device' : 'in_store'),
     })
+    // Hand it to the shop now and hear the answer. The server checks the order
+    // itself (stock, prices, opening, delivery area); a "no" is reported here,
+    // on the checkout screen. If the shop can't be reached the order stays
+    // queued on this device and uploads as soon as it can.
+    if (!order.isTest) {
+      const placed = await confirmOrderPlaced(order.id)
+      if (placed.state === 'rejected') {
+        discardUnplacedOrder(order.id)
+        return { ok: false, reason: placed.message || 'The shop could not accept this order. Please call us.' }
+      }
+    }
     // A Spud Club voucher is spent once; the order earns points when it is collected / delivered.
     if (priced.discount > 0 && payload.promoCode) markRewardVoucherUsed(payload.promoCode, order.id)
     if (!order.isTest) recordLoyaltyOrder(order.id, priced.subtotal - priced.discount)

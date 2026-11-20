@@ -96,7 +96,19 @@ before the fix, `npm test` passes, and the browser walkthroughs still pass.
 
 ---
 
-## Phase 1 — the server owns orders and stock
+## Phase 1 — the server owns orders and stock (BUILT 2026-11-20, waiting for the owner to run the SQL)
+
+Built as `supabase/migrations/20261120_orders_server.sql` with 46 tests in
+`scripts/test-staff-security.mjs` (the SQL as the public key in PGlite, then
+the app as a paired till and as a customer's browser). See *Orders and stock
+on the server* in the README for what it does and how to switch it on.
+
+Left out on purpose, to follow: opening hours checked in SQL; prices of extras
+for wraps / rice boxes / paninis (publish those lists as a shared document
+first); per-person role checks in `jsp_sync_put`; live updates use a public
+`order_events` ping table instead of a broadcast channel.
+
+The original brief, for reference:
 
 The largest gap. Follow the pattern already used for sign-in
 (`20261028_staff_security.sql`): private schema, `SECURITY DEFINER` functions,
