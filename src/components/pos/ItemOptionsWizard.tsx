@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FRESH_SALAD_OPTIONS, MEAL_DEAL, extrasFor, optionLabel, sellPrice, type Product } from '../../data/menu'
+import { FRESH_SALAD_OPTIONS, MEAL_DEAL, OFFER_CATEGORY, OFFER_TOPPING_PENCE, extrasFor, isSpudLike, optionLabel, sellPrice, type Product } from '../../data/menu'
 import { getSauces } from '../../services/menuStore'
 import { playPOSTouchTone } from '../../services/printerBridge'
 import type { CartLine, CartLineModifier } from '../../hooks/useCart'
@@ -18,7 +18,7 @@ import { stationForLine } from '../../utils/lineText'
 type Butter = 'real' | 'garlic' | 'vegan' | 'none'
 type StepId = 'free' | 'toppings' | 'salads' | 'sauces' | 'meal'
 
-const SALAD_ELIGIBLE_CATEGORIES = new Set(['SPUDS', 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS'])
+const SALAD_ELIGIBLE_CATEGORIES = new Set(['SPUDS', OFFER_CATEGORY, 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS'])
 const WIZARD_MODE_KEY = 'just_spuds_pos_wizard_mode_v1'
 
 const BUTTERS: { id: Butter; label: string }[] = [
@@ -74,11 +74,15 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
   const extras = useMemo(() => extrasFor(product), [product])
   const sauces = useMemo(() => (product.sauces ? getSauces() : []), [product])
   const hasSalads = SALAD_ELIGIBLE_CATEGORIES.has(product.category)
+  const isSpud = isSpudLike(product.category)
+  const isOffer = product.category === OFFER_CATEGORY
+  // Spud offers use the spud choices (leave-offs, kitchen requests, butter).
+  const optionKey = isSpud ? 'SPUDS' : product.category
   const leaveOffChoices = useMemo(() => {
-    const names = [...baseToppingNames(product), ...(LEAVE_OFF[product.category] || [])]
+    const names = [...baseToppingNames(product), ...(LEAVE_OFF[optionKey] || [])]
     return names.filter((n, i) => names.findIndex((x) => x.toLowerCase() === n.toLowerCase()) === i)
-  }, [product])
-  const requestChoices = KITCHEN_REQUESTS[product.category] || []
+  }, [product, optionKey])
+  const requestChoices = KITCHEN_REQUESTS[optionKey] || []
 
   // Rebuild the choices from a line being edited.
   const initialMods = initial?.conversationalModifiers || []
@@ -124,14 +128,15 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
 
   const steps = useMemo(() => {
     const list: { id: StepId; label: string }[] = [{ id: 'free', label: 'Complimentary' }]
-    if (extras.length > 0) list.push({ id: 'toppings', label: product.category === 'SPUDS' ? 'Spud Toppings' : 'Extras' })
+    if (extras.length > 0) list.push({ id: 'toppings', label: isOffer ? `Toppings ${OFFER_TOPPING_PENCE}p each` : isSpud ? 'Spud Toppings' : 'Extras' })
     if (hasSalads) list.push({ id: 'salads', label: 'Fresh Salad' })
     if (sauces.length > 0) list.push({ id: 'sauces', label: 'Sauces' })
     if (product.mealEligible) list.push({ id: 'meal', label: 'Make It A Meal' })
     return list
-  }, [extras.length, hasSalads, sauces.length, product])
-  // Opens on Complimentary like the EPOS till staff already know.
-  const [stepIndex, setStepIndex] = useState(0)
+  }, [extras.length, hasSalads, sauces.length, product, isOffer, isSpud])
+  // Opens on Complimentary like the EPOS till staff already know — except the
+  // spud offer, which opens straight on its 75p toppings (that is the offer).
+  const [stepIndex, setStepIndex] = useState(() => (isOffer && !initial ? Math.max(0, steps.findIndex((s) => s.id === 'toppings')) : 0))
   const step = steps[Math.min(stepIndex, steps.length - 1)]
 
   const extraPrice = (id: string) => extras.find((e) => e.id === id)?.price ?? 0
@@ -149,7 +154,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
   const confirm = () => {
     playPOSTouchTone('action')
     const mods: CartLineModifier[] = []
-    if (product.category === 'SPUDS') {
+    if (isSpud) {
       if (butter === 'none') mods.push({ name: 'Butter', type: 'no' })
       if (butter === 'garlic') mods.push({ name: 'Garlic Butter', type: 'regular' })
       if (butter === 'vegan') mods.push({ name: 'Vegan Spread', type: 'regular' })
@@ -210,6 +215,11 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">{initial ? 'Edit item' : 'Add item'}</p>
             <h3 className="display truncate text-xl font-black">{product.name}</h3>
             <p className="text-xs text-white/50">{gbp(sellPrice(product, 'store'))} each</p>
+            {isOffer && (
+              <p className="mt-1 inline-block rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-black uppercase tracking-wider text-white">
+                Special offer — any topping {OFFER_TOPPING_PENCE}p
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex rounded-xl border border-white/15 bg-white/5 p-0.5 text-[11px] font-bold">
@@ -258,7 +268,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
                   ? meal
                     ? 1
                     : 0
-                  : leaveOff.length + requests.length + (butter !== 'real' && product.category === 'SPUDS' ? 1 : 0)
+                  : leaveOff.length + requests.length + (butter !== 'real' && isSpud ? 1 : 0)
               return (
                 <button
                   key={s.id}
@@ -281,7 +291,7 @@ export default function ItemOptionsWizard({ product, initial, onClose, onConfirm
           {(expressMode || step.id === 'free') && (
             <div className="space-y-4">
               {expressMode && <p className="text-[11px] font-black uppercase tracking-wider text-amber-300">1. Complimentary &amp; Prep</p>}
-              {product.category === 'SPUDS' && (
+              {isSpud && (
                 <div>
                   <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-white/50">Butter</p>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

@@ -13,6 +13,7 @@ import {
   SAUCES as DEFAULT_SAUCES,
   CATEGORIES as DEFAULT_CATEGORIES,
   migrateSpudExtras,
+  MINI_SPUD_OFFER,
   SPUD_EXTRAS_REV,
   type Product,
   type Option,
@@ -179,7 +180,11 @@ export function getProducts(): Product[] {
       return normalizedDefaults
     }
     const parsed: Product[] = JSON.parse(raw)
-    return parsed.map(normalizeProduct)
+    // Menus saved before the counter offer existed: show it without writing the
+    // list back (a write here could publish a stale menu over newer prices).
+    // Editing it in Admin saves it for real; switch it off with "available".
+    const withOffer = parsed.some((p) => p.id === MINI_SPUD_OFFER.id) ? parsed : [...parsed, MINI_SPUD_OFFER]
+    return withOffer.map(normalizeProduct)
   } catch {
     return DEFAULT_PRODUCTS.map(normalizeProduct)
   }

@@ -68,7 +68,7 @@ import {
 } from '../services/authStore'
 import { getProducts, subscribeMenu, getProductByBarcode, isListedInStore, isProductSoldOut, getCategories } from '../services/menuStore'
 import { logAuditEvent } from '../services/auditStore'
-import { extrasFor, MEAL_DEAL, sellPrice, type Product } from '../data/menu'
+import { extrasFor, MEAL_DEAL, OFFER_CATEGORY, sellPrice, type Product } from '../data/menu'
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { lineExtras, mealText, modifierText, saladsText, saucesText, KITCHEN_STATIONS, stationForLine, type KitchenStation } from '../utils/lineText'
@@ -107,11 +107,12 @@ const REJECTION_REASON_PRESETS = [
 type OrderType = 'takeaway' | 'eat_in' | 'phone'
 
 /** Categories whose dishes open the options pop-up (toppings, sauces, meal deal, leave-offs). */
-const DISH_CATEGORIES = new Set(['SPUDS', 'BAGUETTES', 'PANINIS', 'WRAPS', 'RICE_BOXES', 'SALADS'])
+const DISH_CATEGORIES = new Set(['SPUDS', OFFER_CATEGORY, 'BAGUETTES', 'PANINIS', 'WRAPS', 'RICE_BOXES', 'SALADS'])
 const hasOptions = (p: Product) => DISH_CATEGORIES.has(p.category) || extrasFor(p).length > 0 || p.sauces || p.mealEligible
 
 /** EPOS-style home tiles: one colour per category. */
 const CATEGORY_TILE: Record<string, string> = {
+  [OFFER_CATEGORY]: 'from-red-600/60 to-red-700/30 border-red-400/80 text-white ring-2 ring-red-500/40',
   SPUDS: 'from-amber-500/35 to-amber-600/15 border-amber-400/50 text-amber-100',
   BAGUETTES: 'from-orange-500/35 to-orange-600/15 border-orange-400/50 text-orange-100',
   PANINIS: 'from-red-500/30 to-red-600/10 border-red-400/50 text-red-100',

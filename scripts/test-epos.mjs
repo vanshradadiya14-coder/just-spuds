@@ -1811,6 +1811,30 @@ await test('the till receipt is laid out EPOS-style, fits the paper and adds up'
   assert.ok(![...bytes].some((b) => b > 0x7f && b !== 0x9c), 'no stray non-ASCII bytes (emoji used to print as junk)')
 })
 
+await test('special offer: plain mini spud £1.99 on the till only, every topping 75p, priced the same on receipt and report', async () => {
+  const menu = await load('/src/data/menu.ts')
+  const cart = await load('/src/hooks/useCart.tsx')
+  const offer = menuStore.getProducts().find((p) => p.id === menu.MINI_SPUD_OFFER_ID)
+  assert.ok(offer, 'the offer is on the till even for a menu saved before it existed')
+  assert.equal(offer.price, 199)
+  assert.equal(offer.category, menu.OFFER_CATEGORY)
+  assert.ok(menuStore.isListedInStore(offer))
+  assert.ok(!menuStore.getOnlineProducts().some((p) => p.id === offer.id), 'not sold on the website')
+  assert.ok(menu.extrasFor(offer).length > 0 && menu.extrasFor(offer).every((o) => o.price === 75), 'every topping is 75p on the offer')
+  assert.equal(menu.optionPrice('chilli', menu.OFFER_CATEGORY), 75, 'even the £2 chilli')
+  assert.equal(menu.optionPrice('chilli', 'SPUDS'), 200, 'normal spuds keep their prices')
+
+  const l = { ...line(offer, 1), extras: ['cheese', 'beans', 'chilli'] }
+  assert.equal(cart.lineUnitPrice(l), 199 + 3 * 75)
+  menuStore.adjustProductStock(offer.id, 50, 'test', 'seed')
+  const sale = orderStore.createManualCounterOrder({ fulfilment: 'pickup', customer, lines: [l], paymentMethod: 'cash', paymentStatus: 'paid' }, 'Chloe')
+  assert.equal(sale.payment.subtotal, 424)
+  const text = receiptDoc.receiptText(receiptDoc.customerReceiptDoc(sale, { business: shopBiz }), 48)
+  assert.match(text, /1 x Plain Mini Spud Bowl\s+1\.99/)
+  assert.match(text, /\+ Chilli Con Carne\s+0\.75/)
+  assert.match(text, /TOTAL\s+£4\.24/)
+})
+
 await test('kitchen tickets carry no prices; a web delivery receipt says who pays and where it goes', () => {
   const p = firstSpud()
   menuStore.adjustProductStock(p.id, 10, 'test', 'seed')

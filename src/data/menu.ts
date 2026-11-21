@@ -204,7 +204,20 @@ export const MEAL_DEAL = {
 export const ALLERGY_NOTICE =
   'Food images are for illustration only. If you have any food allergies or intolerances, please alert our team before ordering. Common allergens present in kitchen: Dairy, Gluten, Fish, Mustard, Eggs, Celery.'
 
+/**
+ * Counter special offers (the shop's poster): a plain mini spud bowl, and every
+ * extra spud topping on it at one flat price. Items in this category are spuds
+ * in every other way (butter, leave-offs, salad, sauces, kitchen station).
+ */
+export const OFFER_CATEGORY = 'SPUD_OFFERS'
+export const OFFER_TOPPING_PENCE = 75
+export const MINI_SPUD_OFFER_ID = 'spud-mini-offer'
+
+/** Spuds and spud offers share the spud options and the spud station. */
+export const isSpudLike = (category: CategoryId): boolean => category === 'SPUDS' || category === OFFER_CATEGORY
+
 export const CATEGORIES: Category[] = [
+  { id: OFFER_CATEGORY, label: 'Special Offers', blurb: 'Plain mini spud bowl £1.99 — extra toppings 75p each.' },
   { id: 'SPUDS', label: 'Spuds', blurb: 'Fluffy British King Edward jackets, baked and loaded to order.' },
   { id: 'WRAPS', label: 'Toasted Wraps', blurb: 'Crispy toasted tortilla wraps packed with sizzling tikka meats, melted cheese & fresh salad.' },
   { id: 'RICE_BOXES', label: 'Rice Boxes', blurb: 'Fragrant seasoned basmati rice loaded with grilled tikka meats, crisp salad & house sauces.' },
@@ -365,6 +378,21 @@ const spud = (
   ],
   pairedWith: pairedWith.length > 0 ? pairedWith : ['cold-coca-cola', 'hot-latte', 'snack-cheese-onion'],
 })
+
+/** The poster offer: plain mini spud £1.99, any topping 75p. Till only. */
+export const MINI_SPUD_OFFER: Product = {
+  ...spud(
+    MINI_SPUD_OFFER_ID, 'Plain Mini Spud Bowl', 199,
+    'Special offer: a plain mini jacket potato in a bowl. Add any topping for 75p each.',
+    ['butter'], true, true, 'just-a-spud', 250, '5g', '42g', '7g',
+    ['Dairy'], true, ['Special Offer 🏷️', 'Under £5 🏷️'], ['cold-water'],
+  ),
+  category: OFFER_CATEGORY,
+  mealEligible: false,
+  channelVisibility: 'in_store_only',
+  stockQuantity: 200,
+  lowStockThreshold: 10,
+}
 
 export const PRODUCTS: Product[] = [
   spud('spud-just-a', "Just 'A' Spud", 445,
@@ -584,6 +612,9 @@ export const PRODUCTS: Product[] = [
     tags: ['Crunchy Snack 🥨', 'Meal Deal Side'],
     pairedWith: ['cold-coca-cola', 'spud-great-british'],
   })),
+
+  // Counter offer last: the till shows it first through its own "Special Offers" category.
+  MINI_SPUD_OFFER,
 ]
 
 export const SPUDS = PRODUCTS.filter((p) => p.category === 'SPUDS')
@@ -639,6 +670,7 @@ function getStoredDynamicSauces(): Option[] {
 
 export const extrasFor = (p: Product): Option[] => {
   if (p.category === 'SPUDS') return getStoredDynamicExtras()
+  if (p.category === OFFER_CATEGORY) return getStoredDynamicExtras().map((o) => ({ ...o, price: OFFER_TOPPING_PENCE }))
   if (p.category === 'WRAPS') return WRAP_EXTRAS
   if (p.category === 'RICE_BOXES') return RICE_BOX_EXTRAS
   if (p.category === 'BAGUETTES') return BAGUETTE_EXTRAS
@@ -668,6 +700,7 @@ export const optionLabel = (id: string): string => {
 
 export const optionPrice = (id: string, category: CategoryId): number => {
   if (category === 'SPUDS') return getStoredDynamicExtras().find((o) => o.id === id)?.price ?? 0
+  if (category === OFFER_CATEGORY) return getStoredDynamicExtras().some((o) => o.id === id) ? OFFER_TOPPING_PENCE : 0
   if (category === 'WRAPS') return WRAP_EXTRAS.find((o) => o.id === id)?.price ?? 0
   if (category === 'RICE_BOXES') return RICE_BOX_EXTRAS.find((o) => o.id === id)?.price ?? 0
   if (category === 'BAGUETTES') return BAGUETTE_EXTRAS.find((o) => o.id === id)?.price ?? 0

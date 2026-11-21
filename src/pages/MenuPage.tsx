@@ -35,7 +35,8 @@ export default function MenuPage() {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false)
   const [isAllergenModalOpen, setIsAllergenModalOpen] = useState(false)
   const [products, setProducts] = useState<Product[]>(() => getOnlineProducts())
-  const activeCategories = getCategories()
+  // Only categories with something on the website — till-only ones (Special Offers) stay off the menu rail.
+  const activeCategories = getCategories().filter((c) => products.some((p) => p.category === c.id))
 
   useDocumentMeta({
     title: 'Full Menu — Jacket Potatoes, Wraps, Rice Boxes & Paninis',
