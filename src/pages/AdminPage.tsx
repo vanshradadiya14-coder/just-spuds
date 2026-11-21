@@ -3581,7 +3581,7 @@ export default function AdminPage() {
 
       {/* THERMAL POS RECEIPT PREVIEW / PRINT MODAL */}
       {printingOrder && (
-        <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} />
+        <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} staff />
       )}
 
       {isSoundSettingsOpen && (

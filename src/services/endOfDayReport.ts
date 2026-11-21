@@ -108,6 +108,21 @@ export interface EndOfDayReport {
   refunds: RefundEntry[]
   voids: TillVoidRecord[]
   website: { orders: number; total: number }
+  /**
+   * Deliveries paid to a driver at the door during the shift. That money never
+   * passes through the till, so it is reported here on its own (and is not part
+   * of the drawer's expected cash) — the driver hands the cash in at close.
+   * Optional: reports frozen before this was added do not have it.
+   */
+  deliveries?: {
+    orders: number
+    cash: number
+    card: number
+    total: number
+    /** Delivery orders from this shift that are still out (not yet delivered and paid). */
+    stillOut: number
+    stillOutTotal: number
+  }
 }
 
 export interface BuildReportInput {
@@ -409,6 +424,30 @@ export function buildEndOfDayReport(input: BuildReportInput): EndOfDayReport {
       staff: m.staffName,
     }))
 
+  // ------------------------------------------------------------ deliveries
+  const from = shift.openedAt
+  const to = shift.closedAt || now.toISOString()
+  const soldIds = new Set(sold.map((s) => s.order.id))
+  const deliveryOrders = orders.filter((o) => !o.isTest && o.fulfilment === 'delivery' && o.status !== 'cancelled' && !soldIds.has(o.id))
+  const paidToDriver = deliveryOrders.filter((o) => {
+    if (o.payment.status !== 'paid') return false
+    const at = o.payment.paidAt || o.deliveryDetails?.deliveredAt
+    return Boolean(at) && at! >= from && at! <= to
+  })
+  const stillOut = deliveryOrders.filter(
+    (o) => o.payment.status !== 'paid' && o.status !== 'delivered' && o.status !== 'failed_delivery' && o.createdAt >= from && o.createdAt <= to,
+  )
+  const driverCash = paidToDriver.filter((o) => o.payment.method === 'cash').reduce((n, o) => n + o.payment.total, 0)
+  const driverTotal = paidToDriver.reduce((n, o) => n + o.payment.total, 0)
+  const deliveries = {
+    orders: paidToDriver.length,
+    cash: driverCash,
+    card: driverTotal - driverCash,
+    total: driverTotal,
+    stillOut: stillOut.length,
+    stillOutTotal: stillOut.reduce((n, o) => n + o.payment.total, 0),
+  }
+
   const taxList = [...taxRows.values()]
     .map((t) => ({ ...t, share: salesTotal > 0 ? Math.round((t.gross / salesTotal) * 10000) / 100 : 0 }))
     .sort((a, b) => b.rate - a.rate)
@@ -456,5 +495,6 @@ export function buildEndOfDayReport(input: BuildReportInput): EndOfDayReport {
     refunds,
     voids: [...(shift.voids || [])],
     website: { orders: shift.onlineOrdersCount || 0, total: shift.onlineOrdersTotal || 0 },
+    deliveries,
   }
 }

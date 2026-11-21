@@ -73,7 +73,8 @@ import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { gbp } from '../utils/format'
 import { lineExtras, mealText, modifierText, saladsText, saucesText, KITCHEN_STATIONS, stationForLine, type KitchenStation } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
-import { playPOSTouchTone } from '../services/printerBridge'
+import { playPOSTouchTone, restoreDirectPrinter } from '../services/printerBridge'
+import { printKitchenTicket, printOrderReceipt } from '../services/receiptPrinter'
 import TillSettingsModal from '../components/TillSettingsModal'
 import {
   dismissOrderAlert,
@@ -88,7 +89,6 @@ import { computeVat, isVatRegistered } from '../services/vat'
 import { broadcastCFDState, resetCFDState } from '../services/cfdBus'
 import { getHeldTickets, holdTicket, subscribeHeldTickets, takeHeldTicket, type HeldTicket } from '../services/heldTickets'
 import { buildEndOfDayReport, type EndOfDayReport } from '../services/endOfDayReport'
-import ThermalReceipt from '../components/ThermalReceipt'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
 import TerminalSoftwareEnrollmentModal from '../components/pos/TerminalSoftwareEnrollmentModal'
@@ -216,9 +216,8 @@ export default function StaffPOSPage() {
   const [hasManuallyEditedFloat, setHasManuallyEditedFloat] = useState(false)
 
   // Receipts & sale-complete
-  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null)
   const [lastOrder, setLastOrder] = useState<Order | null>(() => getLastCompletedTillOrder())
-  const [saleComplete, setSaleComplete] = useState<{ order: Order; changeDuePence: number; tenderLabel: string } | null>(null)
+  const [saleComplete, setSaleComplete] = useState<{ order: Order; changeDuePence: number; tenderLabel: string; cashTendered?: number; printStatus?: string } | null>(null)
 
   // Online order alerts & Unified KDS
   const [activeAlerts, setActiveAlerts] = useState<OnlineOrderAlert[]>([])
@@ -254,6 +253,11 @@ export default function StaffPOSPage() {
   const actor = user?.name || 'Staff Cashier'
   const tillName = tillSettings.tillName || 'Till 1'
 
+  // Reconnect this till's receipt printer (USB / serial) without asking.
+  useEffect(() => {
+    void restoreDirectPrinter()
+  }, [])
+
   // Subscriptions
   useEffect(() => {
     const unsubAuth = subscribeAuth((u) => setUser(u))
@@ -266,7 +270,7 @@ export default function StaffPOSPage() {
       a.forEach((alert) => seenAlertIds.current.add(alert.orderId))
       if (fresh && getTillSettings().autoPrintOnline) {
         const order = getOrderById(fresh.orderId)
-        if (order) setReceiptOrder(order)
+        if (order) void printKitchenTicket(order)
       }
       if (fresh) {
         setIsOnlineOrdersModalOpen(true)
@@ -425,9 +429,7 @@ export default function StaffPOSPage() {
     playPOSTouchTone('action')
     const accepted = updateOrderStatus(order.id, 'accepted')
     dismissOrderAlert(order.id)
-    if (print && (accepted || order)) {
-      setReceiptOrder(accepted || order)
-    }
+    if (print) void printKitchenTicket(accepted || order)
     setFlash(`Order #${order.shortId || order.id.slice(-4)} accepted! Sent to Kitchen Flow.`)
   }
 
@@ -896,7 +898,8 @@ export default function StaffPOSPage() {
       },
       actor,
     )
-    if (tillSettings.autoPrintTillReceipt) setReceiptOrder(sent)
+    // The kitchen ticket (no prices, order number large) — payment comes later.
+    if (tillSettings.autoPrintTillReceipt) void printKitchenTicket(sent)
     resetTicket()
     setFlash(`Sent #${sent.shortId} to the kitchen — take payment from Orders › Open`)
   }
@@ -909,16 +912,30 @@ export default function StaffPOSPage() {
   }
 
   /** Common tail for every completed sale: last-order memory, CFD, receipt, and the sale-complete screen. */
-  const finishSale = (order: Order, changeDue: number, tenderLabel: string) => {
+  const finishSale = (order: Order, changeDue: number, tenderLabel: string, cashTendered?: number) => {
     setLastCompletedTillOrder(order)
     setLastOrder(order)
     broadcastCFDState({ status: 'paid', completedOrderShortId: order.shortId, changeDuePence: changeDue, tenderMethod: tenderLabel })
+    let printStatus: string | undefined
     if (tillSettings.autoPrintTillReceipt) {
+      // Straight to the printer — no preview, no extra click (EPOS behaviour).
       recordReceiptDelivery(order.id, 'print', undefined, actor)
-      setReceiptOrder(order)
+      printStatus = 'Receipt printing…'
+      void printOrderReceipt(order, { cashTendered, changeDue }).then((res) =>
+        setSaleComplete((s) => (s && s.order.id === order.id ? { ...s, printStatus: res.message } : s)),
+      )
     }
     resetTicket()
-    setSaleComplete({ order, changeDuePence: changeDue, tenderLabel })
+    setSaleComplete({ order, changeDuePence: changeDue, tenderLabel, cashTendered, printStatus })
+  }
+
+  /** Reprints: straight to the printer as well. */
+  const reprintReceipt = (order: Order) => {
+    recordReceiptDelivery(order.id, 'print', undefined, actor)
+    void printOrderReceipt(order).then((res) => setFlash(res.message))
+  }
+  const reprintKitchenTicket = (order: Order) => {
+    void printKitchenTicket(order).then((res) => setFlash(res.message))
   }
 
   const completePayment = (tenders: Tender[], changeDue: number) => {
@@ -974,7 +991,8 @@ export default function StaffPOSPage() {
 
     const label =
       tenders.length === 0 ? '🎁 No charge' : single ? (tenders[0].method === 'cash' ? '💵 Cash' : '💳 Card') : `🔀 ${[cash && 'Cash', card && 'Card', other && 'Link'].filter(Boolean).join(' + ')}`
-    finishSale(order, changeDue, label)
+    const cashHandedOver = tenders.filter((t) => t.method === 'cash').reduce((n, t) => n + (t.tendered ?? t.amount), 0)
+    finishSale(order, changeDue, label, cashHandedOver > 0 ? cashHandedOver : undefined)
   }
 
   /** Split by item: the ticked lines stay on this bill, the rest becomes a held ticket. */
@@ -1030,7 +1048,7 @@ export default function StaffPOSPage() {
         setOrdersTab('complete')
         break
       case 'reprint':
-        if (lastOrder) setReceiptOrder(lastOrder)
+        if (lastOrder) reprintReceipt(lastOrder)
         break
       case 'timeclock':
         setIsTimeclockOpen(true)
@@ -1054,7 +1072,7 @@ export default function StaffPOSPage() {
   const printBill = () => {
     if (cartLines.length === 0) return
     const now = new Date().toISOString()
-    setReceiptOrder({
+    const bill: Order = {
       id: settlingOrder?.id || 'bill-preview',
       shortId: settlingOrder?.shortId || 'BILL',
       source: orderType === 'phone' ? 'PHONE' : 'TILL',
@@ -1067,7 +1085,9 @@ export default function StaffPOSPage() {
       estimatedDeliveryTime: '',
       etaMinutes: 0,
       timeline: [],
-    })
+      kitchenNotes: orderNotes(),
+    }
+    void printOrderReceipt(bill, { kind: 'bill' }).then((res) => setFlash(res.message))
   }
 
   // ------------------------------------------------------------ menu view
@@ -1657,7 +1677,7 @@ export default function StaffPOSPage() {
           </button>
         </div>
         {lastOrder && !paying && (
-          <button type="button" onClick={() => setReceiptOrder(lastOrder)} className="w-full pt-0.5 text-center text-[11px] font-bold text-amber-300/90 hover:underline">
+          <button type="button" onClick={() => reprintReceipt(lastOrder)} className="w-full pt-0.5 text-center text-[11px] font-bold text-amber-300/90 hover:underline">
             🖨️ Reprint last receipt (#{lastOrder.shortId})
           </button>
         )}
@@ -2003,7 +2023,7 @@ export default function StaffPOSPage() {
                         ord={ord}
                         handleStatusChange={handleKitchenStatusChange}
                         handleOpenRejectModal={handleOpenRejectModal}
-                        setPrintingOrder={setReceiptOrder}
+                        setPrintingOrder={reprintKitchenTicket}
                         sendOrderToDrivers={sendOrderToDrivers}
                         stationFilter={kdsStationFilter}
                       />
@@ -2032,7 +2052,7 @@ export default function StaffPOSPage() {
                         ord={ord}
                         handleStatusChange={handleKitchenStatusChange}
                         handleOpenRejectModal={handleOpenRejectModal}
-                        setPrintingOrder={setReceiptOrder}
+                        setPrintingOrder={reprintKitchenTicket}
                         sendOrderToDrivers={sendOrderToDrivers}
                         stationFilter={kdsStationFilter}
                       />
@@ -2061,7 +2081,7 @@ export default function StaffPOSPage() {
                         ord={ord}
                         handleStatusChange={handleKitchenStatusChange}
                         handleOpenRejectModal={handleOpenRejectModal}
-                        setPrintingOrder={setReceiptOrder}
+                        setPrintingOrder={reprintKitchenTicket}
                         sendOrderToDrivers={sendOrderToDrivers}
                         stationFilter={kdsStationFilter}
                       />
@@ -2090,7 +2110,7 @@ export default function StaffPOSPage() {
                         ord={ord}
                         handleStatusChange={handleKitchenStatusChange}
                         handleOpenRejectModal={handleOpenRejectModal}
-                        setPrintingOrder={setReceiptOrder}
+                        setPrintingOrder={reprintKitchenTicket}
                         sendOrderToDrivers={sendOrderToDrivers}
                         stationFilter={kdsStationFilter}
                       />
@@ -2345,7 +2365,7 @@ export default function StaffPOSPage() {
           onClose={() => setOrdersTab(null)}
           onRecallHeld={handleRecallHeld}
           onSettle={handleSettleOpenCheck}
-          onReprint={(o) => setReceiptOrder(o)}
+          onReprint={reprintReceipt}
           requireManagerAuth={requireManagerAuth}
           onFlash={setFlash}
         />
@@ -2451,8 +2471,8 @@ export default function StaffPOSPage() {
           changeDuePence={saleComplete.changeDuePence}
           tenderLabel={saleComplete.tenderLabel}
           actor={actor}
-          autoPrinted={tillSettings.autoPrintTillReceipt}
-          onPrint={(o) => setReceiptOrder(o)}
+          printStatus={saleComplete.printStatus}
+          onPrint={(o) => printOrderReceipt(o, { cashTendered: saleComplete.cashTendered, changeDue: saleComplete.changeDuePence })}
           onNewSale={() => {
             setSaleComplete(null)
             if (tillSettings.lockAfterSale) {
@@ -2619,7 +2639,6 @@ export default function StaffPOSPage() {
         />
       )}
 
-      {receiptOrder && <ThermalReceipt order={receiptOrder} onClose={() => setReceiptOrder(null)} />}
 
       {isFastSearchOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto pt-16 px-4 bg-black/85 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Find an item" onKeyDown={(e) => e.key === 'Escape' && setIsFastSearchOpen(false)}>

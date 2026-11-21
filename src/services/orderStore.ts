@@ -778,6 +778,9 @@ export function updateOrderStatus(orderId: string, nextStatus: OrderStatus): Ord
         payment: {
           ...ord.payment,
           status: 'paid' as const,
+          // When the money changed hands (driver at the door) — the till's
+          // end-of-day report finds the shift's delivery takings by this.
+          paidAt: ord.payment.status === 'paid' ? ord.payment.paidAt : ord.payment.paidAt || new Date().toISOString(),
         },
       }),
     }
@@ -2282,6 +2285,8 @@ export function completeDriverDeliveryWithPin(
     payment: {
       ...order.payment,
       status: 'paid',
+      paidAt: order.payment.status === 'paid' ? order.payment.paidAt : new Date().toISOString(),
+      paidNote: order.payment.status === 'paid' ? order.payment.paidNote : `Paid to ${order.deliveryDetails?.assignedDriverName || order.driver?.name || 'the driver'} on delivery`,
     },
     deliveryDetails: {
       ...order.deliveryDetails,

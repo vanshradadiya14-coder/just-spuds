@@ -39,9 +39,9 @@ let activeSerialPort: any = null
 
 let printerStatus: PrinterDeviceStatus = {
   connected: false,
-  name: 'Standard Windows/OS Thermal Driver',
+  name: 'Windows printer',
   type: 'browser',
-  lastStatusText: 'Ready (Browser Print)',
+  lastStatusText: 'Prints through the browser',
 }
 
 const statusListeners = new Set<(status: PrinterDeviceStatus) => void>()
@@ -207,95 +207,217 @@ export function playPOSTouchTone(type: 'tap' | 'numpad' | 'comp' | 'action' = 't
 export async function kickCashDrawer(): Promise<{ success: boolean; message: string }> {
   playCashRegisterChime()
 
-  // 1. If connected via WebUSB, write the raw ESC/POS pulse directly
-  if (activeUSBDevice && activeUSBDevice.opened) {
+  if (isDirectPrinterReady()) {
     try {
-      await writeRawToUSB(ESC_POS.DRAWER_KICK_PIN2)
-      return { success: true, message: 'Cash drawer opened via WebUSB printer pulse.' }
-    } catch (e: any) {
-      console.warn('WebUSB kick failed, falling back:', e)
+      await writeToPrinter(ESC_POS.DRAWER_KICK_PIN2)
+      return { success: true, message: 'Cash drawer opened.' }
+    } catch (e) {
+      console.warn('Drawer kick failed:', e)
     }
   }
-
-  // 2. If connected via WebSerial
-  if (activeSerialPort && activeSerialPort.writable) {
-    try {
-      const writer = activeSerialPort.writable.getWriter()
-      await writer.write(ESC_POS.DRAWER_KICK_PIN2)
-      writer.releaseLock()
-      return { success: true, message: 'Cash drawer opened via Serial port pulse.' }
-    } catch (e: any) {
-      console.warn('WebSerial kick failed:', e)
-    }
-  }
-
-  // 3. Browser / Windows Driver fallback
-  return {
-    success: true,
-    message: 'Cash drawer kick signal sent (simulated chime + driver kick pulse triggered).',
-  }
+  // Windows-printer route: most drivers have "open drawer before printing" in
+  // their own settings — the drawer opens with the receipt.
+  return { success: true, message: 'Drawer opens with the receipt (printer driver setting).' }
 }
+
+/* ----------------------------------------------- direct printer (no dialog) -- */
 
 /**
- * Connect to USB Thermal Printer via WebUSB API (Chrome / Edge / Opera)
+ * How this device prints. Saved per device (each till has its own printer),
+ * never synced.
+ *   browser — the Windows / Android printer through the browser's print
+ *             (silent when the till is started with --kiosk-printing)
+ *   usb     — straight to a USB receipt printer (WebUSB)
+ *   serial  — straight to a serial / Bluetooth / virtual-COM receipt printer (Web Serial)
  */
-export async function connectWebUSBPrinter(): Promise<boolean> {
-  if (typeof navigator === 'undefined' || !('usb' in navigator)) {
-    printerStatus = {
-      connected: false,
-      name: 'Standard OS Thermal Driver',
-      type: 'browser',
-      lastStatusText: 'WebUSB not supported in this browser. Using standard print driver.',
-    }
-    notifyStatus()
-    return false
-  }
+export type PrintMode = 'browser' | 'usb' | 'serial'
 
+export interface PrinterPrefs {
+  mode: PrintMode
+  /** Characters per line: 48 on most 80 mm printers, 42 on some, 32 on 58 mm. */
+  cols: 48 | 42 | 32
+  baud: number
+  copies: 1 | 2
+}
+
+const PREFS_KEY = 'just_spuds_printer_v1'
+const DEFAULT_PREFS: PrinterPrefs = { mode: 'browser', cols: 48, baud: 9600, copies: 1 }
+
+export function getPrinterPrefs(): PrinterPrefs {
   try {
-    const device = await (navigator as any).usb.requestDevice({
-      filters: [],
-    })
-
-    if (!device) return false
-
-    await device.open()
-    await device.selectConfiguration(1)
-    await device.claimInterface(0)
-
-    activeUSBDevice = device
-    printerStatus = {
-      connected: true,
-      name: device.productName || 'USB Thermal Printer',
-      type: 'webusb',
-      lastStatusText: `Connected to ${device.productName || 'USB POS Printer'}`,
-    }
-    notifyStatus()
-    return true
-  } catch (err: any) {
-    console.warn('User cancelled or USB connection error:', err)
-    printerStatus.lastStatusText = err.message || 'USB Connection cancelled'
-    notifyStatus()
-    return false
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(PREFS_KEY) : null
+    return raw ? { ...DEFAULT_PREFS, ...JSON.parse(raw) } : { ...DEFAULT_PREFS }
+  } catch {
+    return { ...DEFAULT_PREFS }
   }
 }
 
-async function writeRawToUSB(data: Uint8Array): Promise<void> {
-  if (!activeUSBDevice || !activeUSBDevice.opened) return
+export function setPrinterPrefs(patch: Partial<PrinterPrefs>): PrinterPrefs {
+  const next = { ...getPrinterPrefs(), ...patch }
   try {
-    await activeUSBDevice.transferOut(1, data)
+    localStorage.setItem(PREFS_KEY, JSON.stringify(next))
+  } catch {
+    // private mode: lasts for this visit
+  }
+  notifyStatus()
+  return next
+}
+
+/** Paper width in mm for the browser route, from the characters-per-line choice. */
+export const paperWidthMm = (cols: number) => (cols <= 32 ? 48 : 72)
+
+let usbOutEndpoint = 1
+
+export function isDirectPrinterReady(): boolean {
+  return Boolean((activeUSBDevice && activeUSBDevice.opened) || (activeSerialPort && activeSerialPort.writable))
+}
+
+function setStatus(next: Partial<PrinterDeviceStatus>) {
+  printerStatus = { ...printerStatus, ...next }
+  notifyStatus()
+}
+
+/** Opens a USB printer: finds its printer interface and the bulk OUT endpoint instead of assuming interface 0 / endpoint 1. */
+async function openUsb(device: any): Promise<void> {
+  if (!device.opened) await device.open()
+  if (device.configuration === null) await device.selectConfiguration(1)
+  const interfaces: any[] = device.configuration?.interfaces || []
+  const pick =
+    interfaces.find((i) => i.alternate?.interfaceClass === 7) || // 7 = printer class
+    interfaces.find((i) => (i.alternate?.endpoints || []).some((e: any) => e.direction === 'out' && e.type === 'bulk'))
+  if (!pick) throw new Error('This USB device has no printer output.')
+  const out = (pick.alternate.endpoints || []).find((e: any) => e.direction === 'out' && e.type === 'bulk')
+  if (!out) throw new Error('This USB device has no printer output.')
+  try {
+    await device.claimInterface(pick.interfaceNumber)
   } catch (err) {
-    console.error('Failed to write raw data to USB printer:', err)
-    throw err
+    console.warn('USB claim failed:', err)
+    throw new Error(
+      'Windows is using this printer with its own driver, so the browser cannot reach it. Use "Windows printer" with silent printing instead (recommended), or swap the driver to WinUSB with Zadig.',
+    )
+  }
+  usbOutEndpoint = out.endpointNumber
+  activeUSBDevice = device
+  activeSerialPort = null
+  setStatus({ connected: true, type: 'webusb', name: device.productName || 'USB receipt printer', lastStatusText: 'Ready — prints with no dialog' })
+}
+
+/** Asks for a USB printer (once — the browser remembers the choice). */
+export async function connectUsbPrinter(): Promise<{ ok: boolean; message: string }> {
+  const usb = typeof navigator !== 'undefined' ? (navigator as any).usb : undefined
+  if (!usb) return { ok: false, message: 'This browser cannot talk to USB printers. Use Chrome or Edge, or the Windows printer.' }
+  try {
+    const device = await usb.requestDevice({ filters: [] })
+    await openUsb(device)
+    setPrinterPrefs({ mode: 'usb' })
+    return { ok: true, message: `Connected to ${printerStatus.name}.` }
+  } catch (err: any) {
+    const message = err?.name === 'NotFoundError' ? 'No printer chosen.' : err?.message || 'Could not connect to the printer.'
+    setStatus({ connected: false, lastStatusText: message })
+    return { ok: false, message }
   }
 }
 
-/**
- * Trigger Instant Receipt Print
- * Works with any 80mm/58mm thermal receipt printer via standard browser print dialog
- * In Chrome/Edge Kiosk Mode (`--kiosk --kiosk-printing`), this prints silently with 0 clicks!
- */
-export function triggerBrowserPrint(): void {
-  if (typeof window !== 'undefined') {
-    window.print()
+/** Kept for older callers. */
+export async function connectWebUSBPrinter(): Promise<boolean> {
+  return (await connectUsbPrinter()).ok
+}
+
+/** Asks for a serial / Bluetooth / virtual-COM printer. */
+export async function connectSerialPrinter(baud = getPrinterPrefs().baud): Promise<{ ok: boolean; message: string }> {
+  const serial = typeof navigator !== 'undefined' ? (navigator as any).serial : undefined
+  if (!serial) return { ok: false, message: 'This browser cannot talk to serial printers. Use Chrome or Edge.' }
+  try {
+    const port = await serial.requestPort()
+    await openSerial(port, baud)
+    setPrinterPrefs({ mode: 'serial', baud })
+    return { ok: true, message: 'Connected to the serial printer.' }
+  } catch (err: any) {
+    const message = err?.name === 'NotFoundError' ? 'No port chosen.' : err?.message || 'Could not open the port.'
+    setStatus({ connected: false, lastStatusText: message })
+    return { ok: false, message }
   }
 }
+
+async function openSerial(port: any, baud: number) {
+  if (!port.writable) await port.open({ baudRate: baud })
+  activeSerialPort = port
+  activeUSBDevice = null
+  setStatus({ connected: true, type: 'webserial', name: 'Serial receipt printer', lastStatusText: `Ready at ${baud} baud — prints with no dialog` })
+}
+
+/** Back to the Windows printer. */
+export async function disconnectDirectPrinter(): Promise<void> {
+  try {
+    if (activeUSBDevice?.opened) await activeUSBDevice.close()
+    if (activeSerialPort?.writable) await activeSerialPort.close()
+  } catch {
+    // already gone
+  }
+  activeUSBDevice = null
+  activeSerialPort = null
+  setPrinterPrefs({ mode: 'browser' })
+  setStatus({ connected: false, type: 'browser', name: 'Windows printer', lastStatusText: 'Prints through the browser' })
+}
+
+let restoring: Promise<void> | null = null
+
+/**
+ * Reconnects the printer this device used last, without asking — the browser
+ * remembers the permission. Called when a till screen opens.
+ */
+export function restoreDirectPrinter(): Promise<void> {
+  if (restoring) return restoring
+  restoring = (async () => {
+    const prefs = getPrinterPrefs()
+    try {
+      if (prefs.mode === 'usb' && (navigator as any).usb) {
+        const usb = (navigator as any).usb
+        const [device] = await usb.getDevices()
+        if (device) await openUsb(device)
+        else setStatus({ connected: false, type: 'webusb', name: 'USB receipt printer', lastStatusText: 'Not found — is it switched on and plugged in?' })
+        // Printer switched off and on again, or the cable re-plugged: pick it back up.
+        usb.addEventListener?.('connect', (e: any) => void openUsb(e.device).catch(() => {}))
+        usb.addEventListener?.('disconnect', (e: any) => {
+          if (e.device === activeUSBDevice) {
+            activeUSBDevice = null
+            setStatus({ connected: false, lastStatusText: 'Printer disconnected' })
+          }
+        })
+      } else if (prefs.mode === 'serial' && (navigator as any).serial) {
+        const [port] = await (navigator as any).serial.getPorts()
+        if (port) await openSerial(port, prefs.baud)
+        else setStatus({ connected: false, type: 'webserial', name: 'Serial receipt printer', lastStatusText: 'Not found — reconnect it in Till settings' })
+      } else {
+        setStatus({ connected: false, type: 'browser', name: 'Windows printer', lastStatusText: 'Prints through the browser' })
+      }
+    } catch (err: any) {
+      setStatus({ connected: false, lastStatusText: err?.message || 'Printer not available' })
+    }
+  })().finally(() => {
+    restoring = null
+  })
+  return restoring
+}
+
+/** Sends raw bytes to the connected receipt printer. */
+export async function writeToPrinter(data: Uint8Array): Promise<void> {
+  if (activeUSBDevice && activeUSBDevice.opened) {
+    // Small chunks: some printers drop part of a large single transfer.
+    for (let i = 0; i < data.length; i += 4096) {
+      await activeUSBDevice.transferOut(usbOutEndpoint, data.slice(i, i + 4096))
+    }
+    return
+  }
+  if (activeSerialPort && activeSerialPort.writable) {
+    const writer = activeSerialPort.writable.getWriter()
+    try {
+      await writer.write(data)
+    } finally {
+      writer.releaseLock()
+    }
+    return
+  }
+  throw new Error('No receipt printer connected.')
+}
+

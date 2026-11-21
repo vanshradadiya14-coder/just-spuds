@@ -95,6 +95,33 @@ voiding a sent item) prompt for a supervisor-or-above PIN. Till settings (auto
 receipt, drawer kick, siren, tap sounds, blind cash count, tip prompt, default
 float, USB printer) live behind ⚙️ on the till and sync to every open till tab.
 
+### Receipt printer
+
+The till prints the moment a sale is paid — no preview to click through.
+"Order" (pay later) and new web orders print the kitchen ticket instead (no
+prices, order number large). Every slip comes from one layout
+(`src/services/receiptDoc.ts`): shop → order type & number → date, till,
+server → items with options → totals → cash & change → VAT → customer
+details (web / phone only) → thank you. It is drawn 72 mm wide (the printable
+part of an 80 mm roll; 48 mm for 58 mm), which is why older receipts were cut
+off or shrunk. Close till prints a compact Z-read; the full report stays on
+screen.
+
+Set up per till in ⚙️ › Receipt printer (saved on that device only):
+
+- **Windows printer (recommended).** Make the receipt printer the Windows
+  default printer, then start the till from the shortcut shown there
+  (`msedge.exe --kiosk-printing --app=https://pos.justspuds.uk`). With that
+  flag the browser prints straight to the default printer with no "choose a
+  printer" box. Turn on "open cash drawer" in the printer's own printing
+  preferences.
+- **USB direct / Serial–Bluetooth.** Chrome or Edge talk to the printer
+  themselves (ESC/POS): instant, auto-cut, drawer kick, reconnects by itself.
+  On Windows a USB printer with its normal driver installed can't be reached
+  this way — use the Windows printer route, or swap the driver to WinUSB.
+- **Test print** prints a ruler line: if it wraps or is cut off, pick the
+  smaller paper setting.
+
 **PIN policy.** Staff sign in by PIN only — there is no email/password staff
 login, no on-screen PIN hints and no tap-to-sign-in profiles. Changing
 someone's PIN (or disabling them) signs them out on every device. The till
@@ -265,7 +292,7 @@ Three views, each answering a different question:
 
 | Where | What it covers |
 |-------|----------------|
-| **Till › Close till** (and its printed Z-report) | One shift on one till: what that drawer took, by tender, product, category, hour and cashier. Website orders placed during the shift are listed, but only count as takings once they are paid on the till. |
+| **Till › Close till** (and its printed Z-report) | One shift on one till: what that drawer took, by tender, product, category, hour and cashier. Website pick-ups count as takings once they are paid on the till. Deliveries paid to a driver at the door during the shift are shown on their own (cash with drivers / card on the driver's machine, plus any still out) — that money never passed through the drawer, so it is not in the expected cash; the close checklist reminds you to collect it. |
 | **Admin › Z-Report** (header button) | **One trading day across the whole shop** — website, till, phone and counter together, with "where the orders came from", tenders and VAT. Takings follow what was *paid for*: a counter sale is paid and handed over at once and is never marked "collected". Orders placed today and not paid for yet (a website pick-up waiting to be settled) are listed separately as *still to be paid for*. |
 | **Admin › Reports & Sales** | Any period (today / yesterday / 7 / 30 days): revenue by channel, tender reconciliation, product profitability, CSV export. **Admin › Reports › Till Shifts** keeps every closed shift and reprints its Z-report. |
 

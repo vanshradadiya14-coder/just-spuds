@@ -41,6 +41,8 @@ import { sellPrice, type Product } from '../data/menu'
 import TicketCard from './staff/TicketCard'
 import AllDayBar from './staff/AllDayBar'
 import ThermalReceipt from '../components/ThermalReceipt'
+import { printKitchenTicket } from '../services/receiptPrinter'
+import { restoreDirectPrinter } from '../services/printerBridge'
 import ManualOrderFixModal from '../components/ManualOrderFixModal'
 import CreateManualOrderModal from '../components/CreateManualOrderModal'
 import NewOrderAlertModal from '../components/staff/NewOrderAlertModal'
@@ -138,6 +140,7 @@ export default function StaffKDSPage() {
     const unsubTill = subscribeTillSettings(setTillSettings)
     const unsubStock = subscribeStock(setStockOverrides)
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
+    void restoreDirectPrinter()
     return () => {
       unsubAuth()
       unsubOrders()
@@ -164,7 +167,8 @@ export default function StaffKDSPage() {
   const handleAcceptAlert = (order: Order, print: boolean) => {
     const accepted = updateOrderStatus(order.id, 'accepted')
     dismissOrderAlert(order.id)
-    if (print && accepted) setPrintingOrder(accepted)
+    // Straight to the printer — the ticket, not a preview to click through.
+    if (print && accepted) void printKitchenTicket(accepted)
   }
 
   const handleSilenceAlert = (orderId: string) => dismissOrderAlert(orderId)
@@ -873,7 +877,7 @@ export default function StaffKDSPage() {
 
       {/* THERMAL POS RECEIPT PREVIEW / PRINT MODAL */}
       {printingOrder && (
-        <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} />
+        <ThermalReceipt order={printingOrder} onClose={() => setPrintingOrder(null)} isModal={true} kind="kitchen" staff />
       )}
 
       {/* REJECT & AUTOMATIC REFUND MODAL */}

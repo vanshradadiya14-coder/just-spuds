@@ -322,12 +322,18 @@ input, select, textarea { min-width: 0; }
   body.printing-slip .print-slip-root:not(.print-active) {
     display: none !important;
   }
+  /* The printable width, not the roll: an 80 mm printer prints about 72 mm, so
+     an 80 mm-wide slip lost its right edge or was shrunk to fit. */
   body.printing-slip .print-slip-root.print-active {
     display: block !important;
     visibility: visible !important;
-    width: 80mm;
+    position: static !important;
+    width: var(--slip-w, 72mm);
     margin: 0;
     padding: 0;
+  }
+  body.printing-slip .print-slip-root.print-active .receipt-paper {
+    width: 100% !important;
   }
   body.printing-slip .print-slip-root.print-active * {
     visibility: visible !important;
@@ -346,29 +352,29 @@ input, select, textarea { min-width: 0; }
   }
 }
 @media print {
-  body * {
+  /* No browser margins: also removes the date / URL headers and footers. */
+  @page {
+    margin: 0;
+  }
+  /* Admin's Z-report pop-up (AdminZReportModal) still prints itself. */
+  body:not(.printing-slip) * {
     visibility: hidden;
   }
-  .thermal-receipt, .thermal-receipt *,
-  .z-report, .z-report * {
+  body:not(.printing-slip) .z-report,
+  body:not(.printing-slip) .z-report * {
     visibility: visible;
   }
-  .thermal-receipt,
-  .z-report {
+  body:not(.printing-slip) .z-report {
     position: absolute;
     left: 0;
     top: 0;
-    width: 80mm !important;
-    max-width: 80mm !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
     margin: 0 !important;
-    padding: 2mm !important;
+    padding: 1mm !important;
     border: none !important;
     box-shadow: none !important;
     background: white !important;
     color: black !important;
-  }
-  @page {
-    size: 80mm auto;
-    margin: 0;
   }
 }

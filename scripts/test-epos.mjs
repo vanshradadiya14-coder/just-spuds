@@ -1767,6 +1767,103 @@ await test('the till can close without counting the drawer, and the report says 
   assert.equal(counted.discrepancy, 0)
 })
 
+section('🧾 Receipts and the printer')
+
+const receiptDoc = await load('/src/services/receiptDoc.ts')
+const shopBiz = { name: 'Just Spuds', addressLines: ['Shop B, Brook House', 'Market Square', 'Aylesbury HP20 1SN'], phone: '01296 000111' }
+
+await test('the till receipt is laid out EPOS-style, fits the paper and adds up', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  const cheese = { ...line(p, 2), extras: ['cheese', 'beans'], meal: true, mealDrink: 'cold-coca-cola', notes: 'Well done please' }
+  const sale = orderStore.createManualCounterOrder(
+    { fulfilment: 'pickup', customer, lines: [cheese], paymentMethod: 'cash', paymentStatus: 'paid', notes: '[TILL: Till 1] TAKEAWAY • Cashier: Chloe Smith' },
+    'Chloe Smith',
+  )
+  const blocks = receiptDoc.customerReceiptDoc(sale, { business: shopBiz, cashTendered: 5000, changeDue: 5000 - sale.payment.total })
+  const text = receiptDoc.receiptText(blocks, 48)
+  for (const l of text.split('\n')) assert.ok(l.length <= 48, `line wider than 48 columns: "${l}"`)
+  const order = ['JUST SPUDS', 'TAKEAWAY #', 'Served by Chloe', `2 x ${p.name}`, 'Subtotal', 'TOTAL', 'Cash', 'Change', 'Thank you']
+  let at = -1
+  for (const piece of order) {
+    const i = text.indexOf(piece, at + 1)
+    assert.ok(i > at, `"${piece}" is missing or out of order:\n${text}`)
+    at = i
+  }
+  assert.match(text, /Change\s+\d+\.\d\d/)
+  assert.ok(!text.includes(customer.phone), 'a walk-in sale prints no customer block')
+
+  // The amounts in the item column add up to the subtotal.
+  const rules = blocks.map((b, i) => (b.t === 'rule' ? i : -1)).filter((i) => i >= 0)
+  const summed = blocks
+    .slice(rules[1] + 1, rules[2])
+    .filter((b) => b.t === 'row' && /^\d+\.\d\d$/.test(b.right))
+    .reduce((n, b) => n + Math.round(parseFloat(b.right) * 100), 0)
+  assert.equal(summed, sale.payment.subtotal, 'item lines add up to the subtotal')
+
+  const narrow = receiptDoc.receiptText(blocks, 32)
+  for (const l of narrow.split('\n')) assert.ok(l.length <= 32, `58 mm line too wide: "${l}"`)
+
+  const bytes = receiptDoc.receiptEscPos(blocks, 48)
+  assert.deepEqual([...bytes.slice(0, 2)], [0x1b, 0x40], 'starts by resetting the printer')
+  assert.deepEqual([...bytes.slice(-4)], [0x1d, 0x56, 0x42, 0x00], 'ends with a paper cut')
+  assert.ok(bytes.includes(0x9c), '£ is sent in the printer’s own code page')
+  assert.ok(![...bytes].some((b) => b > 0x7f && b !== 0x9c), 'no stray non-ASCII bytes (emoji used to print as junk)')
+})
+
+await test('kitchen tickets carry no prices; a web delivery receipt says who pays and where it goes', () => {
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 10, 'test', 'seed')
+  const web = orderStore.createNewOrder({
+    ...webPayload(p, 1, { fulfilment: 'delivery', paymentMethod: 'cash', deliveryFee: 400, total: p.price + 449 }),
+    customer: { ...customer, streetAddress: '12 Bourbon Street', postcode: 'HP20 2RS' },
+  })
+  const ticket = receiptDoc.receiptText(receiptDoc.kitchenTicketDoc(web), 48)
+  assert.match(ticket, /DELIVERY\s+#/)
+  assert.ok(!/\d+\.\d\d/.test(ticket), `no prices on the kitchen ticket:\n${ticket}`)
+  assert.match(ticket, /HP20 2RS/)
+
+  const receipt = receiptDoc.receiptText(receiptDoc.customerReceiptDoc(web, { business: shopBiz }), 48)
+  assert.match(receipt, /PAY THE DRIVER/)
+  assert.match(receipt, /Delivery\s+4\.00/)
+  assert.match(receipt, /12 Bourbon Street/)
+  assert.match(receipt, /TO PAY\s+£\d/)
+})
+
+await test('deliveries paid to the driver show on the end-of-day report, outside the drawer', async () => {
+  while (tillStore.getCurrentShift()) tillStore.closeTillShift('Cleanup', null)
+  tillStore.openTillShift('Chloe', 10000)
+  const eodMod = await load('/src/services/endOfDayReport.ts')
+  const p = firstSpud()
+  menuStore.adjustProductStock(p.id, 20, 'test', 'seed')
+  const delivery = (method) =>
+    orderStore.createNewOrder({
+      ...webPayload(p, 1, { fulfilment: 'delivery', paymentMethod: method, deliveryFee: 400, total: p.price + 449 }),
+      customer: { ...customer, streetAddress: '1 Test Road', postcode: 'HP20 2RS' },
+    })
+  const cashOne = delivery('cash')
+  const cardOne = delivery('driver_device')
+  const stillOut = delivery('cash')
+  const done = orderStore.updateOrderStatus(cashOne.id, 'delivered')
+  assert.equal(done.payment.status, 'paid')
+  assert.ok(done.payment.paidAt, 'the time the driver was paid is recorded')
+  orderStore.updateOrderStatus(cardOne.id, 'delivered')
+
+  const shift = tillStore.getCurrentShift()
+  const r = eodMod.buildEndOfDayReport({ shift, orders: orderStore.getStoredOrders(), products: menuStore.getProducts(), vatRegistered: false })
+  assert.equal(r.deliveries.orders, 2)
+  assert.equal(r.deliveries.cash, cashOne.payment.total)
+  assert.equal(r.deliveries.card, cardOne.payment.total)
+  assert.equal(r.deliveries.stillOut, 1)
+  assert.equal(r.deliveries.stillOutTotal, stillOut.payment.total)
+  assert.equal(r.drawer.expected, 10000, 'driver cash is not counted as in the drawer')
+  assert.equal(r.takings.taken, 0, 'nor as till takings')
+  const paper = receiptDoc.receiptText(receiptDoc.endOfDayDoc(r, shopBiz), 48)
+  assert.match(paper, /Deliveries paid to driver \(2\)/)
+  assert.match(paper, /Till \+ deliveries/)
+  tillStore.closeTillShift('Chloe', null)
+})
+
 await test('the owner’s daily report covers that day only, and splits website from till', () => {
   const p = firstSpud()
   menuStore.adjustProductStock(p.id, 20, 'test', 'seed')

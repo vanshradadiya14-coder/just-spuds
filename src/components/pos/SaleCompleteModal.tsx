@@ -1,46 +1,41 @@
 import { useEffect, useRef, useState } from 'react'
 import { recordReceiptDelivery, type Order } from '../../services/orderStore'
-import { lineUnitPrice } from '../../hooks/useCart'
 import { gbp } from '../../utils/format'
 import { SITE } from '../../data/site'
+import { receiptText } from '../../services/receiptDoc'
+import { receiptBlocks } from '../../services/receiptPrinter'
 
 interface SaleCompleteModalProps {
   order: Order
   changeDuePence: number
   tenderLabel: string
   actor: string
-  /** The till already opened the receipt (auto-print setting), so skip the prompt. */
-  autoPrinted?: boolean
-  onPrint: (order: Order) => void
+  /** The till already sent the receipt to the printer (auto-print setting): what happened. */
+  printStatus?: string
+  onPrint: (order: Order) => Promise<{ message: string }> | void
   /** Dismisses the screen and starts the next sale. */
   onNewSale: () => void
 }
 
-function plainTextReceipt(order: Order): string {
-  const lines = order.lines.map((l) => `${l.qty} x ${l.name.padEnd(28)} ${gbp(lineUnitPrice(l) * l.qty)}`)
-  return [
-    `${SITE.name} — Receipt #${order.shortId}`,
-    new Date(order.createdAt).toLocaleString('en-GB'),
-    '',
-    ...lines,
-    '',
-    `Subtotal  ${gbp(order.payment.subtotal)}`,
-    order.payment.discount > 0 ? `Discount  -${gbp(order.payment.discount)}` : null,
-    order.payment.tip > 0 ? `Tip       ${gbp(order.payment.tip)}` : null,
-    `TOTAL     ${gbp(order.payment.total)}`,
-    `Paid by ${order.payment.method.replace(/_/g, ' ')}`,
-    '',
-    'Thank you — see you again soon.',
-  ]
-    .filter((l): l is string => l !== null)
-    .join('\n')
-}
+/** The same receipt the printer prints, as plain text for an email. */
+const plainTextReceipt = (order: Order, changeDue: number) => receiptText(receiptBlocks(order, { changeDue }), 40)
 
-export default function SaleCompleteModal({ order, changeDuePence, tenderLabel, actor, autoPrinted = false, onPrint, onNewSale }: SaleCompleteModalProps) {
+export default function SaleCompleteModal({ order, changeDuePence, tenderLabel, actor, printStatus, onPrint, onNewSale }: SaleCompleteModalProps) {
   const [emailOpen, setEmailOpen] = useState(false)
   const [email, setEmail] = useState(order.customer.email?.endsWith('@justspuds.uk') ? '' : order.customer.email || '')
-  const [done, setDone] = useState<string | null>(autoPrinted ? 'Receipt printed automatically' : null)
+  const [done, setDone] = useState<string | null>(printStatus || null)
   const emailRef = useRef<HTMLInputElement>(null)
+
+  // The automatic print reports back a moment later ("Receipt printed").
+  useEffect(() => {
+    if (printStatus) setDone(printStatus)
+  }, [printStatus])
+
+  const sendToPrinter = async () => {
+    setDone('Receipt printing…')
+    const res = await onPrint(order)
+    setDone(res?.message || 'Receipt sent to printer')
+  }
 
   useEffect(() => {
     if (emailOpen) emailRef.current?.focus()
@@ -60,8 +55,7 @@ export default function SaleCompleteModal({ order, changeDuePence, tenderLabel, 
 
   const print = () => {
     recordReceiptDelivery(order.id, 'print', undefined, actor)
-    onPrint(order)
-    setDone('Receipt sent to printer')
+    void sendToPrinter()
   }
 
   const sendEmail = () => {
@@ -69,7 +63,7 @@ export default function SaleCompleteModal({ order, changeDuePence, tenderLabel, 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) return
     recordReceiptDelivery(order.id, 'email', clean, actor)
     const subject = encodeURIComponent(`Your ${SITE.name} receipt #${order.shortId}`)
-    const body = encodeURIComponent(plainTextReceipt(order))
+    const body = encodeURIComponent(plainTextReceipt(order, changeDuePence))
     window.open(`mailto:${clean}?subject=${subject}&body=${body}`, '_self')
     setEmailOpen(false)
     setDone(`Receipt emailed to ${clean}`)
@@ -111,7 +105,7 @@ export default function SaleCompleteModal({ order, changeDuePence, tenderLabel, 
         {done ? (
           <div className="space-y-2">
             <p className="text-xs font-bold text-emerald-300">✓ {done}</p>
-            <button type="button" onClick={() => onPrint(order)} className="text-[11px] text-white/50 hover:text-white underline">
+            <button type="button" onClick={() => void sendToPrinter()} className="text-[11px] text-white/50 hover:text-white underline">
               Reprint
             </button>
           </div>

@@ -1,320 +1,105 @@
-import { useRef } from 'react'
+import { useMemo, useState } from 'react'
 import type { Order } from '../services/orderStore'
-import { lineUnitPrice } from '../hooks/useCart'
-import { gbp } from '../utils/format'
-import { SITE } from '../data/site'
-import { MEAL_DEAL } from '../data/menu'
-import { getBusinessDetails } from '../services/menuStore'
-import { orderVat } from '../services/vat'
-import { lineExtras, mealDrinkName, mealSnackName, modifierText, saladsText, saucesText } from '../utils/lineText'
-import { parseKitchenNotes } from '../utils/kitchenNotes'
+import { kitchenTicketDoc } from '../services/receiptDoc'
+import { paperWidthMm, printBlocks, receiptBlocks } from '../services/receiptPrinter'
+import { getPrinterPrefs } from '../services/printerBridge'
+import ReceiptPaper from './ReceiptPaper'
 
 interface ThermalReceiptProps {
   order: Order
   onClose?: () => void
   isModal?: boolean
+  /** Which slip to show: the customer's receipt (default) or the kitchen ticket. */
+  kind?: 'receipt' | 'kitchen'
+  /** Staff screens can switch between receipt and kitchen ticket; customers only see their receipt. */
+  staff?: boolean
 }
 
-export default function ThermalReceipt({ order, onClose, isModal = true }: ThermalReceiptProps) {
-  const receiptRef = useRef<HTMLDivElement>(null)
+/**
+ * On-screen copy of a slip, exactly as the printer will print it (same layout
+ * code — services/receiptDoc), with a Print button. The till itself prints
+ * without opening this; it is for reprints from Admin, the KDS and tracking.
+ */
+export default function ThermalReceipt({ order, onClose, isModal = true, kind: initialKind = 'receipt', staff = false }: ThermalReceiptProps) {
+  const [kind, setKind] = useState<'receipt' | 'kitchen'>(initialKind)
+  const [status, setStatus] = useState<string | null>(null)
+  const widthMm = paperWidthMm(getPrinterPrefs().cols)
+  const blocks = useMemo(() => (kind === 'kitchen' ? kitchenTicketDoc(order) : receiptBlocks(order)), [kind, order])
 
-  const handlePrint = () => {
-    window.print()
+  const handlePrint = async () => {
+    const res = await printBlocks(blocks, { title: kind === 'kitchen' ? 'Kitchen ticket' : 'Receipt' })
+    setStatus(res.message)
   }
 
-  const isDelivery = order.fulfilment === 'delivery'
-  const isPaid = order.payment.status === 'paid'
-  const business = getBusinessDetails()
-  const notes = parseKitchenNotes(order.kitchenNotes)
+  const kindSwitch = !staff ? (
+    <span className="font-body text-sm font-bold text-ink">Receipt</span>
+  ) : (
+    <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-0.5 text-[11px] font-bold">
+      {(['receipt', 'kitchen'] as const).map((k) => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => setKind(k)}
+          className={`rounded-full px-3 py-1 ${kind === k ? 'bg-black text-white' : 'text-gray-600 hover:text-black'}`}
+        >
+          {k === 'receipt' ? 'Receipt' : 'Kitchen ticket'}
+        </button>
+      ))}
+    </div>
+  )
 
-  const content = (
-    <div
-      ref={receiptRef}
-      className="thermal-receipt font-mono text-[13px] leading-relaxed text-black bg-white p-6 max-w-[380px] mx-auto border border-dashed border-gray-400 shadow-lg rounded-sm selection:bg-amber-200"
-      style={{ fontFamily: '"Courier New", Courier, monospace' }}
-    >
-      {/* STORE HEADER */}
-      <div className="text-center pb-3 border-b border-black">
-        <h2 className="text-xl font-black uppercase tracking-wider">{business.name}</h2>
-        <p className="text-[11px] font-bold uppercase">{SITE.tagline}</p>
-        <p className="text-[11px] mt-1">{business.address}</p>
-        <p className="text-[11px] font-bold">Tel: {business.phone}</p>
-        {business.vatNumber && <p className="text-[10px] text-gray-600 mt-0.5">VAT Reg: {business.vatNumber}</p>}
-      </div>
-
-      {/* ORDER NUMBER & TYPE */}
-      <div className="text-center py-3 border-b border-black my-1">
-        <p className="text-[11px] font-bold text-gray-700">KITCHEN &bull; RECEIPT</p>
-        <p className="text-2xl font-black tracking-tight my-0.5">
-          ORDER #{order.shortId}
-        </p>
-        <div className="inline-block mt-1 px-3 py-0.5 bg-black text-white font-black text-xs uppercase tracking-wider rounded-xs">
-          {isDelivery ? '🛵 HOME DELIVERY' : '🛍️ STORE PICK UP'}
-        </div>
-        {order.customer?.buzzerNumber && (
-          <div className="mt-2 p-1.5 bg-black text-white font-black text-sm uppercase tracking-widest border-2 border-black">
-            *** 🔔 BUZZER #{order.customer.buzzerNumber} ***
-          </div>
-        )}
-        {order.customer?.tableNumber && (
-          <div className="mt-1 p-1 bg-black text-white font-black text-xs uppercase tracking-wider border border-black">
-            *** 🪑 TABLE #{order.customer.tableNumber} ***
-          </div>
-        )}
-        {order.isScheduled && (
-          <div className="mt-2 p-1.5 bg-black text-white font-black text-xs uppercase tracking-wider border border-black">
-            *** SCHEDULED PRE-ORDER: {order.scheduledFor || order.estimatedDeliveryTime} ***
-          </div>
-        )}
-        <p className="text-[10px] mt-1.5 font-bold">
-          Placed: {new Date(order.createdAt).toLocaleDateString('en-GB')} {new Date(order.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-        </p>
-        {(order.scheduledFor || order.estimatedDeliveryTime) && (
-          <p className="text-[11px] font-bold text-black mt-0.5">
-            {order.isScheduled ? 'Scheduled Due Time:' : 'Target Time:'} {order.scheduledFor || order.estimatedDeliveryTime}
-          </p>
-        )}
-      </div>
-
-      {/* CUSTOMER & DELIVERY INFO */}
-      <div className="py-2.5 border-b border-dashed border-black text-xs space-y-1">
-        <p><strong>CUSTOMER:</strong> {order.customer.name}</p>
-        <p><strong>PHONE:</strong> {order.customer.phone}</p>
-        {order.customer.buzzerNumber && <p><strong>BUZZER PAGER:</strong> #{order.customer.buzzerNumber}</p>}
-        {order.customer.tableNumber && <p><strong>DINE IN TABLE:</strong> #{order.customer.tableNumber}</p>}
-        {isDelivery && (
-          <>
-            <p><strong>ADDRESS:</strong> {order.customer.streetAddress || 'Aylesbury'}</p>
-            <p><strong>POSTCODE:</strong> {order.customer.postcode}</p>
-            {order.customer.instructions && (
-              <p className="p-1.5 bg-gray-100 border border-gray-400 font-bold mt-1 text-[11px]">
-                DRIVER NOTE: {order.customer.instructions}
-              </p>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* CRITICAL: ALLERGEN / KITCHEN NOTES ALERT — only a real instruction, not till bookkeeping */}
-      {notes.note && (
-        <div className="my-2.5 p-2 bg-black text-white text-xs font-black uppercase tracking-wide border-2 border-black">
-          <p className="text-[11px] underline">⚠️ ALLERGEN / KITCHEN ALERT:</p>
-          <p className="mt-0.5 text-xs">{notes.note}</p>
-        </div>
-      )}
-      {notes.meta.length > 0 && <p className="py-1 text-[10px] uppercase text-gray-700">{notes.meta.join(' • ')}</p>}
-
-      {/* LINE ITEMS */}
-      <div className="py-3 border-b border-black space-y-3">
-        <div className="flex justify-between font-black text-xs border-b border-black pb-1">
-          <span>QTY &bull; ITEM DESCRIPTION</span>
-          <span>PRICE</span>
-        </div>
-
-        {order.lines.map((line, idx) => {
-          return (
-            <div key={line.lineId || idx} className="text-xs space-y-0.5">
-              <div className="flex justify-between font-black text-[13px]">
-                <span>{line.qty}x {line.name}</span>
-                <span>{gbp(lineUnitPrice(line) * line.qty)}</span>
-              </div>
-
-              {/* Leave-offs and swaps */}
-              {line.conversationalModifiers && line.conversationalModifiers.length > 0 && (
-                <div className="pl-4 text-[11px] font-bold text-gray-900">
-                  {line.conversationalModifiers.map((mod, i) => (
-                    <p key={i}>{mod.type === 'no' ? '- ' : '• '}{modifierText(mod)}{mod.type === 'extra' && mod.pricePence ? ` (+${gbp(mod.pricePence)})` : ''}</p>
-                  ))}
-                </div>
-              )}
-
-              {/* Toppings, with what they cost */}
-              {lineExtras(line).map((x) => (
-                <div key={x.id} className="pl-4 flex justify-between text-[11px] text-gray-800">
-                  <span>+ {x.count > 1 ? `${x.count}× ` : ''}{x.label}</span>
-                  <span>{gbp(x.unit * x.count * line.qty)}</span>
-                </div>
-              ))}
-
-              {/* Salads */}
-              {line.salads && line.salads.length > 0 && (
-                <p className="pl-4 text-[11px] font-bold">
-                  Salad: {saladsText(line)}
-                </p>
-              )}
-
-              {/* Sauces */}
-              {line.sauces && line.sauces.length > 0 && (
-                <p className="pl-4 text-[11px] font-bold">
-                  Sauce: {saucesText(line)}
-                </p>
-              )}
-
-              {/* Meal Deal */}
-              {line.meal && (
-                <div className="pl-4 text-[11px] font-bold text-gray-900">
-                  <div className="flex justify-between">
-                    <span>+ Make It A Meal</span>
-                    <span>{gbp(MEAL_DEAL.price * line.qty)}</span>
-                  </div>
-                  {line.mealDrink && <p className="pl-2">- {mealDrinkName(line.mealDrink)}</p>}
-                  {line.mealSnack && <p className="pl-2">- {mealSnackName(line.mealSnack)}</p>}
-                </div>
-              )}
-
-              {/* Line Specific Notes */}
-              {line.notes && (
-                <p className="pl-4 text-[11px] italic font-bold text-red-800">
-                  * Note: {line.notes}
-                </p>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {/* PAYMENT & TOTALS */}
-      <div className="py-2.5 border-b border-black text-xs space-y-1">
-        <div className="flex justify-between">
-          <span>Subtotal</span>
-          <span>{gbp(order.payment.subtotal)}</span>
-        </div>
-
-        {order.payment.discount > 0 && (
-          <div className="flex justify-between font-bold">
-            <span>Discount{order.payment.promoCode ? ` (${order.payment.promoCode})` : ''}</span>
-            <span>-{gbp(order.payment.discount)}</span>
-          </div>
-        )}
-
-        {isDelivery && (
-          <div className="flex justify-between">
-            <span>Delivery Fee</span>
-            <span>{order.payment.deliveryFee === 0 ? 'FREE' : gbp(order.payment.deliveryFee)}</span>
-          </div>
-        )}
-
-        {order.payment.serviceFee > 0 && (
-          <div className="flex justify-between">
-            <span>Service / Bag</span>
-            <span>{gbp(order.payment.serviceFee)}</span>
-          </div>
-        )}
-
-        {order.payment.tip > 0 && (
-          <div className="flex justify-between font-bold">
-            <span>{order.fulfilment === 'delivery' ? 'Driver Tip' : 'Tip'}</span>
-            <span>{gbp(order.payment.tip)}</span>
-          </div>
-        )}
-
-        <div className="flex justify-between font-black text-base pt-2 border-t border-dashed border-black">
-          <span>TOTAL</span>
-          <span>{gbp(order.payment.total)}</span>
-        </div>
-
-        {business.vatNumber && (
-          <div className="pt-1 text-[10px] text-gray-700 space-y-0.5">
-            {orderVat(order).bands.map((b) => (
-              <div key={b.rate} className="flex justify-between">
-                <span>VAT {b.rate}% on {gbp(b.gross)}</span>
-                <span>{gbp(b.vat)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="pt-2 text-[11px] font-bold">
-          {isPaid ? (
-            order.payment.splitDetails && order.payment.splitDetails.length > 0 ? (
-              <div className="p-1.5 bg-gray-100 border border-black text-left space-y-0.5">
-                <p className="font-black text-center border-b border-gray-400 pb-0.5">✓ PAID &bull; SPLIT TENDER</p>
-                {order.payment.splitDetails.map((pt, i) => (
-                  <div key={i} className="flex justify-between">
-                    <span className="uppercase">{pt.method === 'cash' ? '💵 CASH' : pt.method === 'card' ? '💳 CARD / PDQ' : '🌐 ONLINE / LINK'}:</span>
-                    <span className="font-bold">{gbp(pt.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="p-1 bg-gray-100 border border-black text-center">
-                ✓ PAID ({gbp(order.payment.total)}) &bull;{' '}
-                {order.payment.method === 'cash' ? 'CASH' : order.payment.method === 'card' ? 'CARD' : order.payment.method === 'complimentary' ? 'NO CHARGE' : 'PAID'}
-              </p>
-            )
-          ) : (
-            <p className="p-1 bg-black text-white font-black text-center">
-              ⚠️ PAYMENT DUE UPON {isDelivery ? 'DELIVERY (DRIVER CARD DEVICE / CASH)' : 'COLLECTION AT COUNTER'} ({gbp(order.payment.total)})
-            </p>
-          )}
-        </div>
-      </div>
-
-      {isPaid && order.payment.takenBy && <p className="pt-2 text-center text-[11px]">You were served by {order.payment.takenBy.split(' ')[0]}</p>}
-
-      {/* BARCODE & FOOTER */}
-      <div className="text-center pt-3 space-y-2">
-        <div className="font-mono text-2xl tracking-[0.25em] font-bold py-1">
-          ||| | |||| | ||| || |||| |
-        </div>
-        <p className="text-[10px] uppercase font-bold text-gray-700">
-          Thank you for supporting local Aylesbury food!
-        </p>
-        <p className="text-[9px] text-gray-500">
-          Order Online: www.justspuds.uk &bull; Fresh Daily
-        </p>
-      </div>
+  const paper = (
+    <div className="mx-auto w-fit rounded-sm border border-dashed border-gray-300 bg-white px-3 py-2 shadow-lg">
+      <ReceiptPaper blocks={blocks} widthMm={widthMm} />
     </div>
   )
 
   if (!isModal) {
     return (
       <div>
-        <div className="flex items-center justify-between pb-3 mb-3 border-b border-gray-200">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-3">
+          {kindSwitch}
           <button
             type="button"
             onClick={handlePrint}
-            className="rounded-xl bg-black px-4 py-2 text-white font-body text-xs font-bold uppercase tracking-wider shadow hover:bg-gray-800"
+            className="rounded-xl bg-black px-4 py-2 font-body text-xs font-bold uppercase tracking-wider text-white shadow hover:bg-gray-800"
           >
-            🖨️ Print to POS Printer (58mm/80mm)
+            🖨️ Print
           </button>
         </div>
-        {content}
+        {status && <p className="mb-2 text-center text-[11px] font-bold text-emerald-700">{status}</p>}
+        {paper}
       </div>
     )
   }
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center [align-items:safe_center] justify-center p-4 bg-ink/80 backdrop-blur-sm overflow-y-auto" role="dialog">
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6 my-8 border border-ink/20">
-        <div className="flex items-center justify-between pb-4 mb-4 border-b border-ink/10">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🖨️</span>
-            <h3 className="font-body text-base font-bold text-ink">Thermal Receipt Preview</h3>
-          </div>
+    <div className="fixed inset-0 z-[120] flex items-center [align-items:safe_center] justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Receipt">
+      <div className="relative my-8 w-full max-w-md rounded-2xl border border-ink/20 bg-white p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between gap-2 border-b border-ink/10 pb-3">
+          {kindSwitch}
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handlePrint}
               className="rounded-full bg-amber-400 px-4 py-1.5 font-body text-xs font-black uppercase text-ink shadow hover:bg-amber-300"
             >
-              Print Ticket
+              Print
             </button>
             {onClose && (
               <button
                 type="button"
                 onClick={onClose}
-                className="grid h-8 w-8 place-items-center rounded-full text-slate-400 hover:text-ink hover:bg-paper"
+                className="grid h-8 w-8 place-items-center rounded-full text-slate-400 hover:bg-paper hover:text-ink"
+                aria-label="Close receipt"
               >
                 ✕
               </button>
             )}
           </div>
         </div>
-
-        <div className="max-h-[70vh] overflow-y-auto pr-1">
-          {content}
-        </div>
+        {status && <p className="mb-2 text-center text-[11px] font-bold text-emerald-700">{status}</p>}
+        <div className="max-h-[70vh] overflow-y-auto pr-1">{paper}</div>
       </div>
     </div>
   )

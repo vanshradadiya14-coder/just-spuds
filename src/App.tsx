@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
 import { CartProvider } from './hooks/useCart'
 import ErrorBoundary from './components/ErrorBoundary'
+import ReceiptPrintHost from './components/ReceiptPrintHost'
 
 const MenuPage = lazy(() => import('./pages/MenuPage'))
 const ProductPage = lazy(() => import('./pages/ProductPage'))
@@ -221,6 +222,8 @@ export default function App() {
               </Routes>
             )}
           </Suspense>
+          {/* Prints receipts / tickets straight away (no preview pop-up). */}
+          <ReceiptPrintHost />
         </CartProvider>
       </BrowserRouter>
     </ErrorBoundary>

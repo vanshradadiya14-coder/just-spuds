@@ -210,6 +210,22 @@ export default function CloseTillScreen({
                   detail={heldCount === 0 ? 'No parked tickets.' : 'Optional — they stay on this till.'}
                   action={heldCount > 0 ? { label: 'View', run: () => onOpenOrders('held') } : undefined}
                 />
+                {live.deliveries && (live.deliveries.stillOut > 0 || live.deliveries.cash > 0) && (
+                  <Check
+                    ok={live.deliveries.stillOut === 0}
+                    warn
+                    title={
+                      live.deliveries.stillOut > 0
+                        ? `${live.deliveries.stillOut} deliver${live.deliveries.stillOut === 1 ? 'y' : 'ies'} still out`
+                        : `Drivers hold ${gbp(live.deliveries.cash)} cash`
+                    }
+                    detail={
+                      live.deliveries.stillOut > 0
+                        ? `${gbp(live.deliveries.stillOutTotal)} not collected yet — you can still close; it reports on the shift it's paid in.`
+                        : 'Collect it from the drivers — it is not in the drawer figures.'
+                    }
+                  />
+                )}
                 <Check
                   ok
                   title="Cash up"
@@ -396,9 +412,25 @@ export default function CloseTillScreen({
                       </div>
                     </div>
 
+                    {live.deliveries && live.deliveries.orders > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-black uppercase tracking-wider text-white/45">Deliveries paid to drivers</p>
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1">
+                          <span className="text-white/70">Cash with drivers</span>
+                          <span className="text-right font-mono">{gbp(live.deliveries.cash)}</span>
+                          <span className="text-white/70">Card on driver&apos;s machine</span>
+                          <span className="text-right font-mono">{gbp(live.deliveries.card)}</span>
+                          <span className="border-t border-white/10 pt-1 font-bold">{live.deliveries.orders} deliveries</span>
+                          <span className="border-t border-white/10 pt-1 text-right font-mono font-bold">{gbp(live.deliveries.total)}</span>
+                          <span className="font-bold">Till + deliveries</span>
+                          <span className="text-right font-mono font-bold">{showExpected ? gbp(live.takings.taken + live.deliveries.total) : '🔒'}</span>
+                        </div>
+                      </div>
+                    )}
+
                     {live.website.orders > 0 && (
                       <p className="rounded-xl border border-sky-400/20 bg-sky-500/10 p-2.5 text-[11px] text-sky-100">
-                        {live.website.orders} website order{live.website.orders === 1 ? '' : 's'} ({gbp(live.website.total)}) placed today — counted in takings only once paid on the till.
+                        {live.website.orders} website order{live.website.orders === 1 ? '' : 's'} ({gbp(live.website.total)}) placed this shift — pick-ups count in takings once paid on the till, deliveries once the driver is paid.
                       </p>
                     )}
                   </div>

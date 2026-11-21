@@ -1,8 +1,8 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { EndOfDayReport, ReportRow } from '../services/endOfDayReport'
 import { getBusinessDetails } from '../services/menuStore'
 import { gbp } from '../utils/format'
-import PrintSlip, { printSlip } from './PrintSlip'
+import { printEndOfDayReport } from '../services/receiptPrinter'
 
 const dt = (iso?: string) =>
   iso
@@ -78,7 +78,7 @@ export function EndOfDayReportSlip({ report }: { report: EndOfDayReport }) {
   const balanced = typeof d.variance === 'number' && Math.abs(d.variance) < 1
 
   return (
-    <div className="eod-slip bg-white text-black font-mono text-[12px] leading-snug w-full max-w-[380px] mx-auto p-4" style={{ fontFamily: '"Courier New", Courier, monospace' }}>
+    <div className="eod-slip bg-white text-black text-[12px] leading-snug w-full max-w-[380px] mx-auto p-4" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
       <header className="text-center">
         <p className="text-[15px] font-black uppercase">{business.name}</p>
         <p className="text-[10px]">{business.address}</p>
@@ -144,6 +144,21 @@ export function EndOfDayReportSlip({ report }: { report: EndOfDayReport }) {
           </div>
         </div>
       </Section>
+
+      {r.deliveries && (r.deliveries.orders > 0 || r.deliveries.stillOut > 0) && (
+        <Section title="Deliveries (paid to driver)">
+          <div className="text-[11px]">
+            <Line label={`Delivered & paid (${r.deliveries.orders})`} value={gbp(r.deliveries.total)} bold />
+            <Line label="Cash with drivers" value={gbp(r.deliveries.cash)} />
+            <Line label="Card on driver's machine" value={gbp(r.deliveries.card)} />
+            {r.deliveries.stillOut > 0 && <Line label={`Still out / unpaid (${r.deliveries.stillOut})`} value={gbp(r.deliveries.stillOutTotal)} />}
+            <p className="mt-0.5">Not in the till above. Drivers hand in the cash at close.</p>
+            <div className="border-t border-black mt-0.5 pt-0.5">
+              <Line label="Till + deliveries" value={gbp(r.takings.taken + r.deliveries.total)} bold />
+            </div>
+          </div>
+        </Section>
+      )}
 
       <Section title="Sales breakdown">
         <div className="text-[11px]">
@@ -265,7 +280,7 @@ export function EndOfDayReportSlip({ report }: { report: EndOfDayReport }) {
         <Section title="Website orders">
           <div className="text-[11px]">
             <Line label={`Placed during shift (${r.website.orders})`} value={gbp(r.website.total)} />
-            <p>Counted above only when paid on this till.</p>
+            <p>Pick-ups count above once paid on this till; deliveries under Deliveries.</p>
           </div>
         </Section>
       )}
@@ -297,13 +312,16 @@ interface EndOfDayReportModalProps {
 
 /** On-screen copy of the report with a Print button; the paper copy prints on its own. */
 export default function EndOfDayReportModal({ report, onClose, autoPrint = false }: EndOfDayReportModalProps) {
-  const slipId = `eod-${report.kind}-${report.shiftNumber}`
+  // Paper gets the compact EPOS-style Z/X read (same layout on the Windows
+  // printer and a direct receipt printer); this screen keeps the full report.
+  const [printMsg, setPrintMsg] = useState<string | null>(null)
+  const doPrint = () => void printEndOfDayReport(report).then((r) => setPrintMsg(r.message))
 
   useEffect(() => {
     if (!autoPrint) return
-    const t = window.setTimeout(() => printSlip(slipId), 350)
+    const t = window.setTimeout(() => void printEndOfDayReport(report).then((r) => setPrintMsg(r.message)), 350)
     return () => window.clearTimeout(t)
-  }, [autoPrint, slipId])
+  }, [autoPrint, report])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -322,11 +340,12 @@ export default function EndOfDayReportModal({ report, onClose, autoPrint = false
             <p className="text-[11px] text-white/50">
               {report.tillName} • Shift #{report.shiftNumber} • {report.sales.transactions} sale{report.sales.transactions === 1 ? '' : 's'} • {gbp(report.takings.taken)} taken
             </p>
+            {printMsg && <p className="text-[11px] font-bold text-emerald-300">✓ {printMsg}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => printSlip(slipId)}
+              onClick={doPrint}
               className="rounded-xl bg-amber-400 px-4 py-2 text-xs font-black uppercase tracking-wider text-ink hover:bg-amber-300"
             >
               🖨️ Print
@@ -340,9 +359,6 @@ export default function EndOfDayReportModal({ report, onClose, autoPrint = false
           <EndOfDayReportSlip report={report} />
         </div>
       </div>
-      <PrintSlip id={slipId}>
-        <EndOfDayReportSlip report={report} />
-      </PrintSlip>
     </div>
   )
 }
