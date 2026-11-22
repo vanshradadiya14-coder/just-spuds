@@ -9,6 +9,7 @@ import {
   type Role,
 } from '../../services/authStore'
 import { getRoster, subscribeRoster, type StaffMember } from '../../services/staffRoster'
+import { openCustomerDisplay } from '../../services/customerDisplay'
 import {
   getActiveTimeclockEntry,
   isOnBreak,
@@ -507,7 +508,7 @@ export default function PosOperatorStandby({
 
             <button
               type="button"
-              onClick={() => window.open('/cfd', 'JustSpudsCFD', 'width=1024,height=650')}
+              onClick={() => void openCustomerDisplay()}
               className="rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-xs font-bold text-white hover:bg-white/15 transition flex items-center gap-1.5"
               title="Open Customer-Facing Display on secondary screen"
             >

@@ -18,6 +18,7 @@ import {
   type PrinterPrefs,
 } from '../services/printerBridge'
 import { printBlocks } from '../services/receiptPrinter'
+import { isCustomerDisplayAuto, openCustomerDisplay, screenPermission, setCustomerDisplayAuto } from '../services/customerDisplay'
 import type { ReceiptBlock } from '../services/receiptDoc'
 import AlertSoundSettingsModal from './staff/AlertSoundSettingsModal'
 
@@ -46,6 +47,61 @@ function testSlip(prefs: PrinterPrefs): ReceiptBlock[] {
     { t: 'inverse', text: 'BOX / ALERT LINE' },
     { t: 'center', text: `Set to ${prefs.cols} characters per line. If the numbers above wrap or are cut off, pick a smaller paper setting.` },
   ]
+}
+
+/** Customer display: open it on the second screen whenever this till opens. */
+function CustomerDisplaySetup() {
+  const [auto, setAuto] = useState(() => isCustomerDisplayAuto())
+  const [message, setMessage] = useState<string | null>(null)
+  const [perm, setPerm] = useState<'granted' | 'prompt' | 'denied' | 'unsupported' | null>(null)
+
+  useEffect(() => {
+    void screenPermission().then(setPerm)
+  }, [])
+
+  const toggle = () => {
+    const next = !auto
+    setCustomerDisplayAuto(next)
+    setAuto(next)
+  }
+
+  const openNow = async () => {
+    const r = await openCustomerDisplay()
+    setMessage(r.message)
+    setPerm(await screenPermission())
+  }
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/40 p-3 space-y-2.5">
+      <button type="button" role="switch" aria-checked={auto} onClick={toggle} className="flex w-full items-center justify-between gap-3 text-left">
+        <span>
+          <span className="block text-xs font-bold text-white">📺 Customer display on the second screen</span>
+          <span className="block text-[10px] text-white/50 mt-0.5">Opens by itself when the till opens (at the first tap, e.g. the PIN). Saved on this till only.</span>
+        </span>
+        <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${auto ? 'bg-amber-400' : 'bg-white/20'}`} aria-hidden="true">
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${auto ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => void openNow()}
+        className="w-full rounded-lg border border-sky-400/40 bg-sky-500/10 px-3 py-2 text-[11px] font-bold text-sky-300 hover:bg-sky-400 hover:text-ink transition"
+      >
+        Open customer display now
+      </button>
+      {message && <p className="text-[10px] font-bold text-amber-200">{message}</p>}
+      <p className="text-[10px] leading-snug text-white/50">
+        {perm === 'granted'
+          ? 'This till may place windows on the second screen. ✓'
+          : perm === 'denied'
+          ? 'Window placement was refused — click the padlock by the address › Window management › Allow, then reload.'
+          : perm === 'unsupported'
+          ? 'This browser cannot choose the screen: the display opens to the right of the till. Use Chrome or Edge.'
+          : 'First time: the browser asks to "manage windows on all your displays" — choose Allow. If pop-ups are blocked, allow them for this site.'}{' '}
+        On the display, double-click (or tap &quot;Full screen&quot;) once to fill the screen.
+      </p>
+    </div>
+  )
 }
 
 /** Receipt printer: how this till prints, paper size, test print, silent-printing setup. */
@@ -384,6 +440,8 @@ export default function TillSettingsModal({ onClose, actor }: TillSettingsModalP
         </label>
 
         <PrinterSetup printer={printer} busy={busy} setBusy={setBusy} onTestDrawer={handleTestDrawer} />
+
+        <CustomerDisplaySetup />
 
         <p className="text-[10px] text-white/40 text-center">Changes apply to every till tab immediately and are written to the audit log.</p>
       </div>

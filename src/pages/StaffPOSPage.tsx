@@ -75,6 +75,7 @@ import { lineExtras, mealText, modifierText, saladsText, saucesText, KITCHEN_STA
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { playPOSTouchTone, restoreDirectPrinter } from '../services/printerBridge'
 import { printKitchenTicket, printOrderReceipt } from '../services/receiptPrinter'
+import { armCustomerDisplayAutoOpen, openCustomerDisplay } from '../services/customerDisplay'
 import TillSettingsModal from '../components/TillSettingsModal'
 import {
   dismissOrderAlert,
@@ -254,9 +255,13 @@ export default function StaffPOSPage() {
   const actor = user?.name || 'Staff Cashier'
   const tillName = tillSettings.tillName || 'Till 1'
 
-  // Reconnect this till's receipt printer (USB / serial) without asking.
+  // Reconnect this till's receipt printer (USB / serial) without asking, and
+  // open the customer display on the second screen at the first tap (Till settings).
   useEffect(() => {
     void restoreDirectPrinter()
+    return armCustomerDisplayAutoOpen((r) => {
+      if (!r.ok) setFlash(r.message)
+    })
   }, [])
 
   // Subscriptions
@@ -1055,7 +1060,7 @@ export default function StaffPOSPage() {
         setIsTimeclockOpen(true)
         break
       case 'cfd':
-        window.open('/cfd', 'JustSpudsCFD', 'width=1024,height=650')
+        void openCustomerDisplay().then((r) => setFlash(r.message))
         break
       case 'settings':
         requireManagerAuth('Till settings', 'Till name, printer, drawer, sounds and float defaults', () => setIsSettingsModalOpen(true))

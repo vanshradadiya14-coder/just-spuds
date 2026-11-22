@@ -22,13 +22,34 @@ export default function CustomerFacingDisplayPage() {
     return subscribeCFDState((st) => setState(st))
   }, [])
 
+  // Full screen on the customer's monitor: browsers need one click/tap on the
+  // display itself, so offer it until it is full screen.
+  const [isFull, setIsFull] = useState(() => typeof document !== 'undefined' && Boolean(document.fullscreenElement))
+  useEffect(() => {
+    const on = () => setIsFull(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', on)
+    return () => document.removeEventListener('fullscreenchange', on)
+  }, [])
+  const goFull = () => {
+    if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.().catch(() => {})
+  }
+
   const hasItems = state.lines.length > 0
   const isPaid = state.status === 'paid'
 
   return (
-    <div className="relative min-h-screen bg-portal-dark text-slate-100 font-body flex flex-col select-none overflow-hidden">
+    <div className="relative min-h-screen bg-portal-dark text-slate-100 font-body flex flex-col select-none overflow-hidden" onDoubleClick={goFull}>
       {/* Appetizing Golden Aurora & Hearth Ambient Backdrop */}
       <FixedAmbientBackdrop variant="cfd" />
+      {!isFull && (
+        <button
+          type="button"
+          onClick={goFull}
+          className="fixed top-[72px] right-3 z-50 rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-black/80"
+        >
+          ⛶ Full screen
+        </button>
+      )}
       {/* Top Status Bar */}
       <header className="h-16 px-6 bg-slate-900 border-b border-white/10 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
