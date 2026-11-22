@@ -2466,6 +2466,9 @@ export default function StaffPOSPage() {
 
       {isSettingsModalOpen && <TillSettingsModal onClose={() => setIsSettingsModalOpen(false)} actor={actor} />}
 
+      {/* Automatic updates wait while a sale is being rung up (components/UpdateBanner). */}
+      {(cartLines.length > 0 || settlingOrder) && <span hidden data-update-blocker="ticket" />}
+
       {saleComplete && (
         <SaleCompleteModal
           order={saleComplete.order}

@@ -226,7 +226,7 @@ export default function PaymentScreen({
   )
 
   return (
-    <section className={`flex min-h-0 flex-col bg-slate-950 text-white font-body ${className}`} aria-label="Take payment">
+    <section className={`flex min-h-0 flex-col bg-slate-950 text-white font-body ${className}`} aria-label="Take payment" data-update-blocker="payment">
       {/* Header */}
       <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-slate-900 px-2">
         <button type="button" onClick={back} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-lg text-white/70 hover:bg-white/10 hover:text-white" aria-label="Back to menu">
