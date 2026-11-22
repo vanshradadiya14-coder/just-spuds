@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { getProducts, getSauces } from '../services/menuStore'
 import { createManualCounterOrder, type Order, type OrderSource, type PaymentMethod } from '../services/orderStore'
 import { deliveryCharges } from '../services/deliverySettingsStore'
-import { extrasFor, FRESH_SALAD_OPTIONS, MEAL_DEAL, sellPrice, type Product } from '../data/menu'
+import { extrasFor, FRESH_SALAD_OPTIONS, isSpudLike, MEAL_DEAL, sellPrice, type Product } from '../data/menu'
 import { gbp, cx } from '../utils/format'
 import { lineUnitPrice, type CartLine } from '../hooks/useCart'
 import { extrasText, mealText, saladsText, saucesText, stationForLine } from '../utils/lineText'
@@ -50,7 +50,7 @@ export default function CreateManualOrderModal({
   const activeProd = products.find((p) => p.id === selectedProductId)
   const availableExtras = activeProd ? extrasFor(activeProd) : []
   const availableSauces = activeProd?.sauces ? getSauces() : []
-  const hasSalads = activeProd ? ['SPUDS', 'WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS'].includes(activeProd.category) : false
+  const hasSalads = activeProd ? isSpudLike(activeProd.category) || ['WRAPS', 'RICE_BOXES', 'BAGUETTES', 'PANINIS', 'SALADS'].includes(activeProd.category) : false
 
   const toggleItem = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
 

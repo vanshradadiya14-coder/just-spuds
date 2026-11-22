@@ -5,6 +5,11 @@ import HomePage from './pages/HomePage'
 import { CartProvider } from './hooks/useCart'
 import ErrorBoundary from './components/ErrorBoundary'
 import ReceiptPrintHost from './components/ReceiptPrintHost'
+import UpdateBanner from './components/UpdateBanner'
+
+/** Staff screens reached through the main site (/pos, /staff, /admin, /driver…). */
+const isStaffPath = () =>
+  typeof window !== 'undefined' && /^\/(pos|till|staff|admin|driver|cfd|customer-display)(\/|$)/.test(window.location.pathname)
 
 const MenuPage = lazy(() => import('./pages/MenuPage'))
 const ProductPage = lazy(() => import('./pages/ProductPage'))
@@ -224,6 +229,8 @@ export default function App() {
           </Suspense>
           {/* Prints receipts / tickets straight away (no preview pop-up). */}
           <ReceiptPrintHost />
+          {/* All-day staff screens: offer a reload when a new version is live. */}
+          {(subdomain !== 'storefront' || isStaffPath()) && <UpdateBanner />}
         </CartProvider>
       </BrowserRouter>
     </ErrorBoundary>
