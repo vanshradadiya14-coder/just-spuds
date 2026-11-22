@@ -51,6 +51,7 @@ import SyncStatusPill from '../components/SyncStatusPill'
 import MenuPopover from '../components/MenuPopover'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
+import RefreshButton from '../components/RefreshButton'
 import { cx, gbp } from '../utils/format'
 import { KITCHEN_STATIONS, stationForLine, type KitchenStation } from '../utils/lineText'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
@@ -503,6 +504,7 @@ export default function StaffKDSPage() {
               </button>
             </div>
 
+            <RefreshButton />
             <FullscreenButton />
 
             <div>

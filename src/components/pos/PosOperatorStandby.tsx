@@ -24,6 +24,7 @@ import { playPOSTouchTone } from '../../services/printerBridge'
 import { gbp } from '../../utils/format'
 import FixedAmbientBackdrop from '../FixedAmbientBackdrop'
 import FullscreenButton from '../FullscreenButton'
+import RefreshButton, { refreshScreen } from '../RefreshButton'
 import SyncStatusPill from '../SyncStatusPill'
 
 export interface PosOperatorStandbyProps {
@@ -272,6 +273,7 @@ export default function PosOperatorStandby({
           )}
 
           <SyncStatusPill compact />
+          <RefreshButton showLabel className="rounded-xl px-2.5 py-1.5 text-xs" />
           <FullscreenButton showLabel className="rounded-xl px-2.5 py-1.5 text-xs" />
 
           <div className="rounded-xl border border-white/10 bg-black/50 px-3 py-1.5 text-right font-mono">
@@ -514,6 +516,16 @@ export default function PosOperatorStandby({
             >
               <span>📺</span>
               <span className="hidden sm:inline">Customer Screen</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={refreshScreen}
+              className="rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-xs font-bold text-white hover:bg-white/15 transition flex items-center gap-1.5"
+              title="Refresh the till screen"
+            >
+              <span>⟳</span>
+              <span>Refresh</span>
             </button>
 
             <button

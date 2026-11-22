@@ -92,6 +92,7 @@ import { getHeldTickets, holdTicket, subscribeHeldTickets, takeHeldTicket, type 
 import { buildEndOfDayReport, type EndOfDayReport } from '../services/endOfDayReport'
 import FixedAmbientBackdrop from '../components/FixedAmbientBackdrop'
 import FullscreenButton from '../components/FullscreenButton'
+import RefreshButton, { refreshScreen } from '../components/RefreshButton'
 import TerminalSoftwareEnrollmentModal from '../components/pos/TerminalSoftwareEnrollmentModal'
 import TerminalAuthorityBanner from '../components/pos/TerminalAuthorityBanner'
 import PosOperatorStandby from '../components/pos/PosOperatorStandby'
@@ -1370,6 +1371,9 @@ export default function StaffPOSPage() {
             <Link to="/staff" className="text-amber-300 hover:underline font-bold">
               👨‍🍳 Kitchen screen →
             </Link>
+            <button type="button" onClick={refreshScreen} className="text-amber-300 hover:underline font-bold">
+              ⟳ Refresh
+            </button>
             <button
               type="button"
               onClick={() => handleSignOffOperator('Signed off — select Manager to open till float.')}
@@ -1887,6 +1891,7 @@ export default function StaffPOSPage() {
             <span className="hidden 2xl:inline">{tillSettings.lockAfterSale ? 'Per-Sale PIN' : 'Stay Signed In'}</span>
           </button>
 
+          <RefreshButton />
           <FullscreenButton />
 
           {/* Subway POS Operator Capsule + 1-Tap Switch / Sign Off (F12) */}

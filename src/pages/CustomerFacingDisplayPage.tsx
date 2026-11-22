@@ -41,15 +41,25 @@ export default function CustomerFacingDisplayPage() {
     <div className="relative min-h-screen bg-portal-dark text-slate-100 font-body flex flex-col select-none overflow-hidden" onDoubleClick={goFull}>
       {/* Appetizing Golden Aurora & Hearth Ambient Backdrop */}
       <FixedAmbientBackdrop variant="cfd" />
-      {!isFull && (
+      <div className="fixed top-[72px] right-3 z-50 flex gap-1.5">
         <button
           type="button"
-          onClick={goFull}
-          className="fixed top-[72px] right-3 z-50 rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-black/80"
+          onClick={() => window.location.reload()}
+          className="rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-black/80"
+          title="Refresh the customer display"
         >
-          ⛶ Full screen
+          ⟳ Refresh
         </button>
-      )}
+        {!isFull && (
+          <button
+            type="button"
+            onClick={goFull}
+            className="rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-black/80"
+          >
+            ⛶ Full screen
+          </button>
+        )}
+      </div>
       {/* Top Status Bar */}
       <header className="h-16 px-6 bg-slate-900 border-b border-white/10 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
